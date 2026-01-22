@@ -65,6 +65,10 @@ pub struct Config {
     #[serde(default)]
     pub disk_space: DiskSpaceConfig,
 
+    /// Cleanup configuration for intermediate files
+    #[serde(default)]
+    pub cleanup: CleanupConfig,
+
     /// Path to global password file (one password per line)
     #[serde(default)]
     pub password_file: Option<PathBuf>,
@@ -128,6 +132,7 @@ impl Default for Config {
             deobfuscation: DeobfuscationConfig::default(),
             duplicate: DuplicateConfig::default(),
             disk_space: DiskSpaceConfig::default(),
+            cleanup: CleanupConfig::default(),
             password_file: None,
             try_empty_password: true,
             unrar_path: None,
@@ -409,6 +414,42 @@ impl Default for DiskSpaceConfig {
             enabled: true,
             min_free_space: 1024 * 1024 * 1024, // 1 GB
             size_multiplier: 2.5,
+        }
+    }
+}
+
+/// Cleanup configuration for intermediate files
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupConfig {
+    /// Enable cleanup of intermediate files (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// File extensions to remove (.par2, .nzb, .sfv, .srr, etc.)
+    #[serde(default = "default_cleanup_extensions")]
+    pub target_extensions: Vec<String>,
+
+    /// Archive extensions to remove after extraction
+    #[serde(default = "default_archive_extensions")]
+    pub archive_extensions: Vec<String>,
+
+    /// Delete sample folders (default: true from Config.delete_samples)
+    #[serde(default = "default_true")]
+    pub delete_samples: bool,
+
+    /// Sample folder names to detect (case-insensitive)
+    #[serde(default = "default_sample_folder_names")]
+    pub sample_folder_names: Vec<String>,
+}
+
+impl Default for CleanupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            target_extensions: default_cleanup_extensions(),
+            archive_extensions: default_archive_extensions(),
+            delete_samples: true,
+            sample_folder_names: default_sample_folder_names(),
         }
     }
 }
@@ -732,6 +773,32 @@ fn default_script_timeout() -> Duration {
     Duration::from_secs(300) // 5 minutes
 }
 
+fn default_cleanup_extensions() -> Vec<String> {
+    vec![
+        "par2".into(),
+        "PAR2".into(),
+        "nzb".into(),
+        "NZB".into(),
+        "sfv".into(),
+        "SFV".into(),
+        "srr".into(),
+        "SRR".into(),
+        "nfo".into(),
+        "NFO".into(),
+    ]
+}
+
+fn default_sample_folder_names() -> Vec<String> {
+    vec![
+        "sample".into(),
+        "Sample".into(),
+        "SAMPLE".into(),
+        "samples".into(),
+        "Samples".into(),
+        "SAMPLES".into(),
+    ]
+}
+
 // Duration serialization helper
 mod duration_serde {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -764,5 +831,48 @@ impl From<ServerConfig> for nntp_rs::ServerConfig {
             username: config.username.unwrap_or_default(),
             password: config.password.unwrap_or_default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cleanup_config_default() {
+        let config = CleanupConfig::default();
+
+        // Verify cleanup is enabled by default
+        assert!(config.enabled);
+
+        // Verify target extensions include common intermediate files
+        assert!(config.target_extensions.contains(&"par2".to_string()));
+        assert!(config.target_extensions.contains(&"nzb".to_string()));
+        assert!(config.target_extensions.contains(&"sfv".to_string()));
+        assert!(config.target_extensions.contains(&"srr".to_string()));
+        assert!(config.target_extensions.contains(&"nfo".to_string()));
+
+        // Verify archive extensions include common formats
+        assert!(config.archive_extensions.contains(&"rar".to_string()));
+        assert!(config.archive_extensions.contains(&"zip".to_string()));
+        assert!(config.archive_extensions.contains(&"7z".to_string()));
+
+        // Verify sample deletion is enabled by default
+        assert!(config.delete_samples);
+
+        // Verify sample folder names are configured
+        assert!(config.sample_folder_names.contains(&"sample".to_string()));
+        assert!(config.sample_folder_names.contains(&"Sample".to_string()));
+        assert!(config.sample_folder_names.contains(&"SAMPLE".to_string()));
+    }
+
+    #[test]
+    fn test_config_includes_cleanup() {
+        let config = Config::default();
+
+        // Verify cleanup config is present in main config
+        assert!(config.cleanup.enabled);
+        assert!(!config.cleanup.target_extensions.is_empty());
+        assert!(!config.cleanup.archive_extensions.is_empty());
     }
 }

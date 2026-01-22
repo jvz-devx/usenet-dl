@@ -18,16 +18,17 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (39/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (40/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
   - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
-- Total: 105/253 tasks complete (41.5%)
+  - Task 16.1: ✅ Cleanup target file extensions defined (228 tests passing)
+- Total: 106/253 tasks complete (41.9%)
 
-**Next Task:** Task 16.1 - Define cleanup target file extensions
+**Next Task:** Task 16.2 - Implement delete_samples flag and folder detection
 
 ## Analysis
 
@@ -268,7 +269,7 @@ The implementation will require these major dependencies:
 - [x] Task 15.5: Emit Moving event with destination path
 - [x] Task 15.6: Test file collision handling (rename, overwrite, skip modes)
 
-- [ ] Task 16.1: Define cleanup target file extensions (.par2, .nzb, .sfv, .srr, archives)
+- [x] Task 16.1: Define cleanup target file extensions (.par2, .nzb, .sfv, .srr, archives)
 - [ ] Task 16.2: Implement delete_samples flag and folder detection
 - [ ] Task 16.3: Create cleanup() function to remove intermediate files
 - [ ] Task 16.4: Add error handling (log warnings, don't fail on cleanup errors)
@@ -3472,3 +3473,51 @@ Task 14.2 will add the `DeobfuscationConfig` struct to enable/disable obfuscatio
 - Works with temporary directories and respects filesystem permissions
 - Thread-safe and suitable for concurrent operations
 
+
+---
+
+## Completed This Iteration
+
+### Task 16.1: Define cleanup target file extensions ✅
+
+**Summary:**
+Implemented CleanupConfig structure with comprehensive configuration for cleanup operations including target file extensions, archive extensions, sample folder detection, and enable/disable flags.
+
+**Changes Made:**
+
+1. **Created CleanupConfig struct** (src/config.rs):
+   - `enabled: bool` - Enable/disable cleanup (default: true)
+   - `target_extensions: Vec<String>` - Extensions for intermediate files (.par2, .nzb, .sfv, .srr, .nfo)
+   - `archive_extensions: Vec<String>` - Archive extensions to remove after extraction
+   - `delete_samples: bool` - Delete sample folders (default: true)
+   - `sample_folder_names: Vec<String>` - Sample folder patterns (case-insensitive)
+
+2. **Added default functions**:
+   - `default_cleanup_extensions()` - Returns vec!["par2", "PAR2", "nzb", "NZB", "sfv", "SFV", "srr", "SRR", "nfo", "NFO"]
+   - `default_sample_folder_names()` - Returns vec!["sample", "Sample", "SAMPLE", "samples", "Samples", "SAMPLES"]
+
+3. **Updated Config struct**:
+   - Added `cleanup: CleanupConfig` field
+   - Integrated into Default implementation
+
+4. **Added comprehensive tests**:
+   - `test_cleanup_config_default()` - Verifies all default values
+   - `test_config_includes_cleanup()` - Ensures cleanup config is in main Config
+
+**Target File Extensions Defined:**
+- **Intermediate files:** .par2, .nzb, .sfv, .srr, .nfo (with case variations)
+- **Archive files:** Reuses existing archive_extensions from ExtractionConfig (.rar, .zip, .7z, .tar, .gz, .bz2)
+- **Sample folders:** sample, Sample, SAMPLE, samples, Samples, SAMPLES
+
+**Test Results:**
+- 2 new config tests pass ✓
+- Total project tests: 228 tests passing (up from 226)
+- Build completes successfully with no errors
+- Ready for Task 16.2: Implement delete_samples flag and folder detection
+
+**Design Rationale:**
+- Separate CleanupConfig allows fine-grained control over cleanup behavior
+- Case variations in extensions ensure cross-platform compatibility
+- Sample folder names support common naming conventions (singular/plural, various cases)
+- Configuration is serde-compatible for JSON/TOML deserialization
+- Default values align with design document specifications (implementation_1.md lines 1271-1279)
