@@ -169,13 +169,19 @@ impl UsenetDownloader {
         // Create speed limiter with configured limit (or unlimited if not set)
         let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
 
+        // Create config Arc early so we can share it
+        let config_arc = std::sync::Arc::new(config);
+
         // Create post-processing pipeline executor
-        let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(event_tx.clone()));
+        let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
+            event_tx.clone(),
+            config_arc.clone(),
+        ));
 
         let downloader = Self {
             db: std::sync::Arc::new(db),
             event_tx,
-            config: std::sync::Arc::new(config),
+            config: config_arc,
             nntp_pools: std::sync::Arc::new(nntp_pools),
             queue,
             concurrent_limit,
@@ -2052,13 +2058,19 @@ mod tests {
         // Create speed limiter with configured limit
         let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
 
+        // Create config Arc early so we can share it
+        let config_arc = std::sync::Arc::new(config);
+
         // Create post-processing pipeline executor
-        let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(event_tx.clone()));
+        let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
+            event_tx.clone(),
+            config_arc.clone(),
+        ));
 
         let downloader = UsenetDownloader {
             db: std::sync::Arc::new(db),
             event_tx,
-            config: std::sync::Arc::new(config),
+            config: config_arc,
             nntp_pools: std::sync::Arc::new(nntp_pools),
             queue,
             concurrent_limit,

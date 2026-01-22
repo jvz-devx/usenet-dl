@@ -7,10 +7,12 @@
 //! 4. Move - Move files to final destination
 //! 5. Cleanup - Remove intermediate files (.par2, .nzb, archives, samples)
 
-use crate::config::PostProcess;
+use crate::config::{Config, PostProcess};
 use crate::error::Result;
 use crate::types::{DownloadId, Event};
+use crate::utils::get_unique_path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
@@ -18,12 +20,14 @@ use tracing::{debug, info, warn};
 pub struct PostProcessor {
     /// Event channel for emitting pipeline events
     event_tx: broadcast::Sender<Event>,
+    /// Configuration for file collision handling
+    config: Arc<Config>,
 }
 
 impl PostProcessor {
     /// Create a new post-processing pipeline executor
-    pub fn new(event_tx: broadcast::Sender<Event>) -> Self {
-        Self { event_tx }
+    pub fn new(event_tx: broadcast::Sender<Event>, config: Arc<Config>) -> Self {
+        Self { event_tx, config }
     }
 
     /// Execute post-processing pipeline for a completed download
@@ -202,11 +206,170 @@ impl PostProcessor {
             })
             .ok();
 
-        // TODO: Implement file moving with collision handling
-        warn!(download_id, "file moving not yet implemented");
+        // Perform the actual file move with collision handling
+        self.move_files(download_id, source_path, destination)
+            .await
+    }
 
-        // For now, return the destination unchanged
-        Ok(destination.clone())
+    /// Move files from source to destination with collision handling
+    ///
+    /// This function handles moving files/directories from the source path to the
+    /// destination path, applying the configured FileCollisionAction when files
+    /// already exist at the destination.
+    ///
+    /// # Arguments
+    ///
+    /// * `download_id` - The download ID for logging
+    /// * `source_path` - Path to the source files/directory
+    /// * `destination` - Path to the destination directory
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(final_path) where final_path is the actual destination used,
+    /// or Err if the move operation fails
+    async fn move_files(
+        &self,
+        download_id: DownloadId,
+        source_path: &PathBuf,
+        destination: &PathBuf,
+    ) -> Result<PathBuf> {
+        use tokio::fs;
+
+        debug!(
+            download_id,
+            ?source_path,
+            ?destination,
+            "moving files with collision action: {:?}",
+            self.config.file_collision
+        );
+
+        // Check if source exists
+        if !source_path.exists() {
+            return Err(crate::error::Error::InvalidPath {
+                path: source_path.clone(),
+                reason: "Source path does not exist".to_string(),
+            });
+        }
+
+        // Ensure destination parent directory exists
+        if let Some(parent) = destination.parent() {
+            if !parent.exists() {
+                debug!(
+                    download_id,
+                    ?parent,
+                    "creating destination parent directory"
+                );
+                fs::create_dir_all(parent).await?;
+            }
+        }
+
+        // If source is a file, move it directly
+        if source_path.is_file() {
+            return self
+                .move_single_file(download_id, source_path, destination)
+                .await;
+        }
+
+        // If source is a directory, move all its contents
+        if source_path.is_dir() {
+            return self
+                .move_directory_contents(download_id, source_path, destination)
+                .await;
+        }
+
+        // If we get here, source is neither file nor directory
+        Err(crate::error::Error::InvalidPath {
+            path: source_path.clone(),
+            reason: "Source is neither a file nor a directory".to_string(),
+        })
+    }
+
+    /// Move a single file to destination with collision handling
+    async fn move_single_file(
+        &self,
+        download_id: DownloadId,
+        source_file: &PathBuf,
+        destination: &PathBuf,
+    ) -> Result<PathBuf> {
+        use tokio::fs;
+
+        // Apply collision handling to get the actual destination path
+        let final_destination = get_unique_path(destination, self.config.file_collision)?;
+
+        debug!(
+            download_id,
+            ?source_file,
+            ?final_destination,
+            "moving single file"
+        );
+
+        // Perform the move
+        fs::rename(source_file, &final_destination).await?;
+
+        info!(
+            download_id,
+            ?source_file,
+            ?final_destination,
+            "successfully moved file"
+        );
+
+        Ok(final_destination)
+    }
+
+    /// Move directory contents to destination with collision handling
+    fn move_directory_contents<'a>(
+        &'a self,
+        download_id: DownloadId,
+        source_dir: &'a PathBuf,
+        destination: &'a PathBuf,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PathBuf>> + Send + 'a>> {
+        Box::pin(async move {
+            use tokio::fs;
+
+            debug!(
+                download_id,
+                ?source_dir,
+                ?destination,
+                "moving directory contents"
+            );
+
+            // Create destination directory if it doesn't exist
+            if !destination.exists() {
+                fs::create_dir_all(destination).await?;
+            }
+
+            // Read all entries in source directory
+            let mut entries = fs::read_dir(source_dir).await?;
+
+            // Move each entry
+            while let Some(entry) = entries.next_entry().await? {
+                let source_entry_path = entry.path();
+                let entry_name = entry.file_name();
+                let dest_entry_path = destination.join(&entry_name);
+
+                if source_entry_path.is_file() {
+                    // Move file with collision handling
+                    self.move_single_file(download_id, &source_entry_path, &dest_entry_path)
+                        .await?;
+                } else if source_entry_path.is_dir() {
+                    // Recursively move subdirectory
+                    self.move_directory_contents(download_id, &source_entry_path, &dest_entry_path)
+                        .await?;
+
+                    // Remove the now-empty source subdirectory
+                    fs::remove_dir(&source_entry_path).await?;
+                }
+            }
+
+            info!(
+                download_id,
+                ?source_dir,
+                ?destination,
+                "successfully moved directory contents"
+            );
+
+            Ok(destination.clone())
+        })
     }
 
     /// Execute the cleanup stage
@@ -239,7 +402,8 @@ mod tests {
     #[tokio::test]
     async fn test_post_processing_none() {
         let (tx, _rx) = broadcast::channel(100);
-        let processor = PostProcessor::new(tx);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
 
         let download_path = PathBuf::from("/tmp/download");
         let destination = PathBuf::from("/tmp/destination");
@@ -255,7 +419,8 @@ mod tests {
     #[tokio::test]
     async fn test_post_processing_verify() {
         let (tx, mut rx) = broadcast::channel(100);
-        let processor = PostProcessor::new(tx);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
 
         let download_path = PathBuf::from("/tmp/download");
         let destination = PathBuf::from("/tmp/destination");
@@ -282,11 +447,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_processing_unpack_and_cleanup() {
-        let (tx, mut rx) = broadcast::channel(100);
-        let processor = PostProcessor::new(tx);
+        use tempfile::TempDir;
+        use tokio::fs;
 
-        let download_path = PathBuf::from("/tmp/download");
-        let destination = PathBuf::from("/tmp/destination");
+        let (tx, mut rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        // Create temporary directories and files for testing
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        let destination = temp_dir.path().join("destination");
+
+        // Create the download directory with a test file
+        fs::create_dir_all(&download_path).await.unwrap();
+        fs::write(download_path.join("test.txt"), b"test content")
+            .await
+            .unwrap();
 
         let result = processor
             .start_post_processing(
@@ -300,8 +477,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Check that all stage events were emitted in order
-        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-            .collect();
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
 
         assert!(!events.is_empty());
 
@@ -316,24 +492,33 @@ mod tests {
             .any(|e| matches!(e, Event::ExtractComplete { .. })));
         assert!(events.iter().any(|e| matches!(e, Event::Moving { .. })));
         assert!(events.iter().any(|e| matches!(e, Event::Cleaning { .. })));
+
+        // Verify file was moved to destination
+        assert!(destination.join("test.txt").exists());
     }
 
     #[tokio::test]
     async fn test_stage_executor_ordering() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
         // Verify that stages execute in the correct order
         let (tx, mut rx) = broadcast::channel(100);
-        let processor = PostProcessor::new(tx);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
 
-        let download_path = PathBuf::from("/tmp/download");
-        let destination = PathBuf::from("/tmp/destination");
+        // Create temporary directories and files
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        let destination = temp_dir.path().join("destination");
+
+        fs::create_dir_all(&download_path).await.unwrap();
+        fs::write(download_path.join("test.txt"), b"test content")
+            .await
+            .unwrap();
 
         processor
-            .start_post_processing(
-                1,
-                download_path,
-                PostProcess::UnpackAndCleanup,
-                destination,
-            )
+            .start_post_processing(1, download_path, PostProcess::UnpackAndCleanup, destination)
             .await
             .unwrap();
 
@@ -361,5 +546,201 @@ mod tests {
         assert!(verifying_idx < extracting_idx);
         assert!(extracting_idx < moving_idx);
         assert!(moving_idx < cleaning_idx);
+    }
+
+    #[tokio::test]
+    async fn test_move_files_single_file_no_collision() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        fs::write(&source, b"test content").await.unwrap();
+
+        let result = processor.move_files(1, &source, &dest).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), dest);
+        assert!(dest.exists());
+        assert!(!source.exists());
+    }
+
+    #[tokio::test]
+    async fn test_move_files_collision_rename() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let mut config = Config::default();
+        config.file_collision = crate::config::FileCollisionAction::Rename;
+        let processor = PostProcessor::new(tx, Arc::new(config));
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        // Create both source and existing destination
+        fs::write(&source, b"new content").await.unwrap();
+        fs::write(&dest, b"existing content").await.unwrap();
+
+        let result = processor.move_files(1, &source, &dest).await;
+        assert!(result.is_ok());
+
+        let final_dest = result.unwrap();
+        assert_ne!(final_dest, dest); // Should have been renamed
+        assert!(final_dest.to_str().unwrap().contains("dest (1).txt"));
+        assert!(final_dest.exists());
+        assert!(dest.exists()); // Original should still exist
+        assert!(!source.exists()); // Source should be moved
+    }
+
+    #[tokio::test]
+    async fn test_move_files_collision_overwrite() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let mut config = Config::default();
+        config.file_collision = crate::config::FileCollisionAction::Overwrite;
+        let processor = PostProcessor::new(tx, Arc::new(config));
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        // Create both source and existing destination
+        fs::write(&source, b"new content").await.unwrap();
+        fs::write(&dest, b"existing content").await.unwrap();
+
+        let result = processor.move_files(1, &source, &dest).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), dest);
+        assert!(dest.exists());
+        assert!(!source.exists());
+
+        // Verify content was overwritten
+        let content = fs::read_to_string(&dest).await.unwrap();
+        assert_eq!(content, "new content");
+    }
+
+    #[tokio::test]
+    async fn test_move_files_collision_skip() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let mut config = Config::default();
+        config.file_collision = crate::config::FileCollisionAction::Skip;
+        let processor = PostProcessor::new(tx, Arc::new(config));
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        // Create both source and existing destination
+        fs::write(&source, b"new content").await.unwrap();
+        fs::write(&dest, b"existing content").await.unwrap();
+
+        let result = processor.move_files(1, &source, &dest).await;
+        assert!(result.is_err()); // Should fail with collision error
+        assert!(source.exists()); // Source should still exist
+        assert!(dest.exists()); // Destination should still exist
+
+        // Verify original content preserved
+        let content = fs::read_to_string(&dest).await.unwrap();
+        assert_eq!(content, "existing content");
+    }
+
+    #[tokio::test]
+    async fn test_move_directory_contents() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("source");
+        let dest_dir = temp_dir.path().join("dest");
+
+        // Create source directory with multiple files and subdirectories
+        fs::create_dir_all(&source_dir).await.unwrap();
+        fs::write(source_dir.join("file1.txt"), b"content1")
+            .await
+            .unwrap();
+        fs::write(source_dir.join("file2.txt"), b"content2")
+            .await
+            .unwrap();
+
+        let subdir = source_dir.join("subdir");
+        fs::create_dir_all(&subdir).await.unwrap();
+        fs::write(subdir.join("file3.txt"), b"content3")
+            .await
+            .unwrap();
+
+        let result = processor.move_files(1, &source_dir, &dest_dir).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), dest_dir);
+
+        // Verify all files were moved
+        assert!(dest_dir.join("file1.txt").exists());
+        assert!(dest_dir.join("file2.txt").exists());
+        assert!(dest_dir.join("subdir/file3.txt").exists());
+
+        // Verify source files no longer exist
+        assert!(!source_dir.join("file1.txt").exists());
+        assert!(!source_dir.join("file2.txt").exists());
+        assert!(!source_dir.join("subdir/file3.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_move_directory_with_collision_rename() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let mut config = Config::default();
+        config.file_collision = crate::config::FileCollisionAction::Rename;
+        let processor = PostProcessor::new(tx, Arc::new(config));
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("source");
+        let dest_dir = temp_dir.path().join("dest");
+
+        // Create source directory with files
+        fs::create_dir_all(&source_dir).await.unwrap();
+        fs::write(source_dir.join("file.txt"), b"new content")
+            .await
+            .unwrap();
+
+        // Create destination directory with conflicting file
+        fs::create_dir_all(&dest_dir).await.unwrap();
+        fs::write(dest_dir.join("file.txt"), b"existing content")
+            .await
+            .unwrap();
+
+        let result = processor.move_files(1, &source_dir, &dest_dir).await;
+        assert!(result.is_ok());
+
+        // Both files should exist (one renamed)
+        assert!(dest_dir.join("file.txt").exists());
+        assert!(dest_dir.join("file (1).txt").exists());
+
+        // Verify original content preserved
+        let original = fs::read_to_string(dest_dir.join("file.txt"))
+            .await
+            .unwrap();
+        assert_eq!(original, "existing content");
+
+        let renamed = fs::read_to_string(dest_dir.join("file (1).txt"))
+            .await
+            .unwrap();
+        assert_eq!(renamed, "new content");
     }
 }
