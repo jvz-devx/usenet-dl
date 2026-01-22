@@ -146,11 +146,11 @@ The implementation will require these major dependencies:
 - [x] Task 2.7: Implement history operations (insert, query, cleanup)
 - [x] Task 2.8: Add database migration system (sqlx migrations or embedded SQL)
 
-- [ ] Task 3.1: Create Event enum with all event types (Queued, Downloading, Complete, Failed, etc.)
-- [ ] Task 3.2: Implement Stage enum (Download, Verify, Repair, Extract, Move, Cleanup)
-- [ ] Task 3.3: Set up tokio::broadcast channel in UsenetDownloader
-- [ ] Task 3.4: Implement subscribe() method returning broadcast::Receiver<Event>
-- [ ] Task 3.5: Add event emission throughout codebase (emit_event helper method)
+- [x] Task 3.1: Create Event enum with all event types (Queued, Downloading, Complete, Failed, etc.)
+- [x] Task 3.2: Implement Stage enum (Download, Verify, Repair, Extract, Move, Cleanup)
+- [x] Task 3.3: Set up tokio::broadcast channel in UsenetDownloader
+- [x] Task 3.4: Implement subscribe() method returning broadcast::Receiver<Event>
+- [x] Task 3.5: Add event emission throughout codebase (emit_event helper method)
 
 - [ ] Task 4.1: Create UsenetDownloader struct with fields (db, event_tx, config, nntp_pool)
 - [ ] Task 4.2: Implement UsenetDownloader::new(config) constructor
@@ -425,34 +425,47 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 History Operations - Task 2.7 Complete**
+**Phase 1 Event System - Tasks 3.1-3.5 Complete**
 
-- Task 2.7: Implemented comprehensive history operations for download record keeping ✓
-  - insert_history(&NewHistoryEntry) - add completed/failed downloads to history
-  - query_history(status_filter, limit, offset) - paginated history queries with optional status filtering
-  - count_history(status_filter) - count history entries for pagination
-  - delete_history_before(timestamp) - cleanup old history entries (e.g., older than 30 days)
-  - delete_history_by_status(status) - remove specific status records (e.g., all failed downloads)
-  - clear_history() - destructive operation to remove all history
-  - get_history_entry(id) - fetch single history record by ID
-  - All operations support proper error handling and return Result<T>
-  - Added supporting types:
-    - NewHistoryEntry - for inserting new history records
-    - HistoryRow - SQLite row representation
-    - From<HistoryRow> for HistoryEntry conversion with proper type conversions
-  - Added Status::from_i32() and Status::to_i32() helper methods for database conversions
-  - 8 comprehensive tests verify all history operations:
-    - test_insert_history - basic insertion and retrieval
-    - test_query_history_pagination - verify pagination with limit/offset
-    - test_query_history_status_filter - filter by status (Complete vs Failed)
-    - test_delete_history_before - cleanup by timestamp
-    - test_delete_history_by_status - cleanup by status
-    - test_clear_history - delete all records
-    - test_get_history_entry_not_found - handle missing records
-    - test_history_ordering - verify DESC ordering by completed_at
-  - All 33 database tests passing (25 from previous tasks + 8 new history tests)
-  - History system ready for integration with download completion tracking in Phase 2/3
-  - API endpoints for history management (GET /history, DELETE /history) ready for Phase 3
+- Task 3.1: Event enum already implemented in src/types.rs ✓
+  - Comprehensive Event enum with all 18 event types from the design document
+  - Queue events: Queued, Removed
+  - Download progress: Downloading, DownloadComplete, DownloadFailed
+  - Post-processing stages: Verifying, VerifyComplete, Repairing, RepairComplete, Extracting, ExtractComplete, Moving, Cleaning
+  - Final states: Complete, Failed
+  - Global events: SpeedLimitChanged, QueuePaused, QueueResumed
+  - Notification events: WebhookFailed, ScriptFailed
+  - All events are Serialize/Deserialize for SSE and API integration
+  - Tagged enum with #[serde(tag = "type", rename_all = "snake_case")] for clean JSON
+
+- Task 3.2: Stage enum already implemented in src/types.rs ✓
+  - 6 post-processing stages: Download, Verify, Repair, Extract, Move, Cleanup
+  - Used in Event::Failed to indicate where failure occurred
+  - Serialize/Deserialize for API integration
+
+- Task 3.3: Set up tokio::broadcast channel in UsenetDownloader ✓
+  - Added event_tx field to UsenetDownloader struct
+  - Created broadcast channel with buffer size of 1000 events in UsenetDownloader::new()
+  - Buffer size prevents slow subscribers from blocking event emission
+  - Multiple subscribers supported independently
+
+- Task 3.4: Implemented subscribe() method ✓
+  - Returns broadcast::Receiver<Event> for event listening
+  - Comprehensive documentation with usage examples
+  - Explains lagging behavior (RecvError::Lagged after 1000 events)
+  - Multiple subscribers can be created independently
+
+- Task 3.5: Added emit_event() helper method ✓
+  - pub(crate) method for internal event emission throughout codebase
+  - Silently drops events if no active subscribers (using .ok())
+  - Non-blocking - allows downloads to continue even without listeners
+  - Ready for use in all download/post-processing stages
+
+- Implementation details:
+  - Event and Stage types re-exported from lib.rs for easy access
+  - All 33 existing tests still passing
+  - Code compiles successfully with only documentation warnings (expected)
+  - Event system foundation complete and ready for Phase 1 Task 4 (Download Manager)
 
 ### Implementation Details
 
