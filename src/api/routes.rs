@@ -492,7 +492,10 @@ pub async fn health_check() -> impl IntoResponse {
     )
 )]
 pub async fn openapi_spec() -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    use crate::api::openapi::ApiDoc;
+    use utoipa::OpenApi;
+
+    Json(ApiDoc::openapi())
 }
 
 /// GET /events - Server-sent events stream

@@ -26,12 +26,12 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (12/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (13/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
-  - Tasks 18.1-18.4: ✅ OpenAPI integration complete - 33 types annotated, 37 routes annotated, ApiDoc struct created with 8 tests
-- Total: 121/253 tasks complete (47.8%)
+  - Tasks 18.1-18.5: ✅ OpenAPI integration with /openapi.json endpoint complete - 33 types annotated, 37 routes annotated, ApiDoc struct created with 9 tests
+- Total: 122/253 tasks complete (48.2%)
 
-**Next Task:** Task 18.5 - Implement /openapi.json endpoint serving OpenAPI spec
+**Next Task:** Task 18.6 - Mount Swagger UI at /swagger-ui
 
 ## Analysis
 
@@ -294,7 +294,7 @@ The implementation will require these major dependencies:
 - [x] Task 18.2: Annotate all types with #[derive(ToSchema)]
 - [x] Task 18.3: Annotate all route handlers with #[utoipa::path]
 - [x] Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]
-- [ ] Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec
+- [x] Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec
 - [ ] Task 18.6: Mount Swagger UI at /swagger-ui
 - [ ] Task 18.7: Test Swagger UI loads and shows all endpoints
 
@@ -4225,3 +4225,60 @@ The ApiDoc struct is now ready to be used in:
 - **Task 18.7:** Test that Swagger UI loads and displays all endpoints
 
 The OpenAPI specification can now be accessed programmatically via `ApiDoc::openapi()` and serialized to JSON for serving over HTTP.
+
+---
+
+## Completed This Iteration
+
+### Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec ✅
+
+**Changes Made:**
+
+1. **Updated `src/api/routes.rs`:**
+   - Implemented `openapi_spec()` handler to serve the OpenAPI specification
+   - Removed NOT_IMPLEMENTED placeholder
+   - Now returns `Json(ApiDoc::openapi())` which serializes the full spec
+
+2. **Added comprehensive test in `src/api/mod.rs`:**
+   - `test_openapi_json_endpoint()` validates the endpoint returns valid JSON
+   - Verifies response has correct HTTP status (200 OK)
+   - Validates JSON structure has required OpenAPI fields (openapi, info, paths)
+   - Confirms OpenAPI version is 3.x
+   - Checks API title is correct
+
+**Implementation:**
+```rust
+pub async fn openapi_spec() -> impl IntoResponse {
+    use crate::api::openapi::ApiDoc;
+    use utoipa::OpenApi;
+
+    Json(ApiDoc::openapi())
+}
+```
+
+**Test Results:**
+```bash
+$ cargo test --lib openapi
+running 9 tests
+test api::openapi::tests::test_openapi_doc_generation ... ok
+test api::openapi::tests::test_openapi_spec_has_components ... ok
+test api::openapi::tests::test_openapi_spec_info ... ok
+test api::openapi::tests::test_openapi_spec_has_paths ... ok
+test api::openapi::tests::test_openapi_spec_has_security_scheme ... ok
+test api::openapi::tests::test_openapi_spec_has_tags ... ok
+test api::openapi::tests::test_openapi_spec_version ... ok
+test api::openapi::tests::test_openapi_json_serialization ... ok
+test api::tests::test_openapi_json_endpoint ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored
+```
+✅ All 9 OpenAPI tests passing (including new endpoint test)
+
+**Verification:**
+
+The endpoint is now fully functional and can be accessed at:
+- **URL:** `GET /api/v1/openapi.json`
+- **Response:** Complete OpenAPI 3.1 specification in JSON format
+- **Content includes:** All 37 routes, all 33 types, API info, tags, security schemes
+
+This endpoint provides the machine-readable API specification that will be consumed by Swagger UI in the next task (18.6).

@@ -617,4 +617,54 @@ mod tests {
         // Shutdown the server
         server_handle.abort();
     }
+
+    #[tokio::test]
+    async fn test_openapi_json_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+        let config = downloader.config.clone();
+
+        // Create the router
+        let app = create_router(downloader, config);
+
+        // Make a request to /openapi.json
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Check that we got a 200 OK
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check the response body contains valid OpenAPI spec
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Parse as JSON to verify it's valid
+        let json: serde_json::Value = serde_json::from_str(&body_str)
+            .expect("Response should be valid JSON");
+
+        // Verify it has the required OpenAPI fields
+        assert!(json.get("openapi").is_some(), "Should have 'openapi' field");
+        assert!(json.get("info").is_some(), "Should have 'info' field");
+        assert!(json.get("paths").is_some(), "Should have 'paths' field");
+
+        // Verify OpenAPI version
+        let openapi_version = json["openapi"].as_str().unwrap();
+        assert!(openapi_version.starts_with("3."), "Should be OpenAPI 3.x");
+
+        // Verify title
+        assert_eq!(json["info"]["title"], "usenet-dl REST API");
+    }
 }
