@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (53/53 tasks complete - PHASE COMPLETE!)
+- Phase 1: 🔄 In Progress (54/61 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: ⏳ Remaining (Graceful shutdown)
-- Total: 58/253 tasks complete (22.9%)
+  - Tasks 9.1-9.8: 🔄 In Progress (1/8 complete - shutdown() method with tests)
+- Total: 59/253 tasks complete (23.3%)
 
-**Next Task:** Task 9.1 - Implement shutdown() method with graceful sequence
+**Next Task:** Task 9.2 - Add accepting_new flag (AtomicBool) to stop new downloads
 
 ## Analysis
 
@@ -207,7 +207,7 @@ The implementation will require these major dependencies:
 - [x] Task 8.5: Add retry attempt tracking and logging
 - [x] Task 8.6: Test retry with simulated transient failures
 
-- [ ] Task 9.1: Implement shutdown() method with graceful sequence
+- [x] Task 9.1: Implement shutdown() method with graceful sequence
 - [ ] Task 9.2: Add accepting_new flag (AtomicBool) to stop new downloads
 - [ ] Task 9.3: Implement pause_graceful() to finish current article
 - [ ] Task 9.4: Add wait_for_articles() with timeout
@@ -438,6 +438,66 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 9.1 Complete: Graceful Shutdown Implementation**
+
+Successfully implemented the shutdown() method with graceful shutdown sequence, cancellation of active downloads, and comprehensive test coverage.
+
+**Implementation Summary:**
+
+1. **shutdown() Method** (src/lib.rs:834-896)
+   - Cancels all active downloads using their cancellation tokens
+   - Waits for active downloads to complete with 30-second timeout
+   - Handles timeout gracefully if downloads don't finish in time
+   - Persists final state (queue state already in database)
+   - Logs all shutdown steps for observability
+   - Returns Result<()> for error handling
+
+2. **wait_for_active_downloads() Helper** (src/lib.rs:898-916)
+   - Private async helper method that polls active downloads
+   - Checks every 100ms if any downloads are still active
+   - Returns when all downloads have completed
+   - Used internally by shutdown() with timeout wrapper
+
+**Key Features:**
+
+- **Graceful Cancellation**: Uses existing CancellationToken infrastructure
+- **Timeout Protection**: 30-second timeout prevents hanging on shutdown
+- **Non-Blocking**: Uses tokio::time::timeout for async timeout handling
+- **Comprehensive Logging**: tracing::info and debug logs throughout shutdown sequence
+- **Database Handling**: Notes that database connections close when Arc is dropped
+
+**Test Coverage (3 new tests, total: 124 passing):**
+
+1. **test_shutdown_graceful**: Basic shutdown test
+   - Creates downloader with no active downloads
+   - Verifies shutdown() completes successfully
+   - Ensures no errors during clean shutdown
+
+2. **test_shutdown_with_active_downloads**: Cancellation test
+   - Adds 2 mock active downloads with cancellation tokens
+   - Calls shutdown() and verifies success
+   - Confirms all cancellation tokens were cancelled
+   - Validates that shutdown properly cancels ongoing work
+
+3. **test_shutdown_waits_for_completion**: Wait behavior test
+   - Adds a download that completes after 500ms
+   - Spawns task to remove download after delay
+   - Verifies shutdown waits for completion (>450ms elapsed)
+   - Confirms shutdown completes in reasonable time (<2s)
+   - Tests the wait_for_active_downloads() polling logic
+
+**Design Notes:**
+
+- Database is wrapped in Arc<Database>, so close() can't be called directly
+- Instead, connections will close automatically when last Arc reference drops
+- This is acceptable because shutdown() is typically called at program exit
+- Future iterations (Tasks 9.2-9.8) will add:
+  - accepting_new flag to stop new downloads
+  - Signal handling for SIGTERM/SIGINT
+  - Database unclean shutdown tracking for crash recovery
+
+**Previous Iteration:**
 
 **Phase 1 Retry Logic - Tasks 8.1-8.6 Complete: Full Retry Implementation with Exponential Backoff**
 
