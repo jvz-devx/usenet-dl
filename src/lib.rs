@@ -248,6 +248,49 @@ impl UsenetDownloader {
         self.event_tx.send(event).ok();
     }
 
+    /// Spawn the REST API server in a background task
+    ///
+    /// This method spawns the API server as a separate async task using `tokio::spawn`.
+    /// The server runs concurrently with download processing and listens on the configured
+    /// bind address (default: 127.0.0.1:6789).
+    ///
+    /// The spawned task runs until the server is shut down (either via graceful shutdown
+    /// or an error occurs).
+    ///
+    /// # Returns
+    ///
+    /// Returns a `tokio::task::JoinHandle` that can be used to wait for the server to finish
+    /// or to cancel the server task.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use usenet_dl::{UsenetDownloader, Config};
+    /// use std::sync::Arc;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let config = Config::default();
+    ///     let downloader = Arc::new(UsenetDownloader::new(config).await?);
+    ///
+    ///     // Spawn API server in background
+    ///     let api_handle = downloader.spawn_api_server();
+    ///
+    ///     // Server is now running, handle other tasks...
+    ///     // To wait for completion: api_handle.await??;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn spawn_api_server(self: &std::sync::Arc<Self>) -> tokio::task::JoinHandle<Result<()>> {
+        let downloader = self.clone();
+        let config = self.config.clone();
+
+        tokio::spawn(async move {
+            crate::api::start_api_server(downloader, config).await
+        })
+    }
+
     /// Add a download to the in-memory priority queue
     ///
     /// This method adds a download ID to the priority queue for processing.

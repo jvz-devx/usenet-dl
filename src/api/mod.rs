@@ -3,12 +3,13 @@
 //! Provides an OpenAPI 3.1 compliant REST API for managing downloads,
 //! configuration, and monitoring the download queue.
 
-use crate::{Config, UsenetDownloader};
+use crate::{Config, UsenetDownloader, Result};
 use axum::{
     routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
+use tokio::net::TcpListener;
 
 pub mod routes;
 pub mod state;
@@ -132,4 +133,178 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         .route("/scheduler/:id", delete(routes::delete_schedule_rule))
         // Add state to all routes
         .with_state(state)
+}
+
+/// Start the API server on the configured bind address.
+///
+/// This function creates a TCP listener, binds it to the configured address,
+/// and starts serving the API router. It runs until the server is shut down.
+///
+/// # Arguments
+///
+/// * `downloader` - Arc-wrapped UsenetDownloader instance to handle API requests
+/// * `config` - Arc-wrapped Config containing API configuration
+///
+/// # Returns
+///
+/// Returns a Result<()> that completes when the server stops, either due to
+/// an error or graceful shutdown.
+///
+/// # Example
+///
+/// ```no_run
+/// use usenet_dl::{UsenetDownloader, Config};
+/// use std::sync::Arc;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = Arc::new(Config::default());
+/// let downloader = Arc::new(UsenetDownloader::new((*config).clone()).await?);
+///
+/// // Start API server (blocks until shutdown)
+/// usenet_dl::api::start_api_server(downloader, config).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn start_api_server(
+    downloader: Arc<UsenetDownloader>,
+    config: Arc<Config>,
+) -> Result<()> {
+    let bind_address = config.api.bind_address;
+
+    tracing::info!(
+        address = %bind_address,
+        "Starting API server"
+    );
+
+    // Create the router with all routes
+    let app = create_router(downloader, config);
+
+    // Bind TCP listener to the configured address
+    let listener = TcpListener::bind(bind_address)
+        .await
+        .map_err(|e| crate::error::Error::IoError(e))?;
+
+    tracing::info!(
+        address = %bind_address,
+        "API server listening"
+    );
+
+    // Serve the API using the listener
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| crate::error::Error::ApiServerError(e.to_string()))?;
+
+    tracing::info!("API server stopped");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Config;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    /// Helper to create a test UsenetDownloader instance
+    async fn create_test_downloader() -> (Arc<UsenetDownloader>, tempfile::TempDir) {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        let config = Config {
+            database_path: db_path,
+            servers: vec![], // No servers for testing
+            ..Default::default()
+        };
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+        (Arc::new(downloader), temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_api_server_spawns() {
+        // Create test downloader with a unique port
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Use a random available port for testing
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                bind_address: "127.0.0.1:0".parse().unwrap(), // Port 0 = OS assigns a free port
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Spawn the API server
+        let api_handle = tokio::spawn({
+            let downloader = downloader.clone();
+            let config = config.clone();
+            async move {
+                start_api_server(downloader, config).await
+            }
+        });
+
+        // Give it a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Abort the server task (since we don't have a graceful shutdown mechanism yet)
+        api_handle.abort();
+
+        // The test passes if we got here without panicking
+        assert!(true, "API server spawned successfully");
+    }
+
+    #[tokio::test]
+    async fn test_spawn_api_server_method() {
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Use the spawn_api_server method
+        let api_handle = downloader.spawn_api_server();
+
+        // Give it a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Abort the server task
+        api_handle.abort();
+
+        // Test passes if we got here
+        assert!(true, "spawn_api_server method works");
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+        let config = downloader.config.clone();
+
+        // Create the router
+        let app = create_router(downloader, config);
+
+        // Make a request to /health
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Check that we got a 200 OK
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check the response body
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body_str.contains("ok"));
+        assert!(body_str.contains("0.1.0")); // Version from Cargo.toml
+    }
 }

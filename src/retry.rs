@@ -103,6 +103,19 @@ impl IsRetryable for Error {
             Error::FileCollision { .. } => false,
             // Invalid path errors are permanent
             Error::InvalidPath { .. } => false,
+            // API server errors are generally not retryable (application-level errors)
+            Error::ApiServerError(_) => false,
+            // IoError is similar to Io but allows wrapping std::io::Error explicitly
+            Error::IoError(e) => match e.kind() {
+                std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::Interrupted => true,
+                _ => false,
+            },
             // Unknown errors - be conservative and don't retry
             Error::Other(_) => false,
         }

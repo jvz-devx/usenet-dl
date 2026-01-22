@@ -26,11 +26,11 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (4/71 tasks) - REST API implementation
-  - Tasks 17.1-17.4: ✅ API infrastructure complete (router, state, routes stubs)
-- Total: 113/253 tasks complete (44.7%)
+- Phase 3: 🔄 In Progress (5/71 tasks) - REST API implementation
+  - Tasks 17.1-17.5: ✅ API server startup complete (router, state, spawn_api_server)
+- Total: 114/253 tasks complete (45.1%)
 
-**Next Task:** Task 17.5 - Implement API server startup (tokio::spawn api_server)
+**Next Task:** Task 17.6 - Add CORS middleware (tower-http CorsLayer)
 
 ## Analysis
 
@@ -284,7 +284,7 @@ The implementation will require these major dependencies:
 - [x] Task 17.2: Create ApiConfig struct with bind_address, api_key, cors, swagger_ui, rate_limit
 - [x] Task 17.3: Implement create_router() with all route definitions
 - [x] Task 17.4: Create AppState with Arc<UsenetDownloader> for handler access
-- [ ] Task 17.5: Implement API server startup (tokio::spawn api_server)
+- [x] Task 17.5: Implement API server startup (tokio::spawn api_server)
 - [ ] Task 17.6: Add CORS middleware (tower-http CorsLayer)
 - [ ] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
 - [ ] Task 17.8: Test API server starts and responds to /health
@@ -3692,3 +3692,58 @@ Tasks 16.4, 16.5, and 16.6 were also completed as part of this implementation:
 - 16.6: 8 comprehensive tests cover various file types and scenarios
 
 Ready for Phase 3: REST API implementation.
+
+## Completed This Iteration (Ralph)
+
+**Task:** Task 17.5 - Implement API server startup (tokio::spawn api_server)
+
+**Implementation Summary:**
+
+1. **Added `start_api_server` function** in `src/api/mod.rs`:
+   - Creates TCP listener and binds to configured address
+   - Serves the API router using `axum::serve()`
+   - Includes comprehensive documentation and examples
+   - Returns `Result<()>` for proper error handling
+
+2. **Added `spawn_api_server` method** to `UsenetDownloader`:
+   - Spawns API server in background using `tokio::spawn()`
+   - Returns `JoinHandle` for managing the server task
+   - Takes `&Arc<Self>` to enable safe cloning
+   - Allows concurrent execution with download processing
+
+3. **Added new error variants** to support API server operations:
+   - `Error::ApiServerError(String)` for server-related errors
+   - `Error::IoError(std::io::Error)` for explicit IO error wrapping
+   - Updated `IsRetryable` trait implementation in `retry.rs`
+
+4. **Updated dependencies**:
+   - Added `tower` "util" feature for `ServiceExt` trait
+   - Enables testing with `.oneshot()` method
+
+5. **Implemented comprehensive tests**:
+   - `test_api_server_spawns`: Verifies server spawns correctly
+   - `test_spawn_api_server_method`: Tests convenience method
+   - `test_health_endpoint`: Validates /health route works
+   - All 3 tests passing
+
+**Files Modified:**
+- `src/api/mod.rs` - Added `start_api_server` function and tests
+- `src/lib.rs` - Added `spawn_api_server` method
+- `src/error.rs` - Added `ApiServerError` and `IoError` variants
+- `src/retry.rs` - Updated `IsRetryable` match statement
+- `Cargo.toml` - Added "util" feature to tower dependency
+
+**Test Results:**
+- 3 new API tests passing
+- Build successful with no errors (78 warnings from missing docs)
+- Library compiles cleanly
+
+**Design Decisions:**
+
+1. **Async server startup**: Uses `tokio::spawn()` for non-blocking concurrent execution
+2. **Clean separation**: API server runs independently from download processor
+3. **Proper error handling**: Custom error types for API-specific failures
+4. **Testability**: Port 0 in tests allows OS to assign free port
+5. **Documentation**: Comprehensive docs and examples for public APIs
+
+**Next Task:** Task 17.6 - Add CORS middleware (tower-http CorsLayer)

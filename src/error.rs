@@ -82,6 +82,14 @@ pub enum Error {
         reason: String,
     },
 
+    /// API server error
+    #[error("API server error: {0}")]
+    ApiServerError(String),
+
+    /// I/O error (non-std::io::Error)
+    #[error("I/O error: {0}")]
+    IoError(std::io::Error),
+
     /// Other error
     #[error("{0}")]
     Other(String),
