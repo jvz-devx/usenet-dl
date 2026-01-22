@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (29/53 tasks complete)
+- Phase 1: 🔄 In Progress (30/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Tasks 5.1-5.4: ✅ Priority queue and automatic download spawning complete (51 tests passing)
-  - Tasks 5.5-9.8: ⏳ Remaining (Pause/Resume, Cancel, Speed Limiting, Retry, Shutdown)
-- Total: 34/253 tasks complete (13.4%)
+  - Tasks 5.1-5.5: ✅ Priority queue, automatic download spawning, and pause complete (55 tests passing)
+  - Tasks 5.6-9.8: ⏳ Remaining (Resume, Cancel, Speed Limiting, Retry, Shutdown)
+- Total: 35/253 tasks complete (13.8%)
 
-**Next Task:** Task 5.5 - Implement pause() to stop download without removing from queue
+**Next Task:** Task 5.6 - Implement resume() to restart paused download
 
 ## Analysis
 
@@ -176,7 +176,7 @@ The implementation will require these major dependencies:
 - [x] Task 5.2: Add queue management (add, remove, reorder by priority)
 - [x] Task 5.3: Implement max_concurrent_downloads limiter (Semaphore)
 - [x] Task 5.4: Create queue processor task that spawns downloads
-- [ ] Task 5.5: Implement pause() to stop download without removing from queue
+- [x] Task 5.5: Implement pause() to stop download without removing from queue
 - [ ] Task 5.6: Implement resume() to restart paused download
 - [ ] Task 5.7: Implement cancel() to remove download and delete files
 - [ ] Task 5.8: Add pause_all() and resume_all() queue-wide operations
@@ -435,6 +435,79 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Queue Management - Task 5.5 Complete: Pause Implementation**
+
+- Task 5.5: Implemented pause() to stop download without removing from queue ✓
+  - Added `active_downloads` HashMap to track running downloads with cancellation tokens
+  - Each download task registers a tokio_util CancellationToken on start
+  - pause() method signals download to stop gracefully
+  - Download checks cancellation token after each article
+  - Status updated to Paused in database when stopped
+  - Cancellation token cleaned up on completion/failure/pause
+  - Idempotent: Can pause already-paused downloads without error
+  - Prevents pausing completed/failed downloads with error
+  - Comprehensive cleanup in all error paths
+  - Added tokio-util dependency for CancellationToken support
+  - All 55 tests passing (4 new pause tests added)
+
+**Implementation Details:**
+
+Cancellation Token Management:
+```rust
+// UsenetDownloader now has:
+active_downloads: Arc<Mutex<HashMap<DownloadId, CancellationToken>>>
+
+// On download start:
+let cancel_token = CancellationToken::new();
+active_downloads.insert(id, cancel_token.clone());
+
+// In download loop (after each article):
+if cancel_token.is_cancelled() {
+    db.update_status(id, Status::Paused).await;
+    active_downloads.remove(&id);
+    return;
+}
+
+// On completion/failure:
+active_downloads.remove(&id);
+```
+
+pause() Method Behavior:
+- Validates download exists and can be paused
+- Already paused: Returns Ok (idempotent)
+- Complete/Failed: Returns error (cannot pause)
+- Queued/Downloading/Processing: Cancels and marks as Paused
+- Signals cancellation token to stop download task
+- Updates database status to Paused
+- Graceful stop: completes current article before stopping
+
+Error Handling:
+- Cleanup active_downloads in ALL error paths (13 locations)
+- Prevents token leak if download fails
+- Ensures consistent state between database and active downloads
+- tracing::error! for all failure scenarios
+
+Test Coverage:
+- test_pause_queued_download: Pause before download starts
+- test_pause_already_paused: Idempotent pause behavior
+- test_pause_completed_download: Cannot pause finished downloads
+- test_pause_nonexistent_download: Error handling for invalid ID
+
+**Technical Notes:**
+- tokio_util::sync::CancellationToken is async-friendly and Clone-able
+- CancellationToken.cancel() is idempotent (safe to call multiple times)
+- CancellationToken.is_cancelled() is very cheap (atomic bool check)
+- Paused downloads remain in database with progress preserved
+- Ready for resume() implementation (Task 5.6)
+
+**Architectural Impact:**
+- Foundation for cancel() implementation (Task 5.7)
+- Enables pause_all() and resume_all() (Task 5.8)
+- Active downloads tracking enables monitoring and control
+- Graceful shutdown can leverage cancellation tokens (Task 9.1-9.8)
+
+## Previous Completed Iterations
 
 **Phase 1 Queue Management - Task 5.4 Complete: Queue Processor Implementation**
 

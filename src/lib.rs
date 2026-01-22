@@ -76,6 +76,8 @@ pub struct UsenetDownloader {
     queue: std::sync::Arc<tokio::sync::Mutex<std::collections::BinaryHeap<QueuedDownload>>>,
     /// Semaphore to limit concurrent downloads (respects max_concurrent_downloads config)
     concurrent_limit: std::sync::Arc<tokio::sync::Semaphore>,
+    /// Map of active downloads to their cancellation tokens (for pause/cancel operations)
+    active_downloads: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<DownloadId, tokio_util::sync::CancellationToken>>>,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -142,6 +144,11 @@ impl UsenetDownloader {
             config.max_concurrent_downloads
         ));
 
+        // Create active downloads tracking map
+        let active_downloads = std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new()
+        ));
+
         Ok(Self {
             db: std::sync::Arc::new(db),
             event_tx,
@@ -149,6 +156,7 @@ impl UsenetDownloader {
             nntp_pools: std::sync::Arc::new(nntp_pools),
             queue,
             concurrent_limit,
+            active_downloads,
         })
     }
 
@@ -291,6 +299,78 @@ impl UsenetDownloader {
     async fn queue_size(&self) -> usize {
         let queue = self.queue.lock().await;
         queue.len()
+    }
+
+    /// Pause a download
+    ///
+    /// This method pauses a download without removing it from the queue.
+    /// If the download is currently downloading, it will be stopped gracefully
+    /// (after completing the current article). The download will be marked as
+    /// Paused in the database and can be resumed later with `resume()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to pause
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if the download was successfully paused, or an error if:
+    /// - The download doesn't exist
+    /// - The download is already paused, complete, or failed
+    /// - Database update fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Pause a download
+    /// downloader.pause(id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn pause(&self, id: DownloadId) -> Result<()> {
+        // Fetch download from database
+        let download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+
+        let current_status = Status::from_i32(download.status);
+
+        // Check if download can be paused
+        match current_status {
+            Status::Paused => {
+                // Already paused, nothing to do
+                return Ok(());
+            }
+            Status::Complete | Status::Failed => {
+                return Err(Error::Database(format!(
+                    "Cannot pause download {}: status is {:?}",
+                    id, current_status
+                )));
+            }
+            Status::Queued | Status::Downloading | Status::Processing => {
+                // Can be paused
+            }
+        }
+
+        // If download is actively running, cancel its task
+        let mut active_downloads = self.active_downloads.lock().await;
+        if let Some(cancel_token) = active_downloads.get(&id) {
+            // Signal the download task to stop
+            cancel_token.cancel();
+            // Remove from active downloads (task will clean up)
+            active_downloads.remove(&id);
+        }
+        drop(active_downloads); // Release lock
+
+        // Update status to Paused in database
+        self.db.update_status(id, Status::Paused.to_i32()).await?;
+
+        // Emit paused event (we'll add this event type if needed, for now we can skip)
+        // For consistency with design, downloads don't have individual pause events
+        // Global pause_all emits QueuePaused, but individual pause is silent
+
+        Ok(())
     }
 
     /// Add an NZB to the download queue from raw bytes
@@ -553,6 +633,7 @@ impl UsenetDownloader {
         let event_tx = self.event_tx.clone();
         let nntp_pools = self.nntp_pools.clone();
         let config = self.config.clone();
+        let active_downloads = self.active_downloads.clone();
 
         tokio::spawn(async move {
             loop {
@@ -581,6 +662,16 @@ impl UsenetDownloader {
                     let event_tx_clone = event_tx.clone();
                     let nntp_pools_clone = nntp_pools.clone();
                     let config_clone = config.clone();
+                    let active_downloads_clone = active_downloads.clone();
+
+                    // Create cancellation token for this download
+                    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+                    // Register the cancellation token
+                    {
+                        let mut active = active_downloads_clone.lock().await;
+                        active.insert(id, cancel_token.clone());
+                    }
 
                     // Spawn the download task
                     tokio::spawn(async move {
@@ -592,10 +683,16 @@ impl UsenetDownloader {
                             Ok(Some(d)) => d,
                             Ok(None) => {
                                 tracing::warn!(download_id = id, "Download not found in database");
+                                // Clean up active downloads
+                                let mut active = active_downloads_clone.lock().await;
+                                active.remove(&id);
                                 return;
                             }
                             Err(e) => {
                                 tracing::error!(download_id = id, error = %e, "Failed to fetch download");
+                                // Clean up active downloads
+                                let mut active = active_downloads_clone.lock().await;
+                                active.remove(&id);
                                 return;
                             }
                         };
@@ -603,10 +700,16 @@ impl UsenetDownloader {
                         // Update status to Downloading and record start time
                         if let Err(e) = db_clone.update_status(id, Status::Downloading.to_i32()).await {
                             tracing::error!(download_id = id, error = %e, "Failed to update status");
+                            // Clean up active downloads
+                            let mut active = active_downloads_clone.lock().await;
+                            active.remove(&id);
                             return;
                         }
                         if let Err(e) = db_clone.set_started(id).await {
                             tracing::error!(download_id = id, error = %e, "Failed to set start time");
+                            // Clean up active downloads
+                            let mut active = active_downloads_clone.lock().await;
+                            active.remove(&id);
                             return;
                         }
 
@@ -624,6 +727,9 @@ impl UsenetDownloader {
                             Ok(articles) => articles,
                             Err(e) => {
                                 tracing::error!(download_id = id, error = %e, "Failed to get pending articles");
+                                // Clean up active downloads
+                                let mut active = active_downloads_clone.lock().await;
+                                active.remove(&id);
                                 return;
                             }
                         };
@@ -633,6 +739,9 @@ impl UsenetDownloader {
                             event_tx_clone
                                 .send(Event::DownloadComplete { id })
                                 .ok();
+                            // Clean up active downloads
+                            let mut active = active_downloads_clone.lock().await;
+                            active.remove(&id);
                             return;
                         }
 
@@ -656,11 +765,26 @@ impl UsenetDownloader {
                                     error: format!("Failed to create temp directory: {}", e),
                                 })
                                 .ok();
+                            // Clean up active downloads
+                            let mut active = active_downloads_clone.lock().await;
+                            active.remove(&id);
                             return;
                         }
 
                         // Download each article
                         for article in pending_articles {
+                            // Check if download was paused/cancelled
+                            if cancel_token.is_cancelled() {
+                                // Update status to Paused
+                                let _ = db_clone.update_status(id, Status::Paused.to_i32()).await;
+
+                                // Remove from active downloads
+                                let mut active = active_downloads_clone.lock().await;
+                                active.remove(&id);
+                                drop(active);
+
+                                return;
+                            }
                             // Get a connection from the first NNTP pool
                             // TODO: Add multi-server failover in future tasks
                             let pool = match nntp_pools_clone.first() {
@@ -675,6 +799,9 @@ impl UsenetDownloader {
                                             error: "No NNTP pools configured".to_string(),
                                         })
                                         .ok();
+                                    // Clean up active downloads
+                                    let mut active = active_downloads_clone.lock().await;
+                                    active.remove(&id);
                                     return;
                                 }
                             };
@@ -691,6 +818,9 @@ impl UsenetDownloader {
                                             error: format!("Failed to get NNTP connection: {}", e),
                                         })
                                         .ok();
+                                    // Clean up active downloads
+                                    let mut active = active_downloads_clone.lock().await;
+                                    active.remove(&id);
                                     return;
                                 }
                             };
@@ -713,6 +843,9 @@ impl UsenetDownloader {
                                                 error: format!("Failed to write article file: {}", e),
                                             })
                                             .ok();
+                                        // Clean up active downloads
+                                        let mut active = active_downloads_clone.lock().await;
+                                        active.remove(&id);
                                         return;
                                     }
 
@@ -779,6 +912,10 @@ impl UsenetDownloader {
                                         })
                                         .ok();
 
+                                    // Clean up active downloads
+                                    let mut active = active_downloads_clone.lock().await;
+                                    active.remove(&id);
+
                                     return;
                                 }
                             }
@@ -787,6 +924,9 @@ impl UsenetDownloader {
                         // All articles downloaded successfully
                         if let Err(e) = db_clone.update_status(id, Status::Complete.to_i32()).await {
                             tracing::error!(download_id = id, error = %e, "Failed to mark download complete");
+                            // Clean up active downloads
+                            let mut active = active_downloads_clone.lock().await;
+                            active.remove(&id);
                             return;
                         }
                         if let Err(e) = db_clone.set_completed(id).await {
@@ -796,6 +936,10 @@ impl UsenetDownloader {
                         event_tx_clone
                             .send(Event::DownloadComplete { id })
                             .ok();
+
+                        // Clean up: remove from active downloads
+                        let mut active = active_downloads_clone.lock().await;
+                        active.remove(&id);
                     });
                 } else {
                     // Queue is empty, wait a bit before checking again
@@ -1064,6 +1208,11 @@ mod tests {
             config.max_concurrent_downloads
         ));
 
+        // Create active downloads tracking map
+        let active_downloads = std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new()
+        ));
+
         let downloader = UsenetDownloader {
             db: std::sync::Arc::new(db),
             event_tx,
@@ -1071,6 +1220,7 @@ mod tests {
             nntp_pools: std::sync::Arc::new(nntp_pools),
             queue,
             concurrent_limit,
+            active_downloads,
         };
 
         (downloader, temp_dir)
@@ -1522,5 +1672,80 @@ mod tests {
         // Force should come first even though added second
         assert_eq!(downloader.get_next_download().await, Some(force_id));
         assert_eq!(downloader.get_next_download().await, Some(normal_id));
+    }
+
+    // Pause/Resume Tests
+
+    #[tokio::test]
+    async fn test_pause_queued_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add download
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Download should be queued
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32());
+
+        // Pause it
+        downloader.pause(id).await.unwrap();
+
+        // Status should be updated to Paused
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Paused.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_pause_already_paused() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Pause it once
+        downloader.pause(id).await.unwrap();
+
+        // Pause it again (should be idempotent)
+        let result = downloader.pause(id).await;
+        assert!(result.is_ok());
+
+        // Status should still be Paused
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Paused.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_pause_completed_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark as complete
+        downloader.db.update_status(id, Status::Complete.to_i32()).await.unwrap();
+
+        // Try to pause (should fail)
+        let result = downloader.pause(id).await;
+        assert!(result.is_err());
+
+        // Status should still be Complete
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Complete.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_pause_nonexistent_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Try to pause download that doesn't exist
+        let result = downloader.pause(999).await;
+        assert!(result.is_err());
     }
 }
