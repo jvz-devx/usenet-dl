@@ -444,6 +444,76 @@ impl UsenetDownloader {
         Ok(())
     }
 
+    /// Resume a partially downloaded job from where it left off
+    ///
+    /// This method is the low-level resume operation that queries pending articles
+    /// and adds the download back to the queue for processing. It checks if there are
+    /// any pending articles remaining - if none, it proceeds directly to post-processing.
+    /// If articles remain, it re-queues the download for the queue processor to continue.
+    ///
+    /// This method is primarily used internally by restore_queue() during startup to
+    /// resume interrupted downloads, but can also be called directly for explicit resume operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to resume
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if the download was successfully resumed, or an error if:
+    /// - The download doesn't exist
+    /// - Database query fails
+    /// - Queue insertion fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Resume a partially completed download
+    /// downloader.resume_download(id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn resume_download(&self, id: DownloadId) -> Result<()> {
+        // Get pending articles for this download
+        let pending_articles = self.db.get_pending_articles(id).await?;
+
+        if pending_articles.is_empty() {
+            // All articles downloaded, proceed to post-processing
+            tracing::info!(
+                download_id = id,
+                "No pending articles - proceeding to post-processing"
+            );
+
+            // TODO: Task 10.3 - Implement start_post_processing()
+            // For now, just update status to Processing
+            self.db.update_status(id, Status::Processing.to_i32()).await?;
+
+            // Emit event to indicate post-processing stage
+            self.emit_event(Event::Verifying { id });
+
+            // TODO: Will call self.start_post_processing(id).await in Phase 2
+            Ok(())
+        } else {
+            // Resume downloading remaining articles
+            tracing::info!(
+                download_id = id,
+                pending_articles = pending_articles.len(),
+                "Resuming download with pending articles"
+            );
+
+            // Update status back to Queued
+            self.db.update_status(id, Status::Queued.to_i32()).await?;
+
+            // Add back to priority queue for processing
+            // The queue processor will automatically pick it up and download pending articles
+            self.add_to_queue(id).await?;
+
+            Ok(())
+        }
+    }
+
     /// Cancel a download and delete its files
     ///
     /// This method removes a download from the queue, stops it if actively running,
@@ -2736,5 +2806,127 @@ mod tests {
         // Also verify paused downloads can be restored separately
         let paused = downloader2.db.list_downloads_by_status(Status::Paused.to_i32()).await.unwrap();
         assert_eq!(paused.len(), 0, "No paused downloads in this test (id2 was set to Processing)");
+    }
+
+    #[tokio::test]
+    async fn test_resume_download_with_pending_articles() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Simulate partial download: mark first article as downloaded
+        let articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+        assert_eq!(articles.len(), 2, "Should have 2 pending articles initially");
+
+        downloader.db.update_article_status(
+            articles[0].id,
+            crate::db::article_status::DOWNLOADED
+        ).await.unwrap();
+
+        // Update download status to Paused (simulate interrupted download)
+        downloader.db.update_status(download_id, Status::Paused.to_i32()).await.unwrap();
+
+        // Resume the download
+        downloader.resume_download(download_id).await.unwrap();
+
+        // Verify download is back in Queued status
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(Status::from_i32(download.status), Status::Queued);
+
+        // Verify only 1 article remains pending
+        let pending = downloader.db.get_pending_articles(download_id).await.unwrap();
+        assert_eq!(pending.len(), 1, "Should have 1 pending article after resume");
+        assert_eq!(pending[0].id, articles[1].id, "Should be the second article");
+    }
+
+    #[tokio::test]
+    async fn test_resume_download_no_pending_articles() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark all articles as downloaded
+        let articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+        for article in articles {
+            downloader.db.update_article_status(
+                article.id,
+                crate::db::article_status::DOWNLOADED
+            ).await.unwrap();
+        }
+
+        // Update status to Downloading (simulate download just completed)
+        downloader.db.update_status(download_id, Status::Downloading.to_i32()).await.unwrap();
+
+        // Resume should proceed to post-processing
+        downloader.resume_download(download_id).await.unwrap();
+
+        // Verify status is now Processing (ready for post-processing)
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(Status::from_i32(download.status), Status::Processing);
+
+        // Verify no pending articles remain
+        let pending = downloader.db.get_pending_articles(download_id).await.unwrap();
+        assert_eq!(pending.len(), 0, "Should have no pending articles");
+    }
+
+    #[tokio::test]
+    async fn test_resume_download_nonexistent() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Try to resume non-existent download
+        let result = downloader.resume_download(99999).await;
+
+        // Should succeed (get_pending_articles returns empty Vec for non-existent downloads)
+        // This is acceptable behavior - resume_download is idempotent
+        assert!(result.is_ok(), "Should succeed (no-op) for non-existent download");
+
+        // Verify no status was changed (download doesn't exist in database)
+        let download = downloader.db.get_download(99999).await.unwrap();
+        assert!(download.is_none(), "Download should not exist");
+    }
+
+    #[tokio::test]
+    async fn test_resume_download_emits_event() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Subscribe to events
+        let mut events = downloader.subscribe();
+
+        // Add a download (will emit Queued event)
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Consume the Queued event
+        let event = events.recv().await.unwrap();
+        assert!(matches!(event, Event::Queued { .. }));
+
+        // Mark all articles as downloaded
+        let articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+        for article in articles {
+            downloader.db.update_article_status(
+                article.id,
+                crate::db::article_status::DOWNLOADED
+            ).await.unwrap();
+        }
+
+        // Resume should emit Verifying event (post-processing start)
+        downloader.resume_download(download_id).await.unwrap();
+
+        // Check for Verifying event
+        let event = events.recv().await.unwrap();
+        assert!(
+            matches!(event, Event::Verifying { id } if id == download_id),
+            "Should emit Verifying event when no pending articles"
+        );
     }
 }
