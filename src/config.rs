@@ -2,9 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration};
+use utoipa::ToSchema;
 
 /// Main configuration for UsenetDownloader
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct Config {
     /// NNTP server configurations (at least one required)
     pub servers: Vec<ServerConfig>,
@@ -149,7 +150,7 @@ impl Default for Config {
 }
 
 /// NNTP server configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ServerConfig {
     /// Server hostname
     pub host: String,
@@ -176,7 +177,7 @@ pub struct ServerConfig {
 }
 
 /// Retry configuration for transient failures
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts (default: 5)
     #[serde(default = "default_max_attempts")]
@@ -212,7 +213,7 @@ impl Default for RetryConfig {
 }
 
 /// Post-processing mode
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PostProcess {
     /// Just download, no post-processing
@@ -259,7 +260,7 @@ impl PostProcess {
 }
 
 /// Action to take when post-processing fails
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FailedDownloadAction {
     /// Keep files in the download directory (default)
@@ -277,7 +278,7 @@ impl Default for FailedDownloadAction {
 }
 
 /// Archive extraction configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ExtractionConfig {
     /// Maximum depth for nested archive extraction (default: 2)
     #[serde(default = "default_max_recursion")]
@@ -298,7 +299,7 @@ impl Default for ExtractionConfig {
 }
 
 /// File collision handling strategy
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FileCollisionAction {
     /// Append (1), (2), etc. to filename (default)
@@ -316,7 +317,7 @@ impl Default for FileCollisionAction {
 }
 
 /// Obfuscated filename detection and renaming configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct DeobfuscationConfig {
     /// Enable automatic deobfuscation (default: true)
     #[serde(default = "default_true")]
@@ -337,7 +338,7 @@ impl Default for DeobfuscationConfig {
 }
 
 /// Duplicate detection configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct DuplicateConfig {
     /// Enable duplicate detection (default: true)
     #[serde(default = "default_true")]
@@ -363,7 +364,7 @@ impl Default for DuplicateConfig {
 }
 
 /// Action to take when duplicate detected
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DuplicateAction {
     /// Block the download entirely
@@ -381,7 +382,7 @@ impl Default for DuplicateAction {
 }
 
 /// Duplicate detection method
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DuplicateMethod {
     /// NZB content hash (most reliable)
@@ -393,7 +394,7 @@ pub enum DuplicateMethod {
 }
 
 /// Disk space checking configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct DiskSpaceConfig {
     /// Enable disk space checking (default: true)
     #[serde(default = "default_true")]
@@ -419,7 +420,7 @@ impl Default for DiskSpaceConfig {
 }
 
 /// Cleanup configuration for intermediate files
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct CleanupConfig {
     /// Enable cleanup of intermediate files (default: true)
     #[serde(default = "default_true")]
@@ -455,7 +456,7 @@ impl Default for CleanupConfig {
 }
 
 /// REST API configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiConfig {
     /// Address to bind to (default: 127.0.0.1:6789)
     #[serde(default = "default_bind_address")]
@@ -496,7 +497,7 @@ impl Default for ApiConfig {
 }
 
 /// Rate limiting configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RateLimitConfig {
     /// Enable rate limiting (default: false)
     #[serde(default)]
@@ -522,7 +523,7 @@ impl Default for RateLimitConfig {
 }
 
 /// Schedule rule for time-based actions
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ScheduleRule {
     /// Human-readable name
     pub name: String,
@@ -546,7 +547,7 @@ pub struct ScheduleRule {
 }
 
 /// Day of week for schedule rules
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum Weekday {
     Monday,
     Tuesday,
@@ -558,7 +559,7 @@ pub enum Weekday {
 }
 
 /// Action to take during scheduled time window
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ScheduleAction {
     /// Set speed limit (bytes per second)
@@ -570,7 +571,7 @@ pub enum ScheduleAction {
 }
 
 /// Watch folder configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct WatchFolderConfig {
     /// Directory to watch for NZB files
     pub path: PathBuf,
@@ -589,7 +590,7 @@ pub struct WatchFolderConfig {
 }
 
 /// Action to take with NZB file after import
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WatchFolderAction {
     /// Delete NZB file
@@ -607,7 +608,7 @@ impl Default for WatchFolderAction {
 }
 
 /// Webhook configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct WebhookConfig {
     /// URL to POST to
     pub url: String,
@@ -625,7 +626,7 @@ pub struct WebhookConfig {
 }
 
 /// Webhook trigger event
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum WebhookEvent {
     OnComplete,
     OnFailed,
@@ -633,7 +634,7 @@ pub enum WebhookEvent {
 }
 
 /// Script execution configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ScriptConfig {
     /// Path to script/executable
     pub path: PathBuf,
@@ -647,7 +648,7 @@ pub struct ScriptConfig {
 }
 
 /// Script trigger event
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum ScriptEvent {
     OnComplete,
     OnFailed,
@@ -655,7 +656,7 @@ pub enum ScriptEvent {
 }
 
 /// Category configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct CategoryConfig {
     /// Destination directory for this category
     pub destination: PathBuf,

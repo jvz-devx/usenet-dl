@@ -26,11 +26,12 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (8/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (10/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
-- Total: 117/253 tasks complete (46.2%)
+  - Tasks 18.1-18.2: ✅ OpenAPI dependencies added, 33 types annotated with ToSchema
+- Total: 119/253 tasks complete (47.0%)
 
-**Next Task:** Task 18.1 - Add utoipa and utoipa-swagger-ui dependencies
+**Next Task:** Task 18.3 - Annotate all route handlers with #[utoipa::path]
 
 ## Analysis
 
@@ -289,8 +290,8 @@ The implementation will require these major dependencies:
 - [x] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
 - [x] Task 17.8: Test API server starts and responds to /health
 
-- [ ] Task 18.1: Add utoipa and utoipa-swagger-ui dependencies
-- [ ] Task 18.2: Annotate all types with #[derive(ToSchema)]
+- [x] Task 18.1: Add utoipa and utoipa-swagger-ui dependencies
+- [x] Task 18.2: Annotate all types with #[derive(ToSchema)]
 - [ ] Task 18.3: Annotate all route handlers with #[utoipa::path]
 - [ ] Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]
 - [ ] Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec
@@ -3964,3 +3965,102 @@ Phase 3 continues with OpenAPI integration (Tasks 18.1-18.7) to add:
 - Route annotations with #[utoipa::path]
 - /openapi.json endpoint
 - Swagger UI at /swagger-ui
+
+---
+
+## Completed This Iteration (Ralph)
+
+**Task 18.2: Annotate all types with #[derive(ToSchema)]**
+
+### Implementation Summary
+
+Successfully annotated 33 public types across the codebase with `#[derive(ToSchema)]` to enable OpenAPI schema generation. These types are used in API request/response bodies and will be automatically documented in the OpenAPI specification.
+
+### What Was Completed
+
+**Added utoipa::ToSchema import to:**
+- `src/types.rs` - Core types (8 types)
+- `src/config.rs` - Configuration types (24 types)
+
+**Types Annotated (33 total):**
+
+**Core Types (src/types.rs - 8 types):**
+1. `Status` - Download status enum (Queued, Downloading, Paused, Processing, Complete, Failed)
+2. `Priority` - Download priority enum (Low, Normal, High, Force)
+3. `Stage` - Post-processing stage enum (Download, Verify, Repair, Extract, Move, Cleanup)
+4. `ArchiveType` - Archive type enum (Rar, SevenZip, Zip)
+5. `Event` - Download lifecycle event enum (with many variants for different events)
+6. `DownloadInfo` - Download information struct (used in GET /downloads responses)
+7. `DownloadOptions` - Download options struct (used in POST /downloads requests)
+8. `HistoryEntry` - Historical download record struct (used in GET /history responses)
+
+**Configuration Types (src/config.rs - 24 types):**
+1. `Config` - Main configuration struct (used in GET /config, PATCH /config)
+2. `ServerConfig` - NNTP server configuration
+3. `RetryConfig` - Retry configuration
+4. `PostProcess` - Post-processing mode enum
+5. `FailedDownloadAction` - Failed download action enum
+6. `ExtractionConfig` - Archive extraction configuration
+7. `FileCollisionAction` - File collision handling enum
+8. `DeobfuscationConfig` - Filename deobfuscation configuration
+9. `DuplicateConfig` - Duplicate detection configuration
+10. `DuplicateAction` - Duplicate action enum
+11. `DuplicateMethod` - Duplicate detection method enum
+12. `DiskSpaceConfig` - Disk space checking configuration
+13. `CleanupConfig` - Cleanup configuration
+14. `ApiConfig` - REST API configuration
+15. `RateLimitConfig` - Rate limiting configuration
+16. `ScheduleRule` - Schedule rule struct
+17. `Weekday` - Day of week enum
+18. `ScheduleAction` - Scheduled action enum
+19. `WatchFolderConfig` - Watch folder configuration
+20. `WatchFolderAction` - Watch folder action enum
+21. `WebhookConfig` - Webhook configuration
+22. `WebhookEvent` - Webhook event trigger enum
+23. `ScriptConfig` - Script execution configuration
+24. `ScriptEvent` - Script event trigger enum
+25. `CategoryConfig` - Category configuration
+
+**Note on Error Types:**
+- The internal `Error` enum in `src/error.rs` was NOT annotated because it uses `thiserror::Error` and is not directly serializable
+- API error responses will be handled by separate serializable types (ApiError, ErrorDetail) to be implemented in later tasks
+
+### Technical Implementation
+
+**Approach Used:**
+1. Added `use utoipa::ToSchema;` import to both files
+2. Added `ToSchema` to existing `#[derive(...)]` macros for all public types
+3. Used sed commands to batch-update similar derive patterns:
+   - `#[derive(Clone, Debug, Serialize, Deserialize)]` → added `, ToSchema`
+   - `#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]` → added `, ToSchema`
+
+### Validation
+
+**Build Status:**
+```bash
+$ cargo check
+    Checking usenet-dl v0.1.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s)
+```
+✅ Builds successfully with only documentation warnings (no errors)
+
+**Verification:**
+```bash
+$ grep -r "derive.*ToSchema" src/ | wc -l
+33
+```
+✅ All 33 required types now have ToSchema annotations
+
+### Next Steps
+
+These ToSchema-annotated types will be referenced in the OpenAPI spec generation (ApiDoc struct) in upcoming tasks:
+- Task 18.3: Annotate route handlers with `#[utoipa::path]`
+- Task 18.4: Create ApiDoc struct with `#[derive(OpenApi)]`
+- Task 18.5: Implement /openapi.json endpoint
+
+The OpenAPI specification will automatically generate JSON Schema for all these types, enabling:
+- Auto-generated client SDKs in any language
+- Interactive Swagger UI documentation
+- Request/response validation
+- Type-safe API consumption
+

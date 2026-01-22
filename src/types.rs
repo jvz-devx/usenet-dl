@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
+use utoipa::ToSchema;
 
 use crate::config::PostProcess;
 
@@ -11,7 +12,7 @@ use crate::config::PostProcess;
 pub type DownloadId = i64;
 
 /// Download status
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     /// Queued and waiting to start
@@ -56,7 +57,7 @@ impl Status {
 }
 
 /// Download priority
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     /// Low priority (-1)
@@ -89,7 +90,7 @@ impl Priority {
 }
 
 /// Post-processing stage
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Stage {
     /// Download stage
@@ -107,7 +108,7 @@ pub enum Stage {
 }
 
 /// Archive type detected by file extension
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ArchiveType {
     /// RAR archive (.rar, .r00, .r01, etc.)
@@ -119,7 +120,7 @@ pub enum ArchiveType {
 }
 
 /// Event emitted during download lifecycle
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     /// Download added to queue
@@ -275,7 +276,7 @@ pub enum Event {
 }
 
 /// Information about a download in the queue
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct DownloadInfo {
     /// Unique download identifier
     pub id: DownloadId,
@@ -315,7 +316,7 @@ pub struct DownloadInfo {
 }
 
 /// Options for adding a download to the queue
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct DownloadOptions {
     /// Category to assign (None = use default category)
     #[serde(default)]
@@ -339,7 +340,7 @@ pub struct DownloadOptions {
 }
 
 /// Historical download record
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct HistoryEntry {
     /// Unique download identifier
     pub id: i64,
