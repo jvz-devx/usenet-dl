@@ -142,7 +142,7 @@ The implementation will require these major dependencies:
 - [x] Task 2.3: Implement CRUD operations for downloads table
 - [x] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
 - [x] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
-- [ ] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
+- [x] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
 - [ ] Task 2.7: Implement history operations (insert, query, cleanup)
 - [x] Task 2.8: Add database migration system (sqlx migrations or embedded SQL)
 
@@ -425,21 +425,24 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Password Cache Operations - Task 2.5 Complete**
+**Phase 1 Duplicate Detection Queries - Task 2.6 Complete**
 
-- Task 2.5: Implemented password cache operations for archive extraction ✓
-  - set_correct_password() - caches successful password for a download (upsert with ON CONFLICT)
-  - get_cached_password() - retrieves cached password (returns None if not found)
-  - delete_cached_password() - explicitly deletes cached password (also auto-cascades on download deletion)
-  - Used UPSERT pattern (INSERT ... ON CONFLICT DO UPDATE) to handle password updates
-  - Foreign key CASCADE ensures passwords are automatically deleted when download is removed
-  - 5 comprehensive tests verify all password cache operations:
-    - test_set_and_get_cached_password - basic set/get functionality
-    - test_update_cached_password - UPSERT behavior when password changes
-    - test_delete_cached_password - explicit deletion
-    - test_password_cascade_delete - automatic deletion via FK CASCADE
-    - test_empty_password - handles empty string passwords (valid for password-less archives)
-  - All 18 database tests passing (13 from previous tasks + 5 new password tests)
+- Task 2.6: Implemented duplicate detection queries for preventing re-downloads ✓
+  - find_by_nzb_hash(hash) - finds download by NZB content hash (most reliable method)
+  - find_by_name(name) - finds download by exact name match (case-sensitive)
+  - find_by_job_name(job_name) - finds download by deobfuscated job name (catches renamed NZBs)
+  - All methods return Option<Download> and use LIMIT 1 for safety
+  - Leverages existing indexes (idx_downloads_nzb_hash, idx_downloads_job_name) for fast lookups
+  - 7 comprehensive tests verify all duplicate detection scenarios:
+    - test_find_by_nzb_hash - basic hash-based detection
+    - test_find_by_nzb_hash_multiple - multiple downloads with different hashes
+    - test_find_by_name - exact name matching (case-sensitive)
+    - test_find_by_name_returns_first_match - LIMIT 1 behavior with duplicates
+    - test_find_by_job_name - deobfuscated job name detection
+    - test_find_by_job_name_null_handling - NULL vs string comparison
+    - test_duplicate_detection_priority - all three methods find the same download
+  - All 25 database tests passing (18 from previous tasks + 7 new duplicate detection tests)
+  - Ready for integration with duplicate detection logic in Phase 4 (Task 28)
 
 ### Implementation Details
 
