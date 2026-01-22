@@ -46,6 +46,34 @@ pub struct Download {
     pub completed_at: Option<i64>,
 }
 
+/// New article to be inserted into the database
+#[derive(Debug, Clone)]
+pub struct NewArticle {
+    pub download_id: DownloadId,
+    pub message_id: String,
+    pub segment_number: i32,
+    pub size_bytes: i64,
+}
+
+/// Article record from database
+#[derive(Debug, Clone, FromRow)]
+pub struct Article {
+    pub id: i64,
+    pub download_id: i64,
+    pub message_id: String,
+    pub segment_number: i32,
+    pub size_bytes: i64,
+    pub status: i32,
+    pub downloaded_at: Option<i64>,
+}
+
+/// Article status constants
+pub mod article_status {
+    pub const PENDING: i32 = 0;
+    pub const DOWNLOADED: i32 = 1;
+    pub const FAILED: i32 = 2;
+}
+
 /// Database handle for usenet-dl
 pub struct Database {
     pool: SqlitePool,
@@ -488,6 +516,203 @@ impl Database {
 
         Ok(rows)
     }
+
+    // Article-level tracking operations (for download resume support)
+
+    /// Insert a single article
+    pub async fn insert_article(&self, article: &NewArticle) -> Result<i64> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO download_articles (
+                download_id, message_id, segment_number, size_bytes, status
+            ) VALUES (?, ?, ?, ?, 0)
+            "#
+        )
+        .bind(article.download_id)
+        .bind(&article.message_id)
+        .bind(article.segment_number)
+        .bind(article.size_bytes)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to insert article: {}", e)))?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Insert multiple articles in a batch (more efficient for large NZB files)
+    pub async fn insert_articles_batch(&self, articles: &[NewArticle]) -> Result<()> {
+        if articles.is_empty() {
+            return Ok(());
+        }
+
+        // Build a multi-row insert query
+        let mut query_builder = sqlx::QueryBuilder::new(
+            "INSERT INTO download_articles (download_id, message_id, segment_number, size_bytes, status) "
+        );
+
+        query_builder.push_values(articles, |mut b, article| {
+            b.push_bind(article.download_id)
+                .push_bind(&article.message_id)
+                .push_bind(article.segment_number)
+                .push_bind(article.size_bytes)
+                .push_bind(0); // status = PENDING
+        });
+
+        let query = query_builder.build();
+        query.execute(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to insert articles batch: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Update article status
+    pub async fn update_article_status(&self, article_id: i64, status: i32) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            UPDATE download_articles
+            SET status = ?, downloaded_at = ?
+            WHERE id = ?
+            "#
+        )
+        .bind(status)
+        .bind(if status == article_status::DOWNLOADED { Some(now) } else { None })
+        .bind(article_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update article status: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Update article status by message_id
+    pub async fn update_article_status_by_message_id(
+        &self,
+        download_id: DownloadId,
+        message_id: &str,
+        status: i32,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            UPDATE download_articles
+            SET status = ?, downloaded_at = ?
+            WHERE download_id = ? AND message_id = ?
+            "#
+        )
+        .bind(status)
+        .bind(if status == article_status::DOWNLOADED { Some(now) } else { None })
+        .bind(download_id)
+        .bind(message_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update article status: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Get all articles for a download
+    pub async fn get_articles(&self, download_id: DownloadId) -> Result<Vec<Article>> {
+        let rows = sqlx::query_as::<_, Article>(
+            r#"
+            SELECT id, download_id, message_id, segment_number, size_bytes, status, downloaded_at
+            FROM download_articles
+            WHERE download_id = ?
+            ORDER BY segment_number ASC
+            "#
+        )
+        .bind(download_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to get articles: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get pending articles for a download (for resume)
+    pub async fn get_pending_articles(&self, download_id: DownloadId) -> Result<Vec<Article>> {
+        let rows = sqlx::query_as::<_, Article>(
+            r#"
+            SELECT id, download_id, message_id, segment_number, size_bytes, status, downloaded_at
+            FROM download_articles
+            WHERE download_id = ? AND status = 0
+            ORDER BY segment_number ASC
+            "#
+        )
+        .bind(download_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to get pending articles: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get article by message_id
+    pub async fn get_article_by_message_id(
+        &self,
+        download_id: DownloadId,
+        message_id: &str,
+    ) -> Result<Option<Article>> {
+        let row = sqlx::query_as::<_, Article>(
+            r#"
+            SELECT id, download_id, message_id, segment_number, size_bytes, status, downloaded_at
+            FROM download_articles
+            WHERE download_id = ? AND message_id = ?
+            "#
+        )
+        .bind(download_id)
+        .bind(message_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to get article: {}", e)))?;
+
+        Ok(row)
+    }
+
+    /// Count articles by status for a download
+    pub async fn count_articles_by_status(
+        &self,
+        download_id: DownloadId,
+        status: i32,
+    ) -> Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM download_articles WHERE download_id = ? AND status = ?"
+        )
+        .bind(download_id)
+        .bind(status)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to count articles: {}", e)))?;
+
+        Ok(count)
+    }
+
+    /// Get total article count for a download
+    pub async fn count_articles(&self, download_id: DownloadId) -> Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM download_articles WHERE download_id = ?"
+        )
+        .bind(download_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to count articles: {}", e)))?;
+
+        Ok(count)
+    }
+
+    /// Delete all articles for a download (automatic via CASCADE, but explicit method for clarity)
+    pub async fn delete_articles(&self, download_id: DownloadId) -> Result<()> {
+        sqlx::query("DELETE FROM download_articles WHERE download_id = ?")
+            .bind(download_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to delete articles: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -745,6 +970,261 @@ mod tests {
 
         // Should only have 3 downloads (status 0, 1, 3)
         assert_eq!(incomplete.len(), 3);
+
+        db.close().await;
+    }
+
+    // Article-level tracking tests
+
+    #[tokio::test]
+    async fn test_insert_and_get_article() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        // Create a download first
+        let new_download = NewDownload {
+            name: "Test Download".to_string(),
+            nzb_path: "/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024 * 1024,
+        };
+        let download_id = db.insert_download(&new_download).await.unwrap();
+
+        // Insert an article
+        let new_article = NewArticle {
+            download_id,
+            message_id: "<test@example.com>".to_string(),
+            segment_number: 1,
+            size_bytes: 512 * 1024,
+        };
+        let article_id = db.insert_article(&new_article).await.unwrap();
+        assert!(article_id > 0);
+
+        // Get the article
+        let article = db.get_article_by_message_id(download_id, "<test@example.com>")
+            .await.unwrap();
+        assert!(article.is_some());
+
+        let article = article.unwrap();
+        assert_eq!(article.download_id, download_id);
+        assert_eq!(article.message_id, "<test@example.com>");
+        assert_eq!(article.segment_number, 1);
+        assert_eq!(article.size_bytes, 512 * 1024);
+        assert_eq!(article.status, super::article_status::PENDING);
+        assert!(article.downloaded_at.is_none());
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_insert_articles_batch() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        // Create a download
+        let new_download = NewDownload {
+            name: "Test Download".to_string(),
+            nzb_path: "/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024 * 1024,
+        };
+        let download_id = db.insert_download(&new_download).await.unwrap();
+
+        // Insert multiple articles in a batch
+        let articles: Vec<NewArticle> = (0..100).map(|i| NewArticle {
+            download_id,
+            message_id: format!("<article{}@example.com>", i),
+            segment_number: i,
+            size_bytes: 10240,
+        }).collect();
+
+        db.insert_articles_batch(&articles).await.unwrap();
+
+        // Verify all articles were inserted
+        let count = db.count_articles(download_id).await.unwrap();
+        assert_eq!(count, 100);
+
+        // Verify they're all pending
+        let pending_count = db.count_articles_by_status(
+            download_id,
+            super::article_status::PENDING
+        ).await.unwrap();
+        assert_eq!(pending_count, 100);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_update_article_status() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        // Create a download and article
+        let new_download = NewDownload {
+            name: "Test".to_string(),
+            nzb_path: "/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 1, // Downloading
+            size_bytes: 1024,
+        };
+        let download_id = db.insert_download(&new_download).await.unwrap();
+
+        let new_article = NewArticle {
+            download_id,
+            message_id: "<test@example.com>".to_string(),
+            segment_number: 1,
+            size_bytes: 1024,
+        };
+        let article_id = db.insert_article(&new_article).await.unwrap();
+
+        // Update status to DOWNLOADED
+        db.update_article_status(article_id, super::article_status::DOWNLOADED)
+            .await.unwrap();
+
+        // Verify status was updated
+        let article = db.get_article_by_message_id(download_id, "<test@example.com>")
+            .await.unwrap().unwrap();
+        assert_eq!(article.status, super::article_status::DOWNLOADED);
+        assert!(article.downloaded_at.is_some());
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_pending_articles() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        // Create a download
+        let new_download = NewDownload {
+            name: "Test".to_string(),
+            nzb_path: "/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 1,
+            size_bytes: 10240,
+        };
+        let download_id = db.insert_download(&new_download).await.unwrap();
+
+        // Insert 10 articles
+        let articles: Vec<NewArticle> = (0..10).map(|i| NewArticle {
+            download_id,
+            message_id: format!("<article{}@example.com>", i),
+            segment_number: i,
+            size_bytes: 1024,
+        }).collect();
+        db.insert_articles_batch(&articles).await.unwrap();
+
+        // Mark some as downloaded
+        for i in 0..5 {
+            db.update_article_status_by_message_id(
+                download_id,
+                &format!("<article{}@example.com>", i),
+                super::article_status::DOWNLOADED,
+            ).await.unwrap();
+        }
+
+        // Mark one as failed
+        db.update_article_status_by_message_id(
+            download_id,
+            "<article5@example.com>",
+            super::article_status::FAILED,
+        ).await.unwrap();
+
+        // Get pending articles (should be 4 remaining: 6, 7, 8, 9)
+        let pending = db.get_pending_articles(download_id).await.unwrap();
+        assert_eq!(pending.len(), 4);
+        assert_eq!(pending[0].segment_number, 6);
+        assert_eq!(pending[1].segment_number, 7);
+        assert_eq!(pending[2].segment_number, 8);
+        assert_eq!(pending[3].segment_number, 9);
+
+        // Verify counts
+        let downloaded_count = db.count_articles_by_status(
+            download_id,
+            super::article_status::DOWNLOADED
+        ).await.unwrap();
+        assert_eq!(downloaded_count, 5);
+
+        let failed_count = db.count_articles_by_status(
+            download_id,
+            super::article_status::FAILED
+        ).await.unwrap();
+        assert_eq!(failed_count, 1);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_articles_cascade() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        // Create a download
+        let new_download = NewDownload {
+            name: "Test".to_string(),
+            nzb_path: "/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024,
+        };
+        let download_id = db.insert_download(&new_download).await.unwrap();
+
+        // Insert articles
+        let articles: Vec<NewArticle> = (0..5).map(|i| NewArticle {
+            download_id,
+            message_id: format!("<article{}@example.com>", i),
+            segment_number: i,
+            size_bytes: 1024,
+        }).collect();
+        db.insert_articles_batch(&articles).await.unwrap();
+
+        // Verify articles exist
+        let count = db.count_articles(download_id).await.unwrap();
+        assert_eq!(count, 5);
+
+        // Delete the download (should cascade delete articles)
+        db.delete_download(download_id).await.unwrap();
+
+        // Verify articles were deleted via cascade
+        let count = db.count_articles(download_id).await.unwrap();
+        assert_eq!(count, 0);
 
         db.close().await;
     }

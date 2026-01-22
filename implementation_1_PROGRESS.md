@@ -140,7 +140,7 @@ The implementation will require these major dependencies:
 - [x] Task 2.1: Create SQLite schema (downloads, download_articles, passwords, processed_nzbs, history)
 - [x] Task 2.2: Implement Database struct with sqlx connection pool
 - [x] Task 2.3: Implement CRUD operations for downloads table
-- [ ] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
+- [x] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
 - [ ] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
 - [ ] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
 - [ ] Task 2.7: Implement history operations (insert, query, cleanup)
@@ -425,23 +425,24 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Database CRUD Operations - Task 2.3 Complete**
+**Phase 1 Article-Level Tracking - Task 2.4 Complete**
 
-- Task 2.3: Implemented CRUD operations for downloads table ✓
-  - insert_download() - creates new download records
-  - get_download() - retrieves download by ID
-  - list_downloads() - lists all downloads ordered by priority
-  - list_downloads_by_status() - filters downloads by status
-  - update_status() - changes download status
-  - update_progress() - updates progress, speed, downloaded bytes
-  - update_priority() - changes download priority
-  - set_error() - sets error message
-  - set_started() - sets started timestamp
-  - set_completed() - sets completed timestamp
-  - delete_download() - removes download from database
-  - get_incomplete_downloads() - retrieves downloads for resume on startup
-  - Added NewDownload and Download structs
-  - 8 passing tests verify all CRUD operations work correctly
+- Task 2.4: Implemented article-level tracking for download resume support ✓
+  - insert_article() - inserts a single article
+  - insert_articles_batch() - efficient batch insertion for large NZB files (100+ articles)
+  - update_article_status() - updates status by article ID
+  - update_article_status_by_message_id() - updates status by message ID
+  - get_articles() - retrieves all articles for a download
+  - get_pending_articles() - retrieves pending articles for resume
+  - get_article_by_message_id() - retrieves article by message ID
+  - count_articles_by_status() - counts articles with specific status (PENDING/DOWNLOADED/FAILED)
+  - count_articles() - counts total articles for a download
+  - delete_articles() - deletes all articles for a download (auto-cascades via FK)
+  - Added NewArticle and Article structs
+  - Added article_status module with constants (PENDING=0, DOWNLOADED=1, FAILED=2)
+  - 6 comprehensive tests verify all article operations work correctly
+  - Tests include batch insertion (100 articles), status updates, pending filtering, and cascade deletion
+  - All 13 database tests passing
 
 ### Implementation Details
 
