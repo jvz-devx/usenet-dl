@@ -2,9 +2,9 @@
 //!
 //! Handles SQLite persistence for downloads, articles, passwords, and history.
 
-use crate::{types::DownloadId, Error, Result};
+use crate::{types::{DownloadId, HistoryEntry, Status}, Error, Result};
 use sqlx::{sqlite::SqlitePool, FromRow, SqliteConnection};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// New download to be inserted into the database
 #[derive(Debug, Clone)]
@@ -72,6 +72,49 @@ pub mod article_status {
     pub const PENDING: i32 = 0;
     pub const DOWNLOADED: i32 = 1;
     pub const FAILED: i32 = 2;
+}
+
+/// New history entry to be inserted into the database
+#[derive(Debug, Clone)]
+pub struct NewHistoryEntry {
+    pub name: String,
+    pub category: Option<String>,
+    pub destination: Option<PathBuf>,
+    pub status: i32,
+    pub size_bytes: u64,
+    pub download_time_secs: i64,
+    pub completed_at: i64,
+}
+
+/// History record from database (raw from SQLite)
+#[derive(Debug, Clone, FromRow)]
+pub struct HistoryRow {
+    pub id: i64,
+    pub name: String,
+    pub category: Option<String>,
+    pub destination: Option<String>,
+    pub status: i32,
+    pub size_bytes: i64,
+    pub download_time_secs: i64,
+    pub completed_at: i64,
+}
+
+impl From<HistoryRow> for HistoryEntry {
+    fn from(row: HistoryRow) -> Self {
+        use std::time::Duration;
+        use chrono::{Utc, TimeZone};
+
+        HistoryEntry {
+            id: row.id,
+            name: row.name,
+            category: row.category,
+            destination: row.destination.map(PathBuf::from),
+            status: Status::from_i32(row.status),
+            size_bytes: row.size_bytes as u64,
+            download_time: Duration::from_secs(row.download_time_secs as u64),
+            completed_at: Utc.timestamp_opt(row.completed_at, 0).unwrap(),
+        }
+    }
 }
 
 /// Database handle for usenet-dl
@@ -840,6 +883,161 @@ impl Database {
         .map_err(|e| Error::Database(format!("Failed to find download by job_name: {}", e)))?;
 
         Ok(row)
+    }
+
+    // ==================== History Operations ====================
+
+    /// Insert a download into history
+    ///
+    /// This is typically called when a download is completed (successfully or failed)
+    /// to create a historical record separate from the active downloads table.
+    pub async fn insert_history(&self, entry: &NewHistoryEntry) -> Result<i64> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO history (
+                name, category, destination, status, size_bytes,
+                download_time_secs, completed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#
+        )
+        .bind(&entry.name)
+        .bind(&entry.category)
+        .bind(entry.destination.as_ref().map(|p| p.to_string_lossy().into_owned()))
+        .bind(entry.status)
+        .bind(entry.size_bytes as i64)
+        .bind(entry.download_time_secs)
+        .bind(entry.completed_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Sqlx(e))?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Query history with pagination and optional status filter
+    ///
+    /// Returns history entries ordered by completion time (most recent first).
+    /// Use limit and offset for pagination.
+    pub async fn query_history(
+        &self,
+        status_filter: Option<i32>,
+        limit: usize,
+        offset: usize
+    ) -> Result<Vec<HistoryEntry>> {
+        let query = if let Some(status) = status_filter {
+            sqlx::query_as::<_, HistoryRow>(
+                r#"
+                SELECT id, name, category, destination, status, size_bytes,
+                       download_time_secs, completed_at
+                FROM history
+                WHERE status = ?
+                ORDER BY completed_at DESC
+                LIMIT ? OFFSET ?
+                "#
+            )
+            .bind(status)
+            .bind(limit as i64)
+            .bind(offset as i64)
+        } else {
+            sqlx::query_as::<_, HistoryRow>(
+                r#"
+                SELECT id, name, category, destination, status, size_bytes,
+                       download_time_secs, completed_at
+                FROM history
+                ORDER BY completed_at DESC
+                LIMIT ? OFFSET ?
+                "#
+            )
+            .bind(limit as i64)
+            .bind(offset as i64)
+        };
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::Sqlx(e))?;
+
+        Ok(rows.into_iter().map(HistoryEntry::from).collect())
+    }
+
+    /// Count history entries (optionally filtered by status)
+    ///
+    /// Useful for pagination - returns total count of records matching the filter.
+    pub async fn count_history(&self, status_filter: Option<i32>) -> Result<i64> {
+        let count = if let Some(status) = status_filter {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM history WHERE status = ?")
+                .bind(status)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Sqlx(e))?
+        } else {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM history")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Sqlx(e))?
+        };
+
+        Ok(count)
+    }
+
+    /// Delete history entries older than the specified timestamp
+    ///
+    /// Returns the number of records deleted.
+    /// This is useful for cleanup - e.g., delete history older than 30 days.
+    pub async fn delete_history_before(&self, before_timestamp: i64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM history WHERE completed_at < ?")
+            .bind(before_timestamp)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Sqlx(e))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete history entries with a specific status
+    ///
+    /// Returns the number of records deleted.
+    /// This is useful for cleanup - e.g., delete all failed downloads from history.
+    pub async fn delete_history_by_status(&self, status: i32) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM history WHERE status = ?")
+            .bind(status)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Sqlx(e))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Clear all history
+    ///
+    /// Returns the number of records deleted.
+    /// This is a destructive operation - use with caution.
+    pub async fn clear_history(&self) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM history")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Sqlx(e))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get a single history entry by ID
+    pub async fn get_history_entry(&self, id: i64) -> Result<Option<HistoryEntry>> {
+        let row = sqlx::query_as::<_, HistoryRow>(
+            r#"
+            SELECT id, name, category, destination, status, size_bytes,
+                   download_time_secs, completed_at
+            FROM history
+            WHERE id = ?
+            "#
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Sqlx(e))?;
+
+        Ok(row.map(HistoryEntry::from))
     }
 }
 
@@ -1831,6 +2029,277 @@ mod tests {
         assert_eq!(by_hash.as_ref().unwrap().name, by_name.as_ref().unwrap().name);
         assert_eq!(by_hash.as_ref().unwrap().category, by_job.as_ref().unwrap().category);
         assert_eq!(by_hash.as_ref().unwrap().status, 4);
+
+        db.close().await;
+    }
+
+    // ==================== History Tests ====================
+
+    #[tokio::test]
+    async fn test_insert_history() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let entry = NewHistoryEntry {
+            name: "Test.Movie.2024".to_string(),
+            category: Some("movies".to_string()),
+            destination: Some(PathBuf::from("/downloads/movies/Test.Movie.2024")),
+            status: 4, // Complete
+            size_bytes: 5 * 1024 * 1024 * 1024, // 5 GB
+            download_time_secs: 3600, // 1 hour
+            completed_at: now,
+        };
+
+        let id = db.insert_history(&entry).await.unwrap();
+        assert!(id > 0);
+
+        // Verify the entry was inserted
+        let retrieved = db.get_history_entry(id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, id);
+        assert_eq!(retrieved.name, "Test.Movie.2024");
+        assert_eq!(retrieved.category, Some("movies".to_string()));
+        assert_eq!(retrieved.destination, Some(PathBuf::from("/downloads/movies/Test.Movie.2024")));
+        assert_eq!(retrieved.status, Status::Complete);
+        assert_eq!(retrieved.size_bytes, 5 * 1024 * 1024 * 1024);
+        assert_eq!(retrieved.download_time.as_secs(), 3600);
+        assert_eq!(retrieved.completed_at.timestamp(), now);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_query_history_pagination() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert 5 history entries
+        for i in 0..5 {
+            let entry = NewHistoryEntry {
+                name: format!("Download.{}", i),
+                category: None,
+                destination: None,
+                status: 4, // Complete
+                size_bytes: 1024 * 1024,
+                download_time_secs: 60,
+                completed_at: now - (i as i64 * 60), // Different timestamps
+            };
+            db.insert_history(&entry).await.unwrap();
+        }
+
+        // Query all with pagination
+        let page1 = db.query_history(None, 3, 0).await.unwrap();
+        assert_eq!(page1.len(), 3);
+        assert_eq!(page1[0].name, "Download.0"); // Most recent first
+
+        let page2 = db.query_history(None, 3, 3).await.unwrap();
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2[0].name, "Download.3");
+
+        // Test count
+        let count = db.count_history(None).await.unwrap();
+        assert_eq!(count, 5);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_query_history_status_filter() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert 3 complete and 2 failed entries
+        for i in 0..5 {
+            let entry = NewHistoryEntry {
+                name: format!("Download.{}", i),
+                category: None,
+                destination: None,
+                status: if i < 3 { 4 } else { 5 }, // 4=Complete, 5=Failed
+                size_bytes: 1024 * 1024,
+                download_time_secs: 60,
+                completed_at: now - (i as i64),
+            };
+            db.insert_history(&entry).await.unwrap();
+        }
+
+        // Query only complete
+        let complete = db.query_history(Some(4), 10, 0).await.unwrap();
+        assert_eq!(complete.len(), 3);
+        assert!(complete.iter().all(|e| e.status == Status::Complete));
+
+        // Query only failed
+        let failed = db.query_history(Some(5), 10, 0).await.unwrap();
+        assert_eq!(failed.len(), 2);
+        assert!(failed.iter().all(|e| e.status == Status::Failed));
+
+        // Count by status
+        let complete_count = db.count_history(Some(4)).await.unwrap();
+        assert_eq!(complete_count, 3);
+
+        let failed_count = db.count_history(Some(5)).await.unwrap();
+        assert_eq!(failed_count, 2);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_history_before() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let thirty_days_ago = now - (30 * 24 * 60 * 60);
+
+        // Insert 3 old entries and 2 recent entries
+        for i in 0..5 {
+            let entry = NewHistoryEntry {
+                name: format!("Download.{}", i),
+                category: None,
+                destination: None,
+                status: 4,
+                size_bytes: 1024 * 1024,
+                download_time_secs: 60,
+                completed_at: if i < 3 { thirty_days_ago - 1000 } else { now },
+            };
+            db.insert_history(&entry).await.unwrap();
+        }
+
+        // Delete old entries
+        let deleted = db.delete_history_before(thirty_days_ago).await.unwrap();
+        assert_eq!(deleted, 3);
+
+        // Verify only recent entries remain
+        let remaining = db.query_history(None, 10, 0).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_history_by_status() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert 3 complete and 2 failed entries
+        for i in 0..5 {
+            let entry = NewHistoryEntry {
+                name: format!("Download.{}", i),
+                category: None,
+                destination: None,
+                status: if i < 3 { 4 } else { 5 },
+                size_bytes: 1024 * 1024,
+                download_time_secs: 60,
+                completed_at: now,
+            };
+            db.insert_history(&entry).await.unwrap();
+        }
+
+        // Delete all failed entries
+        let deleted = db.delete_history_by_status(5).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        // Verify only complete entries remain
+        let remaining = db.query_history(None, 10, 0).await.unwrap();
+        assert_eq!(remaining.len(), 3);
+        assert!(remaining.iter().all(|e| e.status == Status::Complete));
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_clear_history() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert 5 entries
+        for i in 0..5 {
+            let entry = NewHistoryEntry {
+                name: format!("Download.{}", i),
+                category: None,
+                destination: None,
+                status: 4,
+                size_bytes: 1024 * 1024,
+                download_time_secs: 60,
+                completed_at: now,
+            };
+            db.insert_history(&entry).await.unwrap();
+        }
+
+        // Verify entries exist
+        let count = db.count_history(None).await.unwrap();
+        assert_eq!(count, 5);
+
+        // Clear all
+        let deleted = db.clear_history().await.unwrap();
+        assert_eq!(deleted, 5);
+
+        // Verify all gone
+        let remaining = db.query_history(None, 10, 0).await.unwrap();
+        assert_eq!(remaining.len(), 0);
+
+        let count = db.count_history(None).await.unwrap();
+        assert_eq!(count, 0);
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_history_entry_not_found() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let result = db.get_history_entry(9999).await.unwrap();
+        assert!(result.is_none());
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_history_ordering() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path();
+        let db = Database::new(db_path).await.unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert entries with different timestamps
+        let timestamps = vec![now - 1000, now, now - 500];
+        for (i, ts) in timestamps.iter().enumerate() {
+            let entry = NewHistoryEntry {
+                name: format!("Download.{}", i),
+                category: None,
+                destination: None,
+                status: 4,
+                size_bytes: 1024 * 1024,
+                download_time_secs: 60,
+                completed_at: *ts,
+            };
+            db.insert_history(&entry).await.unwrap();
+        }
+
+        // Query should return most recent first
+        let results = db.query_history(None, 10, 0).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].name, "Download.1"); // now (most recent)
+        assert_eq!(results[1].name, "Download.2"); // now - 500
+        assert_eq!(results[2].name, "Download.0"); // now - 1000 (oldest)
 
         db.close().await;
     }

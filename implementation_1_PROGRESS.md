@@ -143,7 +143,7 @@ The implementation will require these major dependencies:
 - [x] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
 - [x] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
 - [x] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
-- [ ] Task 2.7: Implement history operations (insert, query, cleanup)
+- [x] Task 2.7: Implement history operations (insert, query, cleanup)
 - [x] Task 2.8: Add database migration system (sqlx migrations or embedded SQL)
 
 - [ ] Task 3.1: Create Event enum with all event types (Queued, Downloading, Complete, Failed, etc.)
@@ -425,24 +425,34 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Duplicate Detection Queries - Task 2.6 Complete**
+**Phase 1 History Operations - Task 2.7 Complete**
 
-- Task 2.6: Implemented duplicate detection queries for preventing re-downloads ✓
-  - find_by_nzb_hash(hash) - finds download by NZB content hash (most reliable method)
-  - find_by_name(name) - finds download by exact name match (case-sensitive)
-  - find_by_job_name(job_name) - finds download by deobfuscated job name (catches renamed NZBs)
-  - All methods return Option<Download> and use LIMIT 1 for safety
-  - Leverages existing indexes (idx_downloads_nzb_hash, idx_downloads_job_name) for fast lookups
-  - 7 comprehensive tests verify all duplicate detection scenarios:
-    - test_find_by_nzb_hash - basic hash-based detection
-    - test_find_by_nzb_hash_multiple - multiple downloads with different hashes
-    - test_find_by_name - exact name matching (case-sensitive)
-    - test_find_by_name_returns_first_match - LIMIT 1 behavior with duplicates
-    - test_find_by_job_name - deobfuscated job name detection
-    - test_find_by_job_name_null_handling - NULL vs string comparison
-    - test_duplicate_detection_priority - all three methods find the same download
-  - All 25 database tests passing (18 from previous tasks + 7 new duplicate detection tests)
-  - Ready for integration with duplicate detection logic in Phase 4 (Task 28)
+- Task 2.7: Implemented comprehensive history operations for download record keeping ✓
+  - insert_history(&NewHistoryEntry) - add completed/failed downloads to history
+  - query_history(status_filter, limit, offset) - paginated history queries with optional status filtering
+  - count_history(status_filter) - count history entries for pagination
+  - delete_history_before(timestamp) - cleanup old history entries (e.g., older than 30 days)
+  - delete_history_by_status(status) - remove specific status records (e.g., all failed downloads)
+  - clear_history() - destructive operation to remove all history
+  - get_history_entry(id) - fetch single history record by ID
+  - All operations support proper error handling and return Result<T>
+  - Added supporting types:
+    - NewHistoryEntry - for inserting new history records
+    - HistoryRow - SQLite row representation
+    - From<HistoryRow> for HistoryEntry conversion with proper type conversions
+  - Added Status::from_i32() and Status::to_i32() helper methods for database conversions
+  - 8 comprehensive tests verify all history operations:
+    - test_insert_history - basic insertion and retrieval
+    - test_query_history_pagination - verify pagination with limit/offset
+    - test_query_history_status_filter - filter by status (Complete vs Failed)
+    - test_delete_history_before - cleanup by timestamp
+    - test_delete_history_by_status - cleanup by status
+    - test_clear_history - delete all records
+    - test_get_history_entry_not_found - handle missing records
+    - test_history_ordering - verify DESC ordering by completed_at
+  - All 33 database tests passing (25 from previous tasks + 8 new history tests)
+  - History system ready for integration with download completion tracking in Phase 2/3
+  - API endpoints for history management (GET /history, DELETE /history) ready for Phase 3
 
 ### Implementation Details
 

@@ -28,6 +28,33 @@ pub enum Status {
     Failed,
 }
 
+impl Status {
+    /// Convert integer status code to Status enum
+    pub fn from_i32(status: i32) -> Self {
+        match status {
+            0 => Status::Queued,
+            1 => Status::Downloading,
+            2 => Status::Paused,
+            3 => Status::Processing,
+            4 => Status::Complete,
+            5 => Status::Failed,
+            _ => Status::Failed, // Default to Failed for unknown status
+        }
+    }
+
+    /// Convert Status enum to integer status code
+    pub fn to_i32(&self) -> i32 {
+        match self {
+            Status::Queued => 0,
+            Status::Downloading => 1,
+            Status::Paused => 2,
+            Status::Processing => 3,
+            Status::Complete => 4,
+            Status::Failed => 5,
+        }
+    }
+}
+
 /// Download priority
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
