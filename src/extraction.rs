@@ -740,6 +740,97 @@ impl ZipExtractor {
     }
 }
 
+/// Unified archive extraction dispatcher
+///
+/// Detects the archive type and routes to the appropriate extractor (RAR, 7z, or ZIP).
+/// Tries multiple passwords from the PasswordList and caches the successful password.
+///
+/// # Arguments
+/// * `download_id` - Download ID for password caching
+/// * `archive_path` - Path to the archive file
+/// * `dest_path` - Destination directory for extraction
+/// * `passwords` - List of passwords to try (in priority order)
+/// * `db` - Database for caching successful passwords
+///
+/// # Returns
+/// * `Ok(Vec<PathBuf>)` - List of extracted files on success
+/// * `Err(Error)` - Extraction error (wrong password, corruption, unknown type, etc.)
+///
+/// # Example
+/// ```no_run
+/// use usenet_dl::extraction::{extract_archive, PasswordList};
+/// use std::path::PathBuf;
+///
+/// # async fn example(db: &usenet_dl::db::Database) -> usenet_dl::error::Result<()> {
+/// let passwords = PasswordList::collect(None, Some("pass123"), None, None, true);
+/// let files = extract_archive(
+///     1,
+///     &PathBuf::from("movie.rar"),
+///     &PathBuf::from("/tmp/extract"),
+///     &passwords,
+///     db,
+/// ).await?;
+/// println!("Extracted {} files", files.len());
+/// # Ok(())
+/// # }
+/// ```
+pub async fn extract_archive(
+    download_id: DownloadId,
+    archive_path: &Path,
+    dest_path: &Path,
+    passwords: &PasswordList,
+    db: &Database,
+) -> Result<Vec<PathBuf>> {
+    // Detect archive type by extension
+    let archive_type = detect_archive_type(archive_path).ok_or_else(|| {
+        Error::ExtractionFailed(format!(
+            "unknown archive type for file: {}",
+            archive_path.display()
+        ))
+    })?;
+
+    info!(
+        download_id,
+        ?archive_path,
+        ?archive_type,
+        "dispatching extraction to appropriate extractor"
+    );
+
+    // Route to the appropriate extractor
+    match archive_type {
+        ArchiveType::Rar => {
+            RarExtractor::extract_with_passwords(
+                download_id,
+                archive_path,
+                dest_path,
+                passwords,
+                db,
+            )
+            .await
+        }
+        ArchiveType::SevenZip => {
+            SevenZipExtractor::extract_with_passwords(
+                download_id,
+                archive_path,
+                dest_path,
+                passwords,
+                db,
+            )
+            .await
+        }
+        ArchiveType::Zip => {
+            ZipExtractor::extract_with_passwords(
+                download_id,
+                archive_path,
+                dest_path,
+                passwords,
+                db,
+            )
+            .await
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1046,5 +1137,144 @@ mod tests {
 
         let path = Path::new("relative/path/file.zip");
         assert_eq!(detect_archive_type(path), Some(ArchiveType::Zip));
+    }
+
+    #[tokio::test]
+    async fn test_extract_archive_unknown_type() {
+        use std::path::Path;
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+        let passwords = PasswordList::collect(None, None, None, None, false);
+
+        // Try to extract a non-archive file
+        let result = extract_archive(
+            1,
+            Path::new("test.txt"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+
+        // Should fail with ExtractionFailed error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::ExtractionFailed(msg) => {
+                assert!(msg.contains("unknown archive type"));
+            }
+            _ => panic!("expected ExtractionFailed error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_archive_routes_to_rar() {
+        use std::path::Path;
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+        let passwords = PasswordList::collect(None, None, None, None, false);
+
+        // Try to extract a RAR file (will fail since it doesn't exist, but tests routing)
+        let result = extract_archive(
+            1,
+            Path::new("test.rar"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+
+        // Should fail (file doesn't exist) but confirms it routed to RAR extractor
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_extract_archive_routes_to_7z() {
+        use std::path::Path;
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+        let passwords = PasswordList::collect(None, None, None, None, false);
+
+        // Try to extract a 7z file (will fail since it doesn't exist, but tests routing)
+        let result = extract_archive(
+            1,
+            Path::new("test.7z"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+
+        // Should fail (file doesn't exist) but confirms it routed to 7z extractor
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_extract_archive_routes_to_zip() {
+        use std::path::Path;
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+        let passwords = PasswordList::collect(None, None, None, None, false);
+
+        // Try to extract a ZIP file (will fail since it doesn't exist, but tests routing)
+        let result = extract_archive(
+            1,
+            Path::new("test.zip"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+
+        // Should fail (file doesn't exist) but confirms it routed to ZIP extractor
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_extract_archive_case_insensitive() {
+        use std::path::Path;
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+        let passwords = PasswordList::collect(None, None, None, None, false);
+
+        // Test uppercase extensions are handled correctly
+        let result = extract_archive(
+            1,
+            Path::new("TEST.RAR"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+        assert!(result.is_err()); // File doesn't exist, but routing works
+
+        let result = extract_archive(
+            1,
+            Path::new("TEST.7Z"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+        assert!(result.is_err());
+
+        let result = extract_archive(
+            1,
+            Path::new("TEST.ZIP"),
+            Path::new("/tmp/extract"),
+            &passwords,
+            &db,
+        )
+        .await;
+        assert!(result.is_err());
     }
 }

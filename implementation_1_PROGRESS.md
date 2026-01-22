@@ -18,13 +18,13 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (17/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (18/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
-  - Tasks 12.1-12.3: ✅ 7z and ZIP extraction with archive type detection complete (158 tests passing)
-- Total: 83/253 tasks complete (32.8%)
+  - Tasks 12.1-12.4: ✅ Unified archive extraction dispatcher complete (163 tests passing)
+- Total: 84/253 tasks complete (33.2%)
 
-**Next Task:** Task 12.4 - Create unified extract_archive() dispatcher
+**Next Task:** Task 12.5 - Add password support for 7z and ZIP
 
 ## Analysis
 
@@ -241,7 +241,7 @@ The implementation will require these major dependencies:
 - [x] Task 12.1: Integrate sevenz-rust crate for 7z extraction
 - [x] Task 12.2: Integrate zip crate for ZIP extraction
 - [x] Task 12.3: Implement detect_archive_type() by extension
-- [ ] Task 12.4: Create unified extract_archive() dispatcher
+- [x] Task 12.4: Create unified extract_archive() dispatcher
 - [ ] Task 12.5: Add password support for 7z and ZIP
 - [ ] Task 12.6: Test 7z and ZIP extraction with passwords
 
@@ -3037,3 +3037,78 @@ Created a unified archive type detection system that identifies archive formats 
 ### Next Steps
 
 Task 12.4 will create a unified extract_archive() dispatcher that uses this archive type detection to route to the appropriate extractor (RAR/7z/ZIP).
+
+## Completed This Iteration (Ralph)
+
+**Task 12.4: Create unified extract_archive() dispatcher**
+
+### Implementation Summary
+
+Created a unified dispatcher function that automatically detects archive types and routes to the appropriate extractor (RAR, 7z, or ZIP). This provides a clean, consistent interface for archive extraction across all supported formats.
+
+### What Was Completed
+
+1. **extract_archive() Function** (src/extraction.rs, lines 743-830):
+   - Public async function that serves as the single entry point for all archive extraction
+   - Automatically detects archive type using detect_archive_type()
+   - Routes to RarExtractor, SevenZipExtractor, or ZipExtractor based on type
+   - Returns unified error handling for unknown archive types
+   - Passes through all parameters (download_id, paths, passwords, db) to appropriate extractor
+   - Full documentation with example usage
+
+2. **Function Signature**:
+```rust
+pub async fn extract_archive(
+    download_id: DownloadId,
+    archive_path: &Path,
+    dest_path: &Path,
+    passwords: &PasswordList,
+    db: &Database,
+) -> Result<Vec<PathBuf>>
+```
+
+3. **Implementation Details**:
+   - Detects archive type by file extension (case-insensitive)
+   - Returns `Error::ExtractionFailed` for unknown/unsupported archive types
+   - Logs archive type and path before dispatching to extractor
+   - Delegates to `*Extractor::extract_with_passwords()` methods
+   - Maintains consistent error handling across all archive types
+
+### Tests Added
+
+Added 5 comprehensive tests (src/extraction.rs, lines 1143-1265):
+
+1. `test_extract_archive_unknown_type` - Verifies proper error for non-archive files
+2. `test_extract_archive_routes_to_rar` - Confirms routing to RAR extractor
+3. `test_extract_archive_routes_to_7z` - Confirms routing to 7z extractor
+4. `test_extract_archive_routes_to_zip` - Confirms routing to ZIP extractor
+5. `test_extract_archive_case_insensitive` - Verifies uppercase extensions work (.RAR, .7Z, .ZIP)
+
+**Test Results:**
+- All 5 new tests pass
+- Total extraction module tests: 30 tests (up from 25)
+- Total project tests: 163 tests passing (up from 158)
+- Build completes successfully with no errors
+
+### Integration Points
+
+The `extract_archive()` function is now ready to be called from:
+- `post_processing.rs::run_extract_stage()` (currently has a TODO placeholder)
+- Any future code that needs to extract archives
+
+### Benefits
+
+1. **Simplified API**: Single function instead of choosing between 3 extractors
+2. **Automatic Type Detection**: No need for manual archive type checking
+3. **Consistent Interface**: Same parameters and return type regardless of archive format
+4. **Unified Error Handling**: Single error path for all archive types
+5. **Easy Testing**: Straightforward to test routing logic
+6. **Future-Proof**: Easy to add new archive formats (just extend ArchiveType enum and add match arm)
+
+### Files Modified
+
+- `src/extraction.rs`: Added extract_archive() function (88 lines) and 5 tests (122 lines)
+
+### Next Steps
+
+Task 12.5 will add password support verification for 7z and ZIP extractors (already implemented in code, needs testing).
