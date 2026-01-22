@@ -8,15 +8,15 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (23/53 tasks complete)
+- Phase 1: 🔄 In Progress (24/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
-  - Tasks 4.1-4.6: ✅ Download task spawner complete (45 tests passing, spawn_download_task implemented)
-  - Tasks 4.7-9.8: ⏳ Remaining (Article downloading, Queue, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 28/253 tasks complete (11.1%)
+  - Tasks 4.1-4.7: ✅ Basic article downloading complete (45 tests passing)
+  - Tasks 4.8-9.8: ⏳ Remaining (Progress tracking, Queue, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 29/253 tasks complete (11.5%)
 
-**Next Task:** Task 4.7 - Implement basic article downloading loop using nntp-rs
+**Next Task:** Task 4.8 - Add progress tracking (update download progress in DB and emit events)
 
 ## Analysis
 
@@ -168,7 +168,7 @@ The implementation will require these major dependencies:
 - [x] Task 4.4: Implement add_nzb_content() to parse NZB and create download record
 - [x] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
 - [x] Task 4.6: Create download task spawner (spawn_download_task)
-- [ ] Task 4.7: Implement basic article downloading loop using nntp-rs
+- [x] Task 4.7: Implement basic article downloading loop using nntp-rs
 - [ ] Task 4.8: Add progress tracking (update download progress in DB and emit events)
 
 - [ ] Task 5.1: Implement priority queue (BinaryHeap or sorted Vec with Priority ordering)
@@ -434,6 +434,43 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Download Manager - Task 4.7 Complete: Basic Article Downloading Loop**
+
+- Task 4.7: Implemented article downloading with file storage ✓
+  - Creates temp directory for each download: `temp_dir/download_{id}/`
+  - Downloads articles sequentially from NNTP server via `fetch_article()`
+  - Saves each article to disk: `article_{segment_number}.dat`
+  - Stores raw article data (including yEnc encoding) for later decoding
+  - Updates article status in database after successful download
+  - Tracks downloaded bytes and calculates progress percentage
+  - Emits progress events during download (Downloading, DownloadComplete, DownloadFailed)
+  - Handles errors by marking article as FAILED and failing entire download
+  - Cleans up properly on both success and failure paths
+
+**Implementation Details:**
+- Added `config` parameter to spawned task (needed for `temp_dir` path)
+- Created download-specific temp directory: `config.temp_dir.join(format!("download_{}", download_id))`
+- Each article stored as separate file for resume support (can re-download failed articles)
+- Article content joined from response.lines into single string for storage
+- Files written asynchronously with `tokio::fs::write()` to avoid blocking
+- Article data tracked in memory during download (for future assembly step)
+- Progress tracking already implemented in Task 4.6 (no changes needed)
+
+**Architectural Notes:**
+- Article decoding (yEnc) deferred to post-processing phase (Phase 2)
+- nntp-rs provides `ArticleAssembler` for yEnc decoding and multi-part assembly
+- Raw article storage enables resume after crash (re-download only failed segments)
+- Temp directory structure: `temp_dir/download_<id>/article_<segment>.dat`
+- Final file assembly will happen in post-processing (Extract stage)
+
+**Test Coverage:**
+- All 45 existing tests still passing
+- Code compiles successfully with no errors
+- Ready for Task 4.8 (speed calculation already has placeholder)
+- Integration with queue management (Tasks 5.1-5.9) ready
+
+## Previous Completed Iterations
 
 **Phase 1 Download Manager - Task 4.6 Complete: spawn_download_task() Implementation**
 

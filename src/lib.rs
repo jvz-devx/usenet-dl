@@ -429,6 +429,7 @@ impl UsenetDownloader {
         let db = self.db.clone();
         let event_tx = self.event_tx.clone();
         let nntp_pools = self.nntp_pools.clone();
+        let config = self.config.clone();
 
         tokio::spawn(async move {
             // Fetch download record
@@ -471,6 +472,19 @@ impl UsenetDownloader {
             let mut downloaded_articles = 0;
             let mut downloaded_bytes: u64 = 0;
 
+            // Create temp directory for this download
+            let download_temp_dir = config.temp_dir.join(format!("download_{}", download_id));
+            tokio::fs::create_dir_all(&download_temp_dir).await.map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to create temp directory: {}", e),
+                ))
+            })?;
+
+            // Store article data in temp directory
+            // Later we'll assemble these into the final file (post-processing phase)
+            let mut article_data = Vec::new();
+
             // Download each article
             for article in pending_articles {
                 // Get a connection from the first NNTP pool
@@ -485,7 +499,23 @@ impl UsenetDownloader {
 
                 // Fetch the article from the server
                 match conn.fetch_article(&article.message_id).await {
-                    Ok(_response) => {
+                    Ok(response) => {
+                        // Save article content to temp directory
+                        // Each article gets its own file: article_<segment_number>.dat
+                        let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
+
+                        // Join response lines into single string for storage
+                        let article_content = response.lines.join("\n");
+                        tokio::fs::write(&article_file, article_content.as_bytes()).await.map_err(|e| {
+                            Error::Io(std::io::Error::new(
+                                e.kind(),
+                                format!("Failed to write article file: {}", e),
+                            ))
+                        })?;
+
+                        // Track article data for later assembly
+                        article_data.push((article.segment_number, response.lines));
+
                         // Mark article as downloaded
                         db.update_article_status(
                             article.id,
