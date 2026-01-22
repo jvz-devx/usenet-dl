@@ -88,6 +88,64 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
     }
 }
 
+/// Check if a path appears to be a sample file or folder
+///
+/// Detects sample files/folders using common naming patterns:
+/// - Folders named "sample", "samples", "subs", "proof"
+/// - Files with "sample" in the name
+/// - Common video sample patterns (e.g., "sample.mkv", "moviename-sample.avi")
+///
+/// # Arguments
+///
+/// * `path` - The path to check
+///
+/// # Returns
+///
+/// Returns `true` if the path appears to be a sample file or folder
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use usenet_dl::utils::is_sample;
+///
+/// assert!(is_sample(Path::new("/downloads/Movie/Sample")));
+/// assert!(is_sample(Path::new("/downloads/Movie/movie-sample.mkv")));
+/// assert!(!is_sample(Path::new("/downloads/Movie/movie.mkv")));
+/// ```
+pub fn is_sample(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Common sample folder/file names
+    const SAMPLE_PATTERNS: &[&str] = &[
+        "sample",
+        "samples",
+        "subs",
+        "proof",
+        "proofs",
+        "cover",
+        "covers",
+        "eac3to",
+    ];
+
+    // Check for exact matches (case-insensitive)
+    if SAMPLE_PATTERNS.iter().any(|&pattern| name == pattern) {
+        return true;
+    }
+
+    // Check for "sample" in the filename
+    // e.g., "movie-sample.mkv", "sample.avi", "movie.sample.mp4"
+    if name.contains("sample") {
+        return true;
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +261,57 @@ mod tests {
         // Should find test (3).txt
         let unique = get_unique_path(&path, FileCollisionAction::Rename).unwrap();
         assert_eq!(unique, temp_dir.path().join("test (3).txt"));
+    }
+
+    #[test]
+    fn test_is_sample_folder_exact_match() {
+        // Exact match sample folder names (case-insensitive)
+        assert!(is_sample(Path::new("/downloads/Movie/Sample")));
+        assert!(is_sample(Path::new("/downloads/Movie/sample")));
+        assert!(is_sample(Path::new("/downloads/Movie/SAMPLE")));
+        assert!(is_sample(Path::new("/downloads/Movie/Samples")));
+        assert!(is_sample(Path::new("/downloads/Movie/Subs")));
+        assert!(is_sample(Path::new("/downloads/Movie/Proof")));
+        assert!(is_sample(Path::new("/downloads/Movie/Cover")));
+    }
+
+    #[test]
+    fn test_is_sample_file_with_sample_in_name() {
+        // Files with "sample" in the name
+        assert!(is_sample(Path::new("/downloads/movie-sample.mkv")));
+        assert!(is_sample(Path::new("/downloads/sample.avi")));
+        assert!(is_sample(Path::new("/downloads/movie.sample.mp4")));
+        assert!(is_sample(Path::new("/downloads/SAMPLE.MKV")));
+        assert!(is_sample(Path::new("/downloads/Movie-SAMPLE-Scene.mkv")));
+    }
+
+    #[test]
+    fn test_is_sample_not_sample() {
+        // Normal files/folders that are not samples
+        assert!(!is_sample(Path::new("/downloads/Movie/movie.mkv")));
+        assert!(!is_sample(Path::new("/downloads/Movie/Video")));
+        assert!(!is_sample(Path::new("/downloads/Movie/Season 01")));
+        assert!(!is_sample(Path::new("/downloads/Movie/extras")));
+        assert!(!is_sample(Path::new("/downloads/Movie.2020.1080p.mkv")));
+    }
+
+    #[test]
+    fn test_is_sample_edge_cases() {
+        // Edge cases - paths that might be confusing
+        // "sampling" does NOT contain "sample" - they are different words
+        assert!(!is_sample(Path::new("/downloads/sampling-documentary.mkv")));
+        assert!(!is_sample(Path::new("/downloads/examples/movie.mkv")));
+
+        // But these DO contain "sample" as substring
+        assert!(is_sample(Path::new("/downloads/resampled-audio.mkv"))); // "resampled" = "re" + "sample" + "d"
+
+        // Normal files that should not be detected
+        assert!(!is_sample(Path::new("/downloads/Movie.2020.mkv")));
+
+        // Empty path
+        assert!(!is_sample(Path::new("")));
+
+        // Just extension
+        assert!(!is_sample(Path::new(".mkv")));
     }
 }

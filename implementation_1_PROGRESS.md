@@ -25,10 +25,10 @@ IN_PROGRESS
   - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
-  - Task 16.1: ✅ Cleanup target file extensions defined (228 tests passing)
-- Total: 104/253 tasks complete (41.1%)
+  - Tasks 16.1-16.2: ✅ Cleanup configuration and sample detection complete (232 tests passing)
+- Total: 105/253 tasks complete (41.5%)
 
-**Next Task:** Task 16.2 - Implement delete_samples flag and folder detection
+**Next Task:** Task 16.3 - Create cleanup() function to remove intermediate files
 
 ## Analysis
 
@@ -270,7 +270,7 @@ The implementation will require these major dependencies:
 - [x] Task 15.6: Test file collision handling (rename, overwrite, skip modes)
 
 - [x] Task 16.1: Define cleanup target file extensions (.par2, .nzb, .sfv, .srr, archives)
-- [ ] Task 16.2: Implement delete_samples flag and folder detection
+- [x] Task 16.2: Implement delete_samples flag and folder detection
 - [ ] Task 16.3: Create cleanup() function to remove intermediate files
 - [ ] Task 16.4: Add error handling (log warnings, don't fail on cleanup errors)
 - [ ] Task 16.5: Emit Cleaning event
@@ -446,6 +446,36 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 16.2: Sample Folder Detection**
+
+Successfully implemented sample detection logic for cleanup operations:
+
+1. **is_sample() function** (src/utils.rs):
+   - Added utility function to detect sample files and folders
+   - Case-insensitive pattern matching for common sample names
+   - Exact matches: "sample", "samples", "subs", "proof", "proofs", "cover", "covers", "eac3to"
+   - Substring matching: Files containing "sample" in the name (e.g., "movie-sample.mkv")
+   - Comprehensive documentation with examples
+
+2. **Test Coverage** (src/utils.rs tests):
+   - test_is_sample_folder_exact_match: Tests exact folder name matches
+   - test_is_sample_file_with_sample_in_name: Tests substring matching
+   - test_is_sample_not_sample: Tests normal files that should not be detected
+   - test_is_sample_edge_cases: Tests edge cases like empty paths and resampled files
+
+3. **Integration**:
+   - Function is exported via public utils module
+   - Ready to be integrated into cleanup() function (Task 16.3)
+   - Works with CleanupConfig.delete_samples flag (already defined in Task 16.1)
+
+**Test Results:** All 4 new tests passing (232 total tests passing)
+
+**Next:** Implement cleanup() function to actually remove intermediate files and samples
+
+---
+
+## Previous Iterations
 
 **Tasks 15.3-15.6 Complete: File moving with collision handling**
 
