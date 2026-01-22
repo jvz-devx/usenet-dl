@@ -141,7 +141,7 @@ The implementation will require these major dependencies:
 - [x] Task 2.2: Implement Database struct with sqlx connection pool
 - [x] Task 2.3: Implement CRUD operations for downloads table
 - [x] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
-- [ ] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
+- [x] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
 - [ ] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
 - [ ] Task 2.7: Implement history operations (insert, query, cleanup)
 - [x] Task 2.8: Add database migration system (sqlx migrations or embedded SQL)
@@ -425,24 +425,21 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Article-Level Tracking - Task 2.4 Complete**
+**Phase 1 Password Cache Operations - Task 2.5 Complete**
 
-- Task 2.4: Implemented article-level tracking for download resume support ✓
-  - insert_article() - inserts a single article
-  - insert_articles_batch() - efficient batch insertion for large NZB files (100+ articles)
-  - update_article_status() - updates status by article ID
-  - update_article_status_by_message_id() - updates status by message ID
-  - get_articles() - retrieves all articles for a download
-  - get_pending_articles() - retrieves pending articles for resume
-  - get_article_by_message_id() - retrieves article by message ID
-  - count_articles_by_status() - counts articles with specific status (PENDING/DOWNLOADED/FAILED)
-  - count_articles() - counts total articles for a download
-  - delete_articles() - deletes all articles for a download (auto-cascades via FK)
-  - Added NewArticle and Article structs
-  - Added article_status module with constants (PENDING=0, DOWNLOADED=1, FAILED=2)
-  - 6 comprehensive tests verify all article operations work correctly
-  - Tests include batch insertion (100 articles), status updates, pending filtering, and cascade deletion
-  - All 13 database tests passing
+- Task 2.5: Implemented password cache operations for archive extraction ✓
+  - set_correct_password() - caches successful password for a download (upsert with ON CONFLICT)
+  - get_cached_password() - retrieves cached password (returns None if not found)
+  - delete_cached_password() - explicitly deletes cached password (also auto-cascades on download deletion)
+  - Used UPSERT pattern (INSERT ... ON CONFLICT DO UPDATE) to handle password updates
+  - Foreign key CASCADE ensures passwords are automatically deleted when download is removed
+  - 5 comprehensive tests verify all password cache operations:
+    - test_set_and_get_cached_password - basic set/get functionality
+    - test_update_cached_password - UPSERT behavior when password changes
+    - test_delete_cached_password - explicit deletion
+    - test_password_cascade_delete - automatic deletion via FK CASCADE
+    - test_empty_password - handles empty string passwords (valid for password-less archives)
+  - All 18 database tests passing (13 from previous tasks + 5 new password tests)
 
 ### Implementation Details
 
