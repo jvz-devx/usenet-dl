@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (57/61 tasks complete)
+- Phase 1: 🔄 In Progress (58/61 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (5/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), wait_for_active_downloads(), and persist_all_state())
-- Total: 63/253 tasks complete (24.9%)
+  - Tasks 9.1-9.8: 🔄 In Progress (6/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), wait_for_active_downloads(), persist_all_state(), and signal handling)
+- Total: 64/253 tasks complete (25.3%)
 
-**Next Task:** Task 9.6 - Set up signal handling (SIGTERM, SIGINT) using tokio::signal
+**Next Task:** Task 9.7 - Add shutdown flag to database (was_unclean_shutdown check)
 
 ## Analysis
 
@@ -212,7 +212,7 @@ The implementation will require these major dependencies:
 - [x] Task 9.3: Implement pause_graceful() to finish current article
 - [x] Task 9.4: Add wait_for_articles() with timeout (implemented as wait_for_active_downloads())
 - [x] Task 9.5: Implement persist_all_state() to save final state
-- [ ] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
+- [x] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
 - [ ] Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)
 - [ ] Task 9.8: Test graceful shutdown and recovery on restart
 
@@ -438,6 +438,85 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 9.6 Complete: Set up signal handling (SIGTERM, SIGINT) using tokio::signal**
+
+Successfully implemented signal handling infrastructure for graceful shutdown:
+
+**Implementation Details:**
+
+1. **Event::Shutdown Added** (src/types.rs:262-263)
+   - Added new `Shutdown` variant to the Event enum
+   - Emitted when graceful shutdown is initiated
+   - Allows event subscribers to know when shutdown is happening
+
+2. **run_with_shutdown() Helper Function** (src/lib.rs:1854-1896)
+   - Public async function that applications can use to run with automatic signal handling
+   - Sets up handlers for SIGTERM and SIGINT (Ctrl+C)
+   - Uses tokio::signal::unix::{signal, SignalKind}
+   - Waits for either signal using tokio::select!
+   - Logs which signal was received
+   - Calls downloader.shutdown() when signal is caught
+   - Function signature: `pub async fn run_with_shutdown(downloader: UsenetDownloader) -> Result<()>`
+
+3. **Shutdown Event Emission** (src/lib.rs:909)
+   - Updated shutdown() method to emit Event::Shutdown
+   - Event is sent before database cleanup
+   - Allows subscribers to react to shutdown in progress
+
+**Usage Example:**
+```rust
+use usenet_dl::{UsenetDownloader, Config, run_with_shutdown};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::default();
+    let downloader = UsenetDownloader::new(config).await?;
+
+    // Run with automatic signal handling
+    run_with_shutdown(downloader).await?;
+
+    Ok(())
+}
+```
+
+**Test Coverage (2 new tests, 7 shutdown tests total):**
+
+1. **test_shutdown_emits_shutdown_event** (src/lib.rs:4384-4413)
+   - Subscribes to event channel
+   - Spawns task to listen for Shutdown event
+   - Calls shutdown()
+   - Verifies Shutdown event is emitted
+   - Uses timeout to prevent test hanging
+
+2. **test_run_with_shutdown_basic** (src/lib.rs:4415-4425)
+   - Verifies run_with_shutdown function exists and compiles
+   - Tests basic shutdown functionality
+   - Note: Can't easily test actual signal handling in unit tests
+
+**All 7 shutdown tests passing:**
+- test_shutdown_graceful ✅
+- test_shutdown_rejects_new_downloads ✅
+- test_shutdown_waits_for_completion ✅
+- test_shutdown_with_active_downloads ✅
+- test_pause_graceful_all ✅
+- test_graceful_pause_completes_current_article ✅
+- test_shutdown_calls_persist_all_state ✅
+- test_shutdown_emits_shutdown_event ✅ (NEW)
+- test_run_with_shutdown_basic ✅ (NEW)
+
+**Design Rationale:**
+- Following the design from implementation_1.md line 2324-2345
+- Signal handling is Unix-specific (uses tokio::signal::unix)
+- Non-blocking, graceful shutdown on signals
+- Provides a convenient helper for applications
+- Applications can also handle signals themselves and call shutdown() directly
+
+**Files Modified:**
+- `src/types.rs`: Added Event::Shutdown variant (line 262-263)
+- `src/lib.rs`: Added run_with_shutdown() function (line 1854-1896), updated shutdown() to emit Event::Shutdown (line 909), added 2 new tests
+
+---
 
 **Task 9.4 Complete: Add wait_for_articles() with timeout**
 

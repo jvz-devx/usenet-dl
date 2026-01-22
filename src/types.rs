@@ -257,6 +257,9 @@ pub enum Event {
         /// Exit code (if available)
         exit_code: Option<i32>,
     },
+
+    /// Graceful shutdown initiated
+    Shutdown,
 }
 
 /// Information about a download in the queue
