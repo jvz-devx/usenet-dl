@@ -72,6 +72,39 @@ pub struct UsenetDownloader {
     config: std::sync::Arc<Config>,
     /// NNTP connection pools (one per server, wrapped in Arc for sharing across tasks)
     nntp_pools: std::sync::Arc<Vec<nntp_rs::NntpPool>>,
+    /// Priority queue for managing download order (protected by Mutex)
+    queue: std::sync::Arc<tokio::sync::Mutex<std::collections::BinaryHeap<QueuedDownload>>>,
+    /// Semaphore to limit concurrent downloads (respects max_concurrent_downloads config)
+    concurrent_limit: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+/// Internal struct representing a download in the priority queue
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct QueuedDownload {
+    id: DownloadId,
+    priority: Priority,
+    created_at: i64, // Unix timestamp for tie-breaking
+}
+
+// Implement Ord for BinaryHeap (max-heap by default)
+impl Ord for QueuedDownload {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // First compare by priority (higher priority wins)
+        match self.priority.cmp(&other.priority) {
+            std::cmp::Ordering::Equal => {
+                // If priorities are equal, older downloads come first (FIFO)
+                // Note: Reversed because we want older (lower timestamp) to have higher priority
+                other.created_at.cmp(&self.created_at)
+            }
+            ordering => ordering,
+        }
+    }
+}
+
+impl PartialOrd for QueuedDownload {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl UsenetDownloader {
@@ -99,11 +132,23 @@ impl UsenetDownloader {
             nntp_pools.push(pool);
         }
 
+        // Create priority queue (empty initially, will be loaded from database on startup)
+        let queue = std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::BinaryHeap::new()
+        ));
+
+        // Create semaphore for concurrent download limiting
+        let concurrent_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            config.max_concurrent_downloads
+        ));
+
         Ok(Self {
             db: std::sync::Arc::new(db),
             event_tx,
             config: std::sync::Arc::new(config),
             nntp_pools: std::sync::Arc::new(nntp_pools),
+            queue,
+            concurrent_limit,
         })
     }
 
@@ -155,6 +200,97 @@ impl UsenetDownloader {
     pub(crate) fn emit_event(&self, event: crate::types::Event) {
         // send() returns Err if there are no receivers, which is fine - we just drop the event
         self.event_tx.send(event).ok();
+    }
+
+    /// Add a download to the in-memory priority queue
+    ///
+    /// This method adds a download ID to the priority queue for processing.
+    /// Downloads are ordered by priority (High > Normal > Low) and then by creation time (FIFO).
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to add to the queue
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the download doesn't exist in the database
+    async fn add_to_queue(&self, id: DownloadId) -> Result<()> {
+        // Fetch download from database to get priority and created_at
+        let download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+
+        let queued_download = QueuedDownload {
+            id,
+            priority: Priority::from_i32(download.priority),
+            created_at: download.created_at,
+        };
+
+        // Add to priority queue
+        let mut queue = self.queue.lock().await;
+        queue.push(queued_download);
+
+        Ok(())
+    }
+
+    /// Remove a download from the in-memory priority queue
+    ///
+    /// This method removes a download from the queue without starting it.
+    /// Used when a download is cancelled or removed.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to remove from the queue
+    ///
+    /// # Returns
+    ///
+    /// Returns true if the download was found and removed, false otherwise
+    async fn remove_from_queue(&self, id: DownloadId) -> bool {
+        let mut queue = self.queue.lock().await;
+
+        let original_len = queue.len();
+
+        // Collect all items except the one we want to remove
+        let items: Vec<_> = queue.drain().filter(|item| item.id != id).collect();
+
+        let was_removed = items.len() < original_len;
+
+        // Rebuild queue without the removed item
+        *queue = items.into_iter().collect();
+
+        was_removed
+    }
+
+    /// Get the next download from the priority queue
+    ///
+    /// Returns the highest-priority download that's ready to start.
+    /// Downloads are ordered by priority and then by creation time (FIFO for same priority).
+    ///
+    /// # Returns
+    ///
+    /// The DownloadId of the next download to process, or None if queue is empty
+    async fn get_next_download(&self) -> Option<DownloadId> {
+        let mut queue = self.queue.lock().await;
+        queue.pop().map(|item| item.id)
+    }
+
+    /// Peek at the next download without removing it from the queue
+    ///
+    /// # Returns
+    ///
+    /// The DownloadId of the next download, or None if queue is empty
+    async fn peek_next_download(&self) -> Option<DownloadId> {
+        let queue = self.queue.lock().await;
+        queue.peek().map(|item| item.id)
+    }
+
+    /// Get the current size of the download queue
+    ///
+    /// # Returns
+    ///
+    /// The number of downloads currently in the queue
+    async fn queue_size(&self) -> usize {
+        let queue = self.queue.lock().await;
+        queue.len()
     }
 
     /// Add an NZB to the download queue from raw bytes
@@ -307,6 +443,9 @@ impl UsenetDownloader {
             id: download_id,
             name: name.to_string(),
         });
+
+        // Add to priority queue for processing
+        self.add_to_queue(download_id).await?;
 
         Ok(download_id)
     }
@@ -612,6 +751,7 @@ mod tests {
         let config = Config {
             database_path: db_path,
             servers: vec![], // No servers for testing
+            max_concurrent_downloads: 3,
             ..Default::default()
         };
 
@@ -624,11 +764,23 @@ mod tests {
         // No NNTP pools since we have no servers
         let nntp_pools = Vec::new();
 
+        // Create priority queue
+        let queue = std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::BinaryHeap::new()
+        ));
+
+        // Create semaphore
+        let concurrent_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            config.max_concurrent_downloads
+        ));
+
         let downloader = UsenetDownloader {
             db: std::sync::Arc::new(db),
             event_tx,
             config: std::sync::Arc::new(config),
             nntp_pools: std::sync::Arc::new(nntp_pools),
+            queue,
+            concurrent_limit,
         };
 
         (downloader, temp_dir)
@@ -908,5 +1060,177 @@ mod tests {
         let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
         assert_eq!(download.category, Some("movies".to_string()));
         assert_eq!(download.priority, Priority::High as i32);
+    }
+
+    // Priority Queue Tests
+
+    #[tokio::test]
+    async fn test_queue_adds_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add download
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Verify it's in the queue
+        assert_eq!(downloader.queue_size().await, 1);
+
+        // Verify we can get it from the queue
+        let next_id = downloader.peek_next_download().await;
+        assert_eq!(next_id, Some(id));
+    }
+
+    #[tokio::test]
+    async fn test_queue_priority_ordering() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add downloads with different priorities
+        let low_id = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "low",
+                DownloadOptions {
+                    priority: Priority::Low,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let high_id = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "high",
+                DownloadOptions {
+                    priority: Priority::High,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let normal_id = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "normal",
+                DownloadOptions {
+                    priority: Priority::Normal,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Queue should have 3 items
+        assert_eq!(downloader.queue_size().await, 3);
+
+        // Should return highest priority first (High > Normal > Low)
+        assert_eq!(downloader.get_next_download().await, Some(high_id));
+        assert_eq!(downloader.get_next_download().await, Some(normal_id));
+        assert_eq!(downloader.get_next_download().await, Some(low_id));
+        assert_eq!(downloader.get_next_download().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_queue_fifo_for_same_priority() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add multiple downloads with same priority
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "first", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Small delay to ensure different timestamps
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "second", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let id3 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "third", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Should return in FIFO order for same priority
+        assert_eq!(downloader.get_next_download().await, Some(id1));
+        assert_eq!(downloader.get_next_download().await, Some(id2));
+        assert_eq!(downloader.get_next_download().await, Some(id3));
+    }
+
+    #[tokio::test]
+    async fn test_queue_remove_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add downloads
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "first", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "second", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id3 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "third", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        assert_eq!(downloader.queue_size().await, 3);
+
+        // Remove middle download
+        let removed = downloader.remove_from_queue(id2).await;
+        assert!(removed);
+        assert_eq!(downloader.queue_size().await, 2);
+
+        // Should still get id1 and id3
+        assert_eq!(downloader.get_next_download().await, Some(id1));
+        assert_eq!(downloader.get_next_download().await, Some(id3));
+        assert_eq!(downloader.get_next_download().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_queue_remove_nonexistent() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Try to remove download that doesn't exist
+        let removed = downloader.remove_from_queue(999).await;
+        assert!(!removed);
+    }
+
+    #[tokio::test]
+    async fn test_queue_force_priority() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add normal priority download
+        let normal_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "normal", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Add force priority download (should jump to front)
+        let force_id = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "force",
+                DownloadOptions {
+                    priority: Priority::Force,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Force should come first even though added second
+        assert_eq!(downloader.get_next_download().await, Some(force_id));
+        assert_eq!(downloader.get_next_download().await, Some(normal_id));
     }
 }

@@ -75,6 +75,19 @@ impl Default for Priority {
     }
 }
 
+impl Priority {
+    /// Convert integer priority code to Priority enum
+    pub fn from_i32(priority: i32) -> Self {
+        match priority {
+            -1 => Priority::Low,
+            0 => Priority::Normal,
+            1 => Priority::High,
+            2 => Priority::Force,
+            _ => Priority::Normal, // Default to Normal for unknown priority
+        }
+    }
+}
+
 /// Post-processing stage
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
