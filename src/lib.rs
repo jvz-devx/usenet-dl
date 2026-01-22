@@ -64,22 +64,46 @@ pub use types::{
 
 /// Main entry point for the usenet-dl library
 pub struct UsenetDownloader {
+    /// Database instance for persistence
+    db: Database,
     /// Event broadcast channel sender (multiple subscribers supported)
     event_tx: tokio::sync::broadcast::Sender<crate::types::Event>,
     /// Configuration
-    _config: Config,
+    config: Config,
+    /// NNTP connection pools (one per server)
+    nntp_pools: Vec<nntp_rs::NntpPool>,
 }
 
 impl UsenetDownloader {
     /// Create a new UsenetDownloader instance
+    ///
+    /// This initializes all core components:
+    /// - Opens/creates the SQLite database
+    /// - Runs migrations
+    /// - Creates NNTP connection pools for each configured server
+    /// - Sets up the event broadcast channel
     pub async fn new(config: Config) -> Result<Self> {
+        // Initialize database
+        let db = Database::new(&config.database_path).await?;
+
         // Create broadcast channel with buffer size of 1000 events
         // This allows multiple subscribers to receive all events independently
         let (event_tx, _rx) = tokio::sync::broadcast::channel(1000);
 
+        // Create NNTP connection pools for each server
+        let mut nntp_pools = Vec::with_capacity(config.servers.len());
+        for server in &config.servers {
+            let pool = nntp_rs::NntpPool::new(server.clone().into(), server.connections as u32)
+                .await
+                .map_err(|e| Error::Nntp(format!("Failed to create NNTP pool: {}", e)))?;
+            nntp_pools.push(pool);
+        }
+
         Ok(Self {
+            db,
             event_tx,
-            _config: config,
+            config,
+            nntp_pools,
         })
     }
 

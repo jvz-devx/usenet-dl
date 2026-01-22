@@ -727,3 +727,17 @@ mod duration_serde {
         Ok(Duration::from_secs(secs))
     }
 }
+
+// Conversion from our ServerConfig to nntp-rs's ServerConfig
+impl From<ServerConfig> for nntp_rs::ServerConfig {
+    fn from(config: ServerConfig) -> Self {
+        nntp_rs::ServerConfig {
+            host: config.host,
+            port: config.port,
+            tls: config.tls,
+            allow_insecure_tls: false,
+            username: config.username.unwrap_or_default(),
+            password: config.password.unwrap_or_default(),
+        }
+    }
+}

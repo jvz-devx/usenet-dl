@@ -8,14 +8,15 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (17/53 tasks complete)
+- Phase 1: 🔄 In Progress (20/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
-  - Tasks 3.1-3.5: ✅ Event system complete (just finished)
-  - Tasks 4.1-9.8: ⏳ Remaining (Download Manager, Queue, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 22/253 tasks complete (8.7%)
+  - Tasks 3.1-3.5: ✅ Event system complete
+  - Tasks 4.1-4.3: ✅ Download Manager initialization complete (just finished)
+  - Tasks 4.4-9.8: ⏳ Remaining (Download operations, Queue, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 25/253 tasks complete (9.9%)
 
-**Next Task:** Task 4.1 - Create UsenetDownloader struct with proper fields
+**Next Task:** Task 4.4 - Implement add_nzb_content() to parse NZB and create download record
 
 ## Analysis
 
@@ -161,9 +162,9 @@ The implementation will require these major dependencies:
 - [x] Task 3.4: Implement subscribe() method returning broadcast::Receiver<Event>
 - [x] Task 3.5: Add event emission throughout codebase (emit_event helper method)
 
-- [ ] Task 4.1: Create UsenetDownloader struct with fields (db, event_tx, config, nntp_pool)
-- [ ] Task 4.2: Implement UsenetDownloader::new(config) constructor
-- [ ] Task 4.3: Create nntp-rs connection pool (NntpPool) from ServerConfig
+- [x] Task 4.1: Create UsenetDownloader struct with fields (db, event_tx, config, nntp_pool)
+- [x] Task 4.2: Implement UsenetDownloader::new(config) constructor
+- [x] Task 4.3: Create nntp-rs connection pool (NntpPool) from ServerConfig
 - [ ] Task 4.4: Implement add_nzb_content() to parse NZB and create download record
 - [ ] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
 - [ ] Task 4.6: Create download task spawner (spawn_download_task)
@@ -433,6 +434,46 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Download Manager Initialization - Tasks 4.1-4.3 Complete**
+
+- Task 4.1: Created UsenetDownloader struct with proper fields ✓
+  - Added `db: Database` field for SQLite persistence
+  - Kept `event_tx: tokio::sync::broadcast::Sender<Event>` for event broadcasting
+  - Changed `_config` to `config: Config` (removed underscore prefix)
+  - Added `nntp_pools: Vec<nntp_rs::NntpPool>` for managing multiple NNTP server connections
+  - Struct now has all core components needed for download management
+
+- Task 4.2: Implemented UsenetDownloader::new(config) constructor ✓
+  - Initializes Database from config.database_path
+  - Runs all database migrations automatically
+  - Creates broadcast channel with 1000-event buffer
+  - Creates NNTP connection pools for each configured server
+  - Proper error handling with detailed error messages
+  - Comprehensive documentation explaining initialization steps
+
+- Task 4.3: Created nntp-rs connection pools from ServerConfig ✓
+  - Implemented `From<ServerConfig>` trait to convert usenet-dl ServerConfig to nntp-rs ServerConfig
+  - Maps fields: host, port, tls (boolean flag)
+  - Handles optional username/password (converts Option<String> to String with empty default)
+  - Sets allow_insecure_tls to false for security
+  - Creates one NntpPool per server with configurable connection count
+  - Pools are stored in Vec for multi-server support
+
+**Implementation Details:**
+- All 33 existing tests still passing
+- Code compiles successfully (only expected warnings for unused fields)
+- Conversion handles Optional credentials gracefully (empty string for anonymous)
+- NNTP pools created with server.connections count for optimal throughput
+- Error handling: Database::new() and NntpPool::new() errors properly propagated
+
+**Technical Notes:**
+- nntp-rs ServerConfig requires non-optional username/password (String, not Option<String>)
+- Empty strings used for anonymous access (common for public news servers)
+- Connection pools use bb8 internally for efficient connection management
+- Each server gets its own pool for parallel downloading from multiple providers
+
+## Previous Iterations
 
 **Phase 1 Event System - Tasks 3.1-3.5 Complete**
 
