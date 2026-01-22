@@ -51,6 +51,7 @@
 
 pub mod config;
 pub mod db;
+pub mod deobfuscation;
 pub mod error;
 pub mod extraction;
 pub mod post_processing;

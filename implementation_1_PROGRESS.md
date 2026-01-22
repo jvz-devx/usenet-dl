@@ -18,14 +18,15 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (25/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (26/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
   - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
-- Total: 91/253 tasks complete (36.0%)
+  - Task 14.1: ✅ Obfuscated filename detection with heuristics complete (203 tests passing)
+- Total: 92/253 tasks complete (36.4%)
 
-**Next Task:** Task 14.1 - Implement is_obfuscated() with heuristics
+**Next Task:** Task 14.2 - Create DeobfuscationConfig with enabled flag and min_length
 
 ## Analysis
 
@@ -252,7 +253,7 @@ The implementation will require these major dependencies:
 - [x] Task 13.4: Test nested extraction (archive within archive)
 - [x] Task 13.5: Add safeguard against infinite recursion (depth limit)
 
-- [ ] Task 14.1: Implement is_obfuscated() with heuristics (entropy, UUID, hex, no vowels)
+- [x] Task 14.1: Implement is_obfuscated() with heuristics (entropy, UUID, hex, no vowels)
 - [ ] Task 14.2: Create DeobfuscationConfig with enabled flag and min_length
 - [ ] Task 14.3: Implement determine_final_name() with priority order (job name, NZB meta, largest file)
 - [ ] Task 14.4: Add NZB metadata parsing for <meta type="name">
@@ -3204,3 +3205,98 @@ Tests confirm the password priority system works correctly:
 ### Next Steps
 
 Task 13.1 will implement ExtractionConfig with max_recursion_depth for nested archive extraction.
+
+---
+
+## Completed This Iteration (Ralph)
+
+**Task 14.1: Implement is_obfuscated() with heuristics**
+
+### Implementation Summary
+
+Created a new `deobfuscation` module with comprehensive heuristics to detect obfuscated (random/meaningless) filenames commonly found in Usenet releases. The module includes multiple detection methods and extensive test coverage.
+
+### What Was Completed
+
+**Created src/deobfuscation.rs:**
+- ✅ Main `is_obfuscated()` function that checks for four types of obfuscation patterns
+- ✅ `is_high_entropy()` - Detects random alphanumeric strings with uniform character distribution
+- ✅ `looks_like_uuid()` - Identifies UUID patterns (with or without hyphens)
+- ✅ `is_hex_string()` - Detects pure hexadecimal strings
+- ✅ `has_no_vowels()` - Identifies strings without vowels (unlikely in real names)
+
+**Detection Heuristics:**
+
+1. **High Entropy Detection:**
+   - Requires 24+ alphanumeric characters for confidence
+   - All three types (upper, lower, digit) must be present
+   - Each type must be 31-38% of total (near-perfect balance)
+   - Catches truly random strings like "aB3cD5eF7gH9iJ1kL2mN4oP6qR8sT0uV2"
+   - Avoids false positives on structured names like "EpisodeS01E01720pWEBDL"
+
+2. **UUID Pattern Detection:**
+   - Matches standard UUID format: `550e8400-e29b-41d4-a716-446655440000`
+   - Also matches UUIDs without hyphens (32 hex characters)
+   - Validates segment lengths (8-4-4-4-12)
+
+3. **Hexadecimal String Detection:**
+   - Identifies pure hex strings longer than 16 characters
+   - Combined with length check to avoid false positives on CRC codes
+
+4. **No Vowels Detection:**
+   - Strings with no vowels longer than 8 characters
+   - Real words and names almost always contain vowels
+
+### Test Coverage
+
+Added 11 comprehensive tests covering all heuristics:
+- `test_is_high_entropy` - Validates entropy detection with balanced/unbalanced strings
+- `test_looks_like_uuid` - Tests UUID pattern matching
+- `test_is_hex_string` - Verifies hex string detection
+- `test_has_no_vowels` - Tests vowel absence detection
+- `test_is_obfuscated_uuid_patterns` - Integration test for UUID obfuscation
+- `test_is_obfuscated_hex_strings` - Integration test for hex obfuscation
+- `test_is_obfuscated_no_vowels` - Integration test for no-vowels obfuscation
+- `test_is_obfuscated_high_entropy` - Integration test for entropy obfuscation
+- `test_is_obfuscated_normal_filenames` - Validates no false positives on real filenames
+- `test_is_obfuscated_edge_cases` - Tests empty, short, and borderline cases
+- `test_is_obfuscated_mixed_cases` - Real-world Usenet examples
+
+**Test Examples:**
+- ✅ Correctly identifies: UUIDs, long hex strings, high-entropy random strings
+- ✅ Correctly rejects: Movie.Name.2024.mkv, Episode.S01E01.mkv, codec names (x264)
+- ✅ Handles edge cases: CRC codes, short strings, empty strings
+
+### Files Modified
+
+1. **src/deobfuscation.rs** (NEW)
+   - 272 lines of implementation + tests
+   - Public API: `is_obfuscated(filename: &str) -> bool`
+   - Four helper functions with detailed documentation
+
+2. **src/lib.rs**
+   - Added `pub mod deobfuscation;` to module exports
+
+### Test Results
+
+- All 11 new deobfuscation tests pass
+- Total project tests: 203 tests passing (up from 192)
+- Build completes successfully with no errors
+- Library compiles with only documentation warnings (expected)
+
+### Design Decisions
+
+**Conservative Approach:**
+- Intentionally strict heuristics to avoid false positives
+- Better to miss some obfuscated files than falsely flag normal filenames
+- High entropy threshold set to 24+ characters with tight balance requirements
+- Hex string threshold at 16+ characters to avoid flagging CRC codes
+
+**Extensibility:**
+- Module is self-contained and well-tested
+- Easy to add additional heuristics in the future
+- Clear separation between detection logic and configuration (DeobfuscationConfig)
+
+### Next Steps
+
+Task 14.2 will add the `DeobfuscationConfig` struct to enable/disable obfuscation detection and configure minimum filename length thresholds. This will integrate with the existing Config system and allow users to customize obfuscation handling behavior.
