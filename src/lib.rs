@@ -310,6 +310,71 @@ impl UsenetDownloader {
 
         Ok(download_id)
     }
+
+    /// Add an NZB to the download queue from a file
+    ///
+    /// This is a convenience method that reads an NZB file from disk and delegates
+    /// to `add_nzb_content()`. The filename (without extension) is used as the download name.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the NZB file
+    /// * `options` - Download options (category, destination, priority, etc.)
+    ///
+    /// # Returns
+    ///
+    /// The unique DownloadId for this download
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - File cannot be read
+    /// - NZB content is invalid or cannot be parsed
+    /// - NZB validation fails (missing segments, invalid structure)
+    /// - Database insertion fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use usenet_dl::{UsenetDownloader, Config, DownloadOptions};
+    /// use std::path::Path;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let downloader = UsenetDownloader::new(Config::default()).await?;
+    ///
+    ///     let id = downloader.add_nzb(
+    ///         Path::new("example.nzb"),
+    ///         DownloadOptions::default()
+    ///     ).await?;
+    ///
+    ///     println!("Added download with ID: {}", id);
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn add_nzb(
+        &self,
+        path: &std::path::Path,
+        options: DownloadOptions,
+    ) -> Result<DownloadId> {
+        // Read file content
+        let content = tokio::fs::read(path)
+            .await
+            .map_err(|e| Error::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to read NZB file '{}': {}", path.display(), e)
+            )))?;
+
+        // Extract filename without extension as download name
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Delegate to add_nzb_content
+        self.add_nzb_content(&content, &name, options).await
+    }
 }
 
 #[cfg(test)]
@@ -540,5 +605,87 @@ mod tests {
             }
             _ => panic!("Expected Queued event, got {:?}", event),
         }
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_from_file() {
+        let (downloader, temp_dir) = create_test_downloader().await;
+
+        // Create a test NZB file
+        let nzb_path = temp_dir.path().join("test_download.nzb");
+        tokio::fs::write(&nzb_path, SAMPLE_NZB).await.unwrap();
+
+        // Add NZB from file
+        let download_id = downloader
+            .add_nzb(&nzb_path, DownloadOptions::default())
+            .await
+            .unwrap();
+
+        assert!(download_id > 0);
+
+        // Verify download was created with correct name (filename without extension)
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(download.name, "test_download");
+        assert_eq!(download.status, Status::Queued.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_file_not_found() {
+        let (downloader, temp_dir) = create_test_downloader().await;
+
+        let nonexistent_path = temp_dir.path().join("nonexistent.nzb");
+
+        let result = downloader
+            .add_nzb(&nonexistent_path, DownloadOptions::default())
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::Io(e) => {
+                assert!(e.to_string().contains("Failed to read NZB file"));
+            }
+            _ => panic!("Expected Io error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_extracts_filename() {
+        let (downloader, temp_dir) = create_test_downloader().await;
+
+        // Create test file with complex filename
+        let nzb_path = temp_dir.path().join("My.Movie.2024.1080p.nzb");
+        tokio::fs::write(&nzb_path, SAMPLE_NZB).await.unwrap();
+
+        let download_id = downloader
+            .add_nzb(&nzb_path, DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        // Should use filename without .nzb extension
+        assert_eq!(download.name, "My.Movie.2024.1080p");
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_with_options() {
+        let (downloader, temp_dir) = create_test_downloader().await;
+
+        let nzb_path = temp_dir.path().join("test.nzb");
+        tokio::fs::write(&nzb_path, SAMPLE_NZB).await.unwrap();
+
+        let options = DownloadOptions {
+            category: Some("movies".to_string()),
+            priority: Priority::High,
+            ..Default::default()
+        };
+
+        let download_id = downloader
+            .add_nzb(&nzb_path, options)
+            .await
+            .unwrap();
+
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(download.category, Some("movies".to_string()));
+        assert_eq!(download.priority, Priority::High as i32);
     }
 }

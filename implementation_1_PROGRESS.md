@@ -8,15 +8,15 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (21/53 tasks complete)
+- Phase 1: 🔄 In Progress (22/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
-  - Tasks 4.1-4.4: ✅ Add NZB content complete (41 tests passing, including 8 new tests)
-  - Tasks 4.5-9.8: ⏳ Remaining (Add NZB file, Download operations, Queue, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 26/253 tasks complete (10.3%)
+  - Tasks 4.1-4.5: ✅ Add NZB methods complete (45 tests passing, including add_nzb() from file)
+  - Tasks 4.6-9.8: ⏳ Remaining (Download operations, Queue, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 27/253 tasks complete (10.7%)
 
-**Next Task:** Task 4.5 - Implement add_nzb() to read file and delegate to add_nzb_content()
+**Next Task:** Task 4.6 - Create download task spawner (spawn_download_task)
 
 ## Analysis
 
@@ -166,7 +166,7 @@ The implementation will require these major dependencies:
 - [x] Task 4.2: Implement UsenetDownloader::new(config) constructor
 - [x] Task 4.3: Create nntp-rs connection pool (NntpPool) from ServerConfig
 - [x] Task 4.4: Implement add_nzb_content() to parse NZB and create download record
-- [ ] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
+- [x] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
 - [ ] Task 4.6: Create download task spawner (spawn_download_task)
 - [ ] Task 4.7: Implement basic article downloading loop using nntp-rs
 - [ ] Task 4.8: Add progress tracking (update download progress in DB and emit events)
@@ -435,7 +435,40 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Download Manager - Task 4.4 Complete: add_nzb_content() Implementation**
+**Phase 1 Download Manager - Task 4.5 Complete: add_nzb() Implementation**
+
+- Task 4.5: Implemented add_nzb() method to read NZB from file ✓
+  - Reads file content using tokio::fs::read (async)
+  - Extracts filename without extension as download name (file_stem)
+  - Delegates to add_nzb_content() for parsing and queue insertion
+  - Comprehensive error handling for file read errors
+  - Proper error messages include file path in error context
+  - Handles edge cases: missing files, complex filenames, etc.
+
+**Test Coverage:**
+- 4 new tests added, all passing
+- test_add_nzb_from_file: Verifies basic file reading and delegation
+- test_add_nzb_file_not_found: Tests error handling for missing files
+- test_add_nzb_extracts_filename: Verifies filename extraction (without .nzb extension)
+- test_add_nzb_with_options: Tests DownloadOptions are properly passed through
+- All 45 tests passing (33 database + 8 add_nzb_content + 4 add_nzb)
+
+**Implementation Details:**
+- Uses tokio::fs::read for async file I/O
+- file_stem() extracts filename without extension
+- Unwraps to "unknown" if filename cannot be extracted
+- Error::Io wraps file read errors with context
+- Delegates all NZB parsing and validation to add_nzb_content()
+
+**Technical Notes:**
+- Async file reading prevents blocking the event loop
+- File path included in error messages for better debugging
+- Method signature matches design: pub async fn add_nzb(&self, path: &Path, options: DownloadOptions) -> Result<DownloadId>
+- Fully documented with examples in rustdoc
+
+## Previous Completed Iterations
+
+**Phase 1 Download Manager - Task 4.4: add_nzb_content() Implementation**
 
 - Task 4.4: Implemented add_nzb_content() method ✓
   - Parses NZB content from bytes using nntp-rs parse_nzb()
