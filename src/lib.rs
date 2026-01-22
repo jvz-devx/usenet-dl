@@ -56,7 +56,7 @@ pub mod types;
 // Re-export commonly used types
 pub use config::{Config, ServerConfig};
 pub use error::{Error, Result};
-pub use types::{DownloadId, Status, Priority};
+pub use types::{DownloadId, DownloadInfo, DownloadOptions, HistoryEntry, Priority, Status};
 
 /// Main entry point for the usenet-dl library
 pub struct UsenetDownloader {

@@ -1,7 +1,11 @@
 //! Core types for usenet-dl
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
+
+use crate::config::PostProcess;
 
 /// Unique identifier for a download
 pub type DownloadId = i64;
@@ -213,4 +217,96 @@ pub enum Event {
         /// Exit code (if available)
         exit_code: Option<i32>,
     },
+}
+
+/// Information about a download in the queue
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DownloadInfo {
+    /// Unique download identifier
+    pub id: DownloadId,
+
+    /// Download name (from NZB filename)
+    pub name: String,
+
+    /// Category (if assigned)
+    pub category: Option<String>,
+
+    /// Current status
+    pub status: Status,
+
+    /// Progress percentage (0.0 to 100.0)
+    pub progress: f32,
+
+    /// Current download speed in bytes per second
+    pub speed_bps: u64,
+
+    /// Total size in bytes
+    pub size_bytes: u64,
+
+    /// Downloaded bytes so far
+    pub downloaded_bytes: u64,
+
+    /// Estimated time to completion in seconds (None if unknown)
+    pub eta_seconds: Option<u64>,
+
+    /// Download priority
+    pub priority: Priority,
+
+    /// When the download was added to the queue
+    pub created_at: DateTime<Utc>,
+
+    /// When the download started (None if not started yet)
+    pub started_at: Option<DateTime<Utc>>,
+}
+
+/// Options for adding a download to the queue
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DownloadOptions {
+    /// Category to assign (None = use default category)
+    #[serde(default)]
+    pub category: Option<String>,
+
+    /// Override default destination directory
+    #[serde(default)]
+    pub destination: Option<PathBuf>,
+
+    /// Override default post-processing mode
+    #[serde(default)]
+    pub post_process: Option<PostProcess>,
+
+    /// Download priority
+    #[serde(default)]
+    pub priority: Priority,
+
+    /// Password for this specific download (high priority)
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// Historical download record
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    /// Unique download identifier
+    pub id: i64,
+
+    /// Download name
+    pub name: String,
+
+    /// Category (if assigned)
+    pub category: Option<String>,
+
+    /// Final destination path (if completed successfully)
+    pub destination: Option<PathBuf>,
+
+    /// Final status (Complete or Failed)
+    pub status: Status,
+
+    /// Total size in bytes
+    pub size_bytes: u64,
+
+    /// Time spent downloading (not including queue wait time)
+    pub download_time: Duration,
+
+    /// When the download completed (successfully or failed)
+    pub completed_at: DateTime<Utc>,
 }

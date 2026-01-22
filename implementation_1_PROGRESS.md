@@ -132,10 +132,10 @@ The implementation will require these major dependencies:
 
 ### Phase 1: Core Library (Steps 1-9)
 
-- [ ] Task 1.1: Define core types (DownloadId, Status, Priority, Stage enums)
-- [ ] Task 1.2: Implement Config structure with Default trait (all 40+ settings)
-- [ ] Task 1.3: Implement RetryConfig with exponential backoff logic
-- [ ] Task 1.4: Create DownloadInfo, DownloadOptions, HistoryEntry types
+- [x] Task 1.1: Define core types (DownloadId, Status, Priority, Stage enums)
+- [x] Task 1.2: Implement Config structure with Default trait (all 40+ settings)
+- [x] Task 1.3: Implement RetryConfig with exponential backoff logic
+- [x] Task 1.4: Create DownloadInfo, DownloadOptions, HistoryEntry types
 
 - [ ] Task 2.1: Create SQLite schema (downloads, download_articles, passwords, processed_nzbs, history)
 - [ ] Task 2.2: Implement Database struct with sqlx connection pool
@@ -425,19 +425,23 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-- Task 0.1: Created Cargo.toml with all core dependencies (40+ crates)
-- Task 0.2: Created src/ directory with lib.rs, error.rs, types.rs, config.rs
-- Task 0.3: Added nntp-rs as path dependency - found and worked around quick-xml conflict
-- Task 0.4: Set up initial module structure with Event, Status, Priority, Config types
-- Task 0.5: Created comprehensive README.md with roadmap, features, and getting-started guide
+**Phase 1 Core Types - Tasks 1.1-1.4 Complete**
+
+- Task 1.1: Core types already implemented (DownloadId, Status, Priority, Stage enums) ✓
+- Task 1.2: Config structure with Default trait already complete with all 40+ settings ✓
+- Task 1.3: RetryConfig with exponential backoff already implemented ✓
+- Task 1.4: Added DownloadInfo, DownloadOptions, and HistoryEntry types to src/types.rs
 
 ### Discoveries
 
-**RSS Dependency Conflict:** The `rss` and `atom_syndication` crates enable the `encoding` feature on quick-xml, which changes the API and breaks nntp-rs compilation. Temporarily disabled these dependencies until Phase 4. When re-enabling in Phase 4, will need to either:
-1. Update nntp-rs to use `decode_and_unescape_value(decoder)` instead of `unescape_value()`
-2. Or disable default features on RSS crates
+**Phase 0 Already Complete:** Upon inspection, Phase 0 was already finished in a previous iteration. Tasks 1.1-1.3 were also already implemented during Phase 0 setup.
 
-**OpenSSL Required:** Updated shell.nix to include openssl and openssl.dev for reqwest dependency.
+**Task 1.4 Implementation:** Added three key types to support the download queue and history:
+- `DownloadInfo`: Complete download state including progress, speed, ETA, timestamps
+- `DownloadOptions`: Configuration options when adding downloads (category, priority, password, etc.)
+- `HistoryEntry`: Historical records of completed/failed downloads with timing data
+
+All types use proper Rust idioms (DateTime<Utc> from chrono, Duration from std::time) and are fully serializable with serde.
 
 ## Notes
 
