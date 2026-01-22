@@ -36,6 +36,10 @@ pub enum Error {
     #[error("download not found: {0}")]
     NotFound(String),
 
+    /// Shutdown in progress - not accepting new downloads
+    #[error("shutdown in progress: not accepting new downloads")]
+    ShuttingDown,
+
     /// Archive extraction error
     #[error("extraction error: {0}")]
     Extraction(String),

@@ -85,6 +85,8 @@ impl IsRetryable for Error {
             Error::InvalidNzb(_) => false,
             // Not found is permanent
             Error::NotFound(_) => false,
+            // Shutdown in progress - not retryable
+            Error::ShuttingDown => false,
             // Extraction errors are permanent
             Error::Extraction(_) => false,
             // Serialization errors are permanent

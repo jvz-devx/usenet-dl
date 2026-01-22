@@ -84,6 +84,8 @@ pub struct UsenetDownloader {
     active_downloads: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<DownloadId, tokio_util::sync::CancellationToken>>>,
     /// Global speed limiter shared across all downloads (token bucket algorithm)
     speed_limiter: speed_limiter::SpeedLimiter,
+    /// Flag to indicate whether new downloads are accepted (set to false during shutdown)
+    accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -167,6 +169,7 @@ impl UsenetDownloader {
             concurrent_limit,
             active_downloads,
             speed_limiter,
+            accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         // Restore any incomplete downloads from database (from previous session)
@@ -868,7 +871,11 @@ impl UsenetDownloader {
     pub async fn shutdown(&self) -> Result<()> {
         tracing::info!("Initiating graceful shutdown");
 
-        // 1. Cancel all active downloads
+        // 1. Stop accepting new downloads
+        self.accepting_new.store(false, std::sync::atomic::Ordering::SeqCst);
+        tracing::info!("Stopped accepting new downloads");
+
+        // 2. Cancel all active downloads
         {
             let active = self.active_downloads.lock().await;
             tracing::info!(active_count = active.len(), "Cancelling active downloads");
@@ -879,7 +886,7 @@ impl UsenetDownloader {
             }
         }
 
-        // 2. Wait for active downloads to complete with timeout
+        // 3. Wait for active downloads to complete with timeout
         let shutdown_timeout = std::time::Duration::from_secs(30);
         let wait_result = tokio::time::timeout(
             shutdown_timeout,
@@ -898,11 +905,11 @@ impl UsenetDownloader {
             }
         }
 
-        // 3. Persist final state (queue state is already persisted in DB)
+        // 4. Persist final state (queue state is already persisted in DB)
         // The queue and download states are automatically persisted via the database
         tracing::info!("Final state persisted to database");
 
-        // 4. Close database connections
+        // 5. Close database connections
         // Note: Database is in an Arc, so we can't consume it directly.
         // The connection pool will be closed when the last Arc reference is dropped.
         // We log this for observability but don't actually close the pool here.
@@ -985,6 +992,11 @@ impl UsenetDownloader {
         name: &str,
         options: DownloadOptions,
     ) -> Result<DownloadId> {
+        // Check if accepting new downloads (reject during shutdown)
+        if !self.accepting_new.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::ShuttingDown);
+        }
+
         // Parse NZB content from bytes to string
         let nzb_string = String::from_utf8(content.to_vec())
             .map_err(|e| Error::InvalidNzb(format!("NZB content is not valid UTF-8: {}", e)))?;
@@ -1796,6 +1808,7 @@ mod tests {
             concurrent_limit,
             active_downloads,
             speed_limiter,
+            accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         (downloader, temp_dir)
@@ -3955,5 +3968,50 @@ mod tests {
             "Shutdown took too long: {:?}",
             elapsed
         );
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_rejects_new_downloads() {
+        // Task 9.2: Test that shutdown() sets accepting_new flag and new downloads are rejected
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Initially, should accept new downloads
+        assert!(
+            downloader.accepting_new.load(std::sync::atomic::Ordering::SeqCst),
+            "Should accept new downloads initially"
+        );
+
+        // Attempt to add a download before shutdown - should succeed
+        let result_before = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        ).await;
+        assert!(result_before.is_ok(), "Should accept download before shutdown: {:?}", result_before);
+
+        // Trigger shutdown
+        let shutdown_result = downloader.shutdown().await;
+        assert!(shutdown_result.is_ok(), "Shutdown should complete successfully: {:?}", shutdown_result);
+
+        // After shutdown, accepting_new should be false
+        assert!(
+            !downloader.accepting_new.load(std::sync::atomic::Ordering::SeqCst),
+            "Should not accept new downloads after shutdown"
+        );
+
+        // Attempt to add a download after shutdown - should fail with ShuttingDown error
+        let result_after = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test2.nzb",
+            DownloadOptions::default(),
+        ).await;
+
+        assert!(result_after.is_err(), "Should reject download after shutdown");
+        match result_after {
+            Err(crate::error::Error::ShuttingDown) => {
+                // Expected error
+            }
+            other => panic!("Expected ShuttingDown error, got: {:?}", other),
+        }
     }
 }

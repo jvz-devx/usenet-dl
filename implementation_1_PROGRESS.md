@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (54/61 tasks complete)
+- Phase 1: 🔄 In Progress (55/61 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (1/8 complete - shutdown() method with tests)
-- Total: 59/253 tasks complete (23.3%)
+  - Tasks 9.1-9.8: 🔄 In Progress (2/8 complete - shutdown() and accepting_new flag)
+- Total: 60/253 tasks complete (23.7%)
 
-**Next Task:** Task 9.2 - Add accepting_new flag (AtomicBool) to stop new downloads
+**Next Task:** Task 9.3 - Implement pause_graceful() to finish current article
 
 ## Analysis
 
@@ -208,7 +208,7 @@ The implementation will require these major dependencies:
 - [x] Task 8.6: Test retry with simulated transient failures
 
 - [x] Task 9.1: Implement shutdown() method with graceful sequence
-- [ ] Task 9.2: Add accepting_new flag (AtomicBool) to stop new downloads
+- [x] Task 9.2: Add accepting_new flag (AtomicBool) to stop new downloads
 - [ ] Task 9.3: Implement pause_graceful() to finish current article
 - [ ] Task 9.4: Add wait_for_articles() with timeout
 - [ ] Task 9.5: Implement persist_all_state() to save final state
@@ -438,6 +438,60 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 9.2 Complete: Add accepting_new Flag to Stop New Downloads During Shutdown**
+
+Successfully implemented the accepting_new flag (AtomicBool) that prevents new downloads from being added during shutdown. This is step 1 of the graceful shutdown sequence.
+
+**Implementation Summary:**
+
+1. **UsenetDownloader Struct Update** (src/lib.rs:88)
+   - Added `accepting_new: Arc<AtomicBool>` field
+   - Wrapped in Arc for Clone compatibility
+   - Initialized to `true` in constructor (line 173)
+
+2. **Shutdown Integration** (src/lib.rs:873-876)
+   - Sets `accepting_new` to false as first step of shutdown sequence
+   - Uses SeqCst ordering for strict memory ordering guarantees
+   - Added tracing log: "Stopped accepting new downloads"
+   - Updated shutdown step numbering (now 5 steps instead of 4)
+
+3. **Download Rejection** (src/lib.rs:995-1000)
+   - Added check at start of `add_nzb_content()` method
+   - Returns `Error::ShuttingDown` if flag is false
+   - Prevents any new downloads from entering the queue during shutdown
+
+4. **Error Handling** (src/error.rs:41)
+   - Added new `ShuttingDown` error variant
+   - Clear error message: "shutdown in progress: not accepting new downloads"
+   - Classified as non-retryable in retry.rs (line 89)
+
+**Test Coverage (1 new test, 125 tests total):**
+
+1. **test_shutdown_rejects_new_downloads** (src/lib.rs:3974-4011)
+   - Verifies `accepting_new` is true initially
+   - Successfully adds download before shutdown
+   - Calls shutdown() and verifies it completes
+   - Confirms `accepting_new` is false after shutdown
+   - Attempts to add download after shutdown
+   - Validates correct `Error::ShuttingDown` error is returned
+   - Covers complete lifecycle: accept → shutdown → reject
+
+**All 4 shutdown tests passing:**
+- test_shutdown_graceful ✅
+- test_shutdown_rejects_new_downloads ✅ (NEW)
+- test_shutdown_waits_for_completion ✅
+- test_shutdown_with_active_downloads ✅
+
+**Design Notes:**
+
+- AtomicBool wrapped in Arc to satisfy Clone trait requirement for UsenetDownloader
+- SeqCst ordering chosen for strictest memory guarantees during shutdown
+- Check placed at entry point of add_nzb_content() - all other add methods delegate to it
+- Error is permanent (non-retryable) to prevent retry loops during shutdown
+- Flag persists after shutdown - downloader cannot be reused (by design)
+
+**Previous Iteration:**
 
 **Task 9.1 Complete: Graceful Shutdown Implementation**
 
