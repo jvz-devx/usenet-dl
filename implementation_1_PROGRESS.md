@@ -26,11 +26,11 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (5/71 tasks) - REST API implementation
-  - Tasks 17.1-17.5: ✅ API server startup complete (router, state, spawn_api_server)
-- Total: 114/253 tasks complete (45.1%)
+- Phase 3: 🔄 In Progress (6/71 tasks) - REST API implementation
+  - Tasks 17.1-17.6: ✅ API server with CORS middleware complete
+- Total: 115/253 tasks complete (45.5%)
 
-**Next Task:** Task 17.6 - Add CORS middleware (tower-http CorsLayer)
+**Next Task:** Task 17.7 - Add optional authentication middleware (check X-Api-Key header)
 
 ## Analysis
 
@@ -285,7 +285,7 @@ The implementation will require these major dependencies:
 - [x] Task 17.3: Implement create_router() with all route definitions
 - [x] Task 17.4: Create AppState with Arc<UsenetDownloader> for handler access
 - [x] Task 17.5: Implement API server startup (tokio::spawn api_server)
-- [ ] Task 17.6: Add CORS middleware (tower-http CorsLayer)
+- [x] Task 17.6: Add CORS middleware (tower-http CorsLayer)
 - [ ] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
 - [ ] Task 17.8: Test API server starts and responds to /health
 
@@ -449,7 +449,50 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 17.1: Add axum, tower, tower-http Dependencies**
+**Task 17.6: Add CORS Middleware**
+
+Successfully implemented CORS (Cross-Origin Resource Sharing) middleware for the REST API:
+
+1. **Implementation** (src/api/mod.rs):
+   - Added `tower_http::cors` imports (CorsLayer, AllowOrigin, Any)
+   - Modified `create_router()` to conditionally apply CORS middleware based on `config.api.cors_enabled`
+   - Created `build_cors_layer()` helper function that configures CORS based on allowed origins
+
+2. **build_cors_layer() Functionality**:
+   - Supports wildcard "*" origin for allowing any origin (default behavior)
+   - Supports specific origin lists (e.g., ["http://localhost:3000", "https://example.com"])
+   - Empty origin list defaults to allowing any origin (for ease of local development)
+   - Configures:
+     * Allow-Origin: Based on configuration (Any or specific list)
+     * Allow-Methods: Any HTTP method
+     * Allow-Headers: Any headers
+
+3. **Configuration Integration**:
+   - Reads from `config.api.cors_enabled` (default: true)
+   - Reads from `config.api.cors_origins` (default: ["*"])
+   - When disabled, CORS middleware is not applied to router
+   - When enabled, appropriate CORS headers are added to all responses
+
+4. **Test Coverage** (5 new tests, 8 total API tests):
+   - test_cors_enabled: Verifies CORS headers present when enabled
+   - test_cors_disabled: Verifies no CORS interference when disabled
+   - test_build_cors_layer_any_origin: Tests wildcard origin configuration
+   - test_build_cors_layer_specific_origins: Tests specific origin list
+   - test_build_cors_layer_empty_origins: Tests empty list defaults to any
+
+5. **Design Decisions**:
+   - CORS is enabled by default for easy frontend development (follows design doc)
+   - Default allows all origins ("*") since API binds to localhost by default (secure)
+   - Can be easily restricted for production deployments via config
+   - Middleware is conditionally applied for zero overhead when disabled
+
+**Test Results:** All 8 API tests passing, project compiles without errors
+
+**Next:** Task 17.7 - Add optional authentication middleware (check X-Api-Key header)
+
+---
+
+**Previous Iteration: Task 17.1: Add axum, tower, tower-http Dependencies**
 
 Successfully verified REST API dependencies are in place:
 

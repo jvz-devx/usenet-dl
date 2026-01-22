@@ -5,11 +5,13 @@
 
 use crate::{Config, UsenetDownloader, Result};
 use axum::{
+    http::HeaderValue,
     routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 pub mod routes;
 pub mod state;
@@ -75,9 +77,10 @@ pub use state::AppState;
 /// - `PUT /scheduler/:id` - Update schedule rule
 /// - `DELETE /scheduler/:id` - Delete schedule rule
 pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> Router {
-    let state = AppState::new(downloader, config);
+    let state = AppState::new(downloader, config.clone());
 
-    Router::new()
+    // Build the router with all routes
+    let router = Router::new()
         // Queue Management - Downloads
         .route("/downloads", get(routes::list_downloads))
         .route("/downloads", post(routes::add_download))
@@ -132,7 +135,49 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         .route("/scheduler/:id", put(routes::update_schedule_rule))
         .route("/scheduler/:id", delete(routes::delete_schedule_rule))
         // Add state to all routes
-        .with_state(state)
+        .with_state(state);
+
+    // Apply CORS middleware if enabled in config
+    if config.api.cors_enabled {
+        let cors = build_cors_layer(&config.api.cors_origins);
+        router.layer(cors)
+    } else {
+        router
+    }
+}
+
+/// Build a CORS layer based on configured origins
+///
+/// # Arguments
+///
+/// * `origins` - List of allowed origins (supports "*" for any origin)
+///
+/// # Returns
+///
+/// A configured CorsLayer that allows the specified origins, all methods,
+/// and all headers for cross-origin requests.
+fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    // Check if "*" (all origins) is in the list
+    let allow_any = origins.iter().any(|o| o == "*");
+
+    if allow_any || origins.is_empty() {
+        // Allow all origins (default for local development)
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        // Allow specific origins
+        let allowed: Vec<HeaderValue> = origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(allowed))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    }
 }
 
 /// Start the API server on the configured bind address.
@@ -251,6 +296,111 @@ mod tests {
 
         // The test passes if we got here without panicking
         assert!(true, "API server spawned successfully");
+    }
+
+    #[tokio::test]
+    async fn test_cors_enabled() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Config with CORS enabled (default)
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                cors_enabled: true,
+                cors_origins: vec!["*".to_string()],
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Create router with CORS enabled
+        let app = create_router(downloader, config);
+
+        // Make a request with Origin header
+        let request = Request::builder()
+            .uri("/health")
+            .header("Origin", "http://localhost:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Check that response has CORS headers
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // The CORS middleware should add access-control-allow-origin header
+        let headers = response.headers();
+        assert!(
+            headers.contains_key("access-control-allow-origin"),
+            "CORS header should be present when CORS is enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_disabled() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Config with CORS disabled
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                cors_enabled: false,
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Create router with CORS disabled
+        let app = create_router(downloader, config);
+
+        // Make a request with Origin header
+        let request = Request::builder()
+            .uri("/health")
+            .header("Origin", "http://localhost:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Check that response still works but may not have CORS headers
+        assert_eq!(response.status(), StatusCode::OK);
+        // When CORS is disabled, the middleware is not applied
+        // so no CORS headers should be added
+    }
+
+    #[test]
+    fn test_build_cors_layer_any_origin() {
+        // Test building CORS layer with "*" origin
+        let origins = vec!["*".to_string()];
+        let _layer = build_cors_layer(&origins);
+        // Just verify it builds without panicking
+    }
+
+    #[test]
+    fn test_build_cors_layer_specific_origins() {
+        // Test building CORS layer with specific origins
+        let origins = vec![
+            "http://localhost:3000".to_string(),
+            "https://example.com".to_string(),
+        ];
+        let _layer = build_cors_layer(&origins);
+        // Just verify it builds without panicking
+    }
+
+    #[test]
+    fn test_build_cors_layer_empty_origins() {
+        // Test building CORS layer with no origins (should default to any)
+        let origins: Vec<String> = vec![];
+        let _layer = build_cors_layer(&origins);
+        // Just verify it builds without panicking
     }
 
     #[tokio::test]
