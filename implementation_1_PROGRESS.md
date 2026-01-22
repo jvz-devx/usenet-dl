@@ -8,15 +8,15 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (20/53 tasks complete)
+- Phase 1: 🔄 In Progress (21/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
-  - Tasks 4.1-4.3: ✅ Download Manager initialization complete (just finished)
-  - Tasks 4.4-9.8: ⏳ Remaining (Download operations, Queue, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 25/253 tasks complete (9.9%)
+  - Tasks 4.1-4.4: ✅ Add NZB content complete (41 tests passing, including 8 new tests)
+  - Tasks 4.5-9.8: ⏳ Remaining (Add NZB file, Download operations, Queue, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 26/253 tasks complete (10.3%)
 
-**Next Task:** Task 4.4 - Implement add_nzb_content() to parse NZB and create download record
+**Next Task:** Task 4.5 - Implement add_nzb() to read file and delegate to add_nzb_content()
 
 ## Analysis
 
@@ -165,7 +165,7 @@ The implementation will require these major dependencies:
 - [x] Task 4.1: Create UsenetDownloader struct with fields (db, event_tx, config, nntp_pool)
 - [x] Task 4.2: Implement UsenetDownloader::new(config) constructor
 - [x] Task 4.3: Create nntp-rs connection pool (NntpPool) from ServerConfig
-- [ ] Task 4.4: Implement add_nzb_content() to parse NZB and create download record
+- [x] Task 4.4: Implement add_nzb_content() to parse NZB and create download record
 - [ ] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
 - [ ] Task 4.6: Create download task spawner (spawn_download_task)
 - [ ] Task 4.7: Implement basic article downloading loop using nntp-rs
@@ -434,6 +434,51 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Download Manager - Task 4.4 Complete: add_nzb_content() Implementation**
+
+- Task 4.4: Implemented add_nzb_content() method ✓
+  - Parses NZB content from bytes using nntp-rs parse_nzb()
+  - Validates NZB structure and segments
+  - Extracts metadata (title, password, category)
+  - Calculates SHA256 hash for duplicate detection
+  - Creates download record in database
+  - Creates article records for all segments (resume support)
+  - Caches password if provided or extracted from NZB
+  - Respects DownloadOptions (category, destination, priority, post_process, password)
+  - Emits Queued event to subscribers
+  - Comprehensive error handling for invalid UTF-8, parse errors, validation failures
+
+**Test Coverage:**
+- 8 new tests added, all passing
+- test_add_nzb_content_basic: Verifies download creation and database persistence
+- test_add_nzb_content_extracts_metadata: Checks NZB metadata extraction (title, password)
+- test_add_nzb_content_creates_articles: Verifies article/segment tracking
+- test_add_nzb_content_with_options: Tests DownloadOptions application
+- test_add_nzb_content_calculates_hash: Verifies SHA256 hash calculation
+- test_add_nzb_content_invalid_utf8: Tests error handling for invalid UTF-8
+- test_add_nzb_content_invalid_xml: Tests error handling for parse errors
+- test_add_nzb_content_emits_event: Verifies Queued event emission
+- All 41 tests passing (33 previous + 8 new)
+
+**Implementation Details:**
+- Added InvalidNzb error variant to error.rs
+- Added to_i32()/from_i32() methods to PostProcess enum for database storage
+- Uses nntp-rs::parse_nzb() for NZB parsing
+- SHA256 hashing via sha2 crate (already in Cargo.toml)
+- Password priority: provided > NZB metadata
+- Destination priority: provided > category-specific > default download_dir
+- Post-process priority: provided > category-specific > default
+- Job name for deobfuscation: NZB meta title > provided name
+
+**Technical Notes:**
+- NZB content validated before database insertion (nzb.validate())
+- All segments stored as articles for article-level resume support
+- NZB hash enables duplicate detection (upcoming in Task 28)
+- Password caching supports archive extraction (upcoming in Phase 2)
+- nzb_path set to "memory:{name}" (in-memory, not from file)
+
+## Previous Iterations
 
 **Phase 1 Download Manager Initialization - Tasks 4.1-4.3 Complete**
 

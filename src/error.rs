@@ -24,6 +24,10 @@ pub enum Error {
     #[error("NNTP error: {0}")]
     Nntp(String),
 
+    /// Invalid NZB file
+    #[error("invalid NZB: {0}")]
+    InvalidNzb(String),
+
     /// I/O error
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

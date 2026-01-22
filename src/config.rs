@@ -228,6 +228,31 @@ impl Default for PostProcess {
     }
 }
 
+impl PostProcess {
+    /// Convert PostProcess enum to integer for database storage
+    pub fn to_i32(&self) -> i32 {
+        match self {
+            PostProcess::None => 0,
+            PostProcess::Verify => 1,
+            PostProcess::Repair => 2,
+            PostProcess::Unpack => 3,
+            PostProcess::UnpackAndCleanup => 4,
+        }
+    }
+
+    /// Convert integer from database to PostProcess enum
+    pub fn from_i32(value: i32) -> Self {
+        match value {
+            0 => PostProcess::None,
+            1 => PostProcess::Verify,
+            2 => PostProcess::Repair,
+            3 => PostProcess::Unpack,
+            4 => PostProcess::UnpackAndCleanup,
+            _ => PostProcess::UnpackAndCleanup, // Default
+        }
+    }
+}
+
 /// Action to take when post-processing fails
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
