@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (3/8 complete - shutdown(), accepting_new flag, and pause_graceful_all())
-- Total: 61/253 tasks complete (24.1%)
+  - Tasks 9.1-9.8: 🔄 In Progress (4/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), and wait_for_active_downloads())
+- Total: 62/253 tasks complete (24.5%)
 
-**Next Task:** Task 9.4 - Add wait_for_articles() with timeout
+**Next Task:** Task 9.5 - Implement persist_all_state() to save final state
 
 ## Analysis
 
@@ -210,7 +210,7 @@ The implementation will require these major dependencies:
 - [x] Task 9.1: Implement shutdown() method with graceful sequence
 - [x] Task 9.2: Add accepting_new flag (AtomicBool) to stop new downloads
 - [x] Task 9.3: Implement pause_graceful() to finish current article
-- [ ] Task 9.4: Add wait_for_articles() with timeout
+- [x] Task 9.4: Add wait_for_articles() with timeout (implemented as wait_for_active_downloads())
 - [ ] Task 9.5: Implement persist_all_state() to save final state
 - [ ] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
 - [ ] Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)
@@ -439,7 +439,31 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 9.3 Complete: Implement pause_graceful() to Finish Current Article**
+**Task 9.4 Complete: Add wait_for_articles() with timeout**
+
+Verified that the required functionality is already fully implemented:
+
+**Implementation Details:**
+- Method implemented as `wait_for_active_downloads()` in src/lib.rs:952-966
+- Called by `shutdown()` with a 30-second timeout (line 884-887)
+- Polls the `active_downloads` map, checking every 100ms until all downloads complete
+- Properly handles timeout case with warning log message (line 897)
+
+**How It Works:**
+1. Continuously checks the size of the `active_downloads` HashMap
+2. Sleeps 100ms between checks to avoid busy-waiting
+3. Returns Ok(()) when all active downloads are removed from the map
+4. Used within `tokio::time::timeout()` in shutdown() for configurable timeout
+5. Gracefully handles both successful completion and timeout scenarios
+
+**Integration with Shutdown:**
+The shutdown sequence uses this method effectively:
+1. Sets `accepting_new` to false (line 875)
+2. Signals graceful pause to all downloads (line 879)
+3. Waits up to 30 seconds for downloads to complete (line 884-887)
+4. Handles timeout gracefully, logging warning and proceeding with shutdown
+
+**Previous Task (9.3): Implement pause_graceful() to Finish Current Article**
 
 Successfully implemented graceful pause functionality for downloads during shutdown:
 
