@@ -89,6 +89,14 @@ impl IsRetryable for Error {
             Error::ShuttingDown => false,
             // Extraction errors are permanent
             Error::Extraction(_) => false,
+            // Wrong password - not retryable (need different password)
+            Error::WrongPassword => false,
+            // All passwords failed - not retryable
+            Error::AllPasswordsFailed => false,
+            // No passwords available - not retryable
+            Error::NoPasswordsAvailable => false,
+            // Extraction failed - permanent
+            Error::ExtractionFailed(_) => false,
             // Serialization errors are permanent
             Error::Serialization(_) => false,
             // Unknown errors - be conservative and don't retry

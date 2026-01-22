@@ -44,6 +44,22 @@ pub enum Error {
     #[error("extraction error: {0}")]
     Extraction(String),
 
+    /// Wrong password for encrypted archive
+    #[error("wrong password for encrypted archive")]
+    WrongPassword,
+
+    /// All passwords failed for archive extraction
+    #[error("all passwords failed for archive extraction")]
+    AllPasswordsFailed,
+
+    /// No passwords available for encrypted archive
+    #[error("no passwords available for encrypted archive")]
+    NoPasswordsAvailable,
+
+    /// Extraction failed with specific reason
+    #[error("extraction failed: {0}")]
+    ExtractionFailed(String),
+
     /// Network error
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),

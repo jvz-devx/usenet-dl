@@ -52,6 +52,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod extraction;
 pub mod post_processing;
 pub mod retry;
 pub mod speed_limiter;
