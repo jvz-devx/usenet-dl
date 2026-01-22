@@ -139,7 +139,7 @@ The implementation will require these major dependencies:
 
 - [x] Task 2.1: Create SQLite schema (downloads, download_articles, passwords, processed_nzbs, history)
 - [x] Task 2.2: Implement Database struct with sqlx connection pool
-- [ ] Task 2.3: Implement CRUD operations for downloads table
+- [x] Task 2.3: Implement CRUD operations for downloads table
 - [ ] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
 - [ ] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
 - [ ] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
@@ -425,11 +425,23 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Database Schema - Tasks 2.1, 2.2, 2.8 Complete**
+**Phase 1 Database CRUD Operations - Task 2.3 Complete**
 
-- Task 2.1: Created complete SQLite schema with all 5 tables (downloads, download_articles, passwords, processed_nzbs, history) ✓
-- Task 2.2: Implemented Database struct with sqlx connection pool ✓
-- Task 2.8: Added embedded SQL migration system with version tracking ✓
+- Task 2.3: Implemented CRUD operations for downloads table ✓
+  - insert_download() - creates new download records
+  - get_download() - retrieves download by ID
+  - list_downloads() - lists all downloads ordered by priority
+  - list_downloads_by_status() - filters downloads by status
+  - update_status() - changes download status
+  - update_progress() - updates progress, speed, downloaded bytes
+  - update_priority() - changes download priority
+  - set_error() - sets error message
+  - set_started() - sets started timestamp
+  - set_completed() - sets completed timestamp
+  - delete_download() - removes download from database
+  - get_incomplete_downloads() - retrieves downloads for resume on startup
+  - Added NewDownload and Download structs
+  - 8 passing tests verify all CRUD operations work correctly
 
 ### Implementation Details
 
