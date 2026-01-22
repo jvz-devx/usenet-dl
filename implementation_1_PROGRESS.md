@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (26/53 tasks complete)
+- Phase 1: 🔄 In Progress (28/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Task 5.1: ✅ Priority queue complete (51 tests passing)
-  - Tasks 5.2-9.8: ⏳ Remaining (Queue management, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 31/253 tasks complete (12.3%)
+  - Tasks 5.1-5.3: ✅ Priority queue and concurrency limiter complete (51 tests passing)
+  - Tasks 5.4-9.8: ⏳ Remaining (Queue processor, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 33/253 tasks complete (13.0%)
 
-**Next Task:** Task 5.2 - Add queue management (add, remove, reorder by priority)
+**Next Task:** Task 5.4 - Create queue processor task that spawns downloads
 
 ## Analysis
 
