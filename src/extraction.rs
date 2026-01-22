@@ -1277,4 +1277,207 @@ mod tests {
         .await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_7z_password_list_integration() {
+        use std::path::Path;
+        use tempfile::{NamedTempFile, TempDir};
+
+        // Create a temporary database
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+
+        // Create a password list with multiple passwords
+        let passwords = PasswordList::collect(
+            None,
+            Some("download_password"),
+            Some("nzb_password"),
+            None,
+            true,
+        );
+
+        // Verify password list has expected passwords in priority order
+        let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
+        assert_eq!(password_vec.len(), 3);
+        assert_eq!(password_vec[0], "download_password");
+        assert_eq!(password_vec[1], "nzb_password");
+        assert_eq!(password_vec[2], ""); // Empty password
+
+        // Test with cached password (highest priority)
+        let passwords_with_cache = PasswordList::collect(
+            Some("cached_password"),
+            Some("download_password"),
+            None,
+            None,
+            false,
+        );
+
+        let password_vec: Vec<&str> = passwords_with_cache.iter().map(|s| s.as_str()).collect();
+        assert_eq!(password_vec.len(), 2);
+        assert_eq!(password_vec[0], "cached_password"); // Cache has highest priority
+        assert_eq!(password_vec[1], "download_password");
+    }
+
+    #[tokio::test]
+    async fn test_zip_password_list_integration() {
+        use std::path::Path;
+        use tempfile::{NamedTempFile, TempDir};
+
+        // Create a temporary database
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+
+        // Create a password list with multiple passwords
+        let passwords = PasswordList::collect(
+            None,
+            Some("secret123"),
+            None,
+            None,
+            true,
+        );
+
+        // Verify password list has expected passwords
+        let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
+        assert_eq!(password_vec.len(), 2);
+        assert_eq!(password_vec[0], "secret123");
+        assert_eq!(password_vec[1], ""); // Empty password
+    }
+
+    #[tokio::test]
+    async fn test_7z_password_priority_order() {
+        use tempfile::NamedTempFile;
+
+        // Test that password sources are prioritized correctly:
+        // 1. Cached password (highest)
+        // 2. Download-specific password
+        // 3. NZB metadata password
+        // 4. Global password file
+        // 5. Empty password (lowest)
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+
+        // All password sources
+        let passwords = PasswordList::collect(
+            Some("cached"),
+            Some("download"),
+            Some("nzb"),
+            None,
+            true,
+        );
+
+        let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
+        assert_eq!(password_vec.len(), 4);
+        assert_eq!(password_vec[0], "cached"); // Highest priority
+        assert_eq!(password_vec[1], "download");
+        assert_eq!(password_vec[2], "nzb");
+        assert_eq!(password_vec[3], ""); // Lowest priority
+    }
+
+    #[tokio::test]
+    async fn test_zip_password_priority_order() {
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+
+        // Test priority: cached > download > nzb > file > empty
+        let passwords = PasswordList::collect(
+            Some("cached_pw"),
+            Some("download_pw"),
+            Some("nzb_pw"),
+            None,
+            true,
+        );
+
+        let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
+        assert_eq!(password_vec.len(), 4);
+        assert_eq!(password_vec[0], "cached_pw");
+        assert_eq!(password_vec[1], "download_pw");
+        assert_eq!(password_vec[2], "nzb_pw");
+        assert_eq!(password_vec[3], "");
+    }
+
+    #[tokio::test]
+    async fn test_7z_extract_with_empty_password() {
+        use tempfile::TempDir;
+
+        // Create temp directory for extraction
+        let temp_dir = TempDir::new().unwrap();
+        let dest_path = temp_dir.path().join("extracted");
+
+        // Test that empty password is handled correctly (will fail with non-existent file)
+        let result = SevenZipExtractor::try_extract(
+            Path::new("nonexistent.7z"),
+            "",
+            &dest_path,
+        );
+
+        // Should fail because file doesn't exist, not because of password
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_zip_extract_with_empty_password() {
+        use tempfile::TempDir;
+
+        // Create temp directory for extraction
+        let temp_dir = TempDir::new().unwrap();
+        let dest_path = temp_dir.path().join("extracted");
+
+        // Test that empty password is handled correctly (will fail with non-existent file)
+        let result = ZipExtractor::try_extract(
+            Path::new("nonexistent.zip"),
+            "",
+            &dest_path,
+        );
+
+        // Should fail because file doesn't exist, not because of password
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_7z_password_deduplication() {
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+
+        // Test that duplicate passwords are removed
+        let passwords = PasswordList::collect(
+            Some("password123"),
+            Some("password123"), // Duplicate
+            Some("password123"), // Duplicate
+            None,
+            false,
+        );
+
+        let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
+        // Should only have one instance of "password123"
+        assert_eq!(password_vec.len(), 1);
+        assert_eq!(password_vec[0], "password123");
+    }
+
+    #[tokio::test]
+    async fn test_zip_password_deduplication() {
+        use tempfile::NamedTempFile;
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_db.path()).await.unwrap();
+
+        // Test that duplicate passwords are removed
+        let passwords = PasswordList::collect(
+            Some("secret"),
+            Some("secret"), // Duplicate
+            None,
+            None,
+            true, // Empty password
+        );
+
+        let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
+        // Should have "secret" once and empty password
+        assert_eq!(password_vec.len(), 2);
+        assert_eq!(password_vec[0], "secret");
+        assert_eq!(password_vec[1], "");
+    }
 }

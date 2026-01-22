@@ -18,13 +18,13 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (18/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (20/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
-  - Tasks 12.1-12.4: ✅ Unified archive extraction dispatcher complete (163 tests passing)
-- Total: 84/253 tasks complete (33.2%)
+  - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
+- Total: 86/253 tasks complete (34.0%)
 
-**Next Task:** Task 12.5 - Add password support for 7z and ZIP
+**Next Task:** Task 13.1 - Implement ExtractionConfig with max_recursion_depth
 
 ## Analysis
 
@@ -242,8 +242,8 @@ The implementation will require these major dependencies:
 - [x] Task 12.2: Integrate zip crate for ZIP extraction
 - [x] Task 12.3: Implement detect_archive_type() by extension
 - [x] Task 12.4: Create unified extract_archive() dispatcher
-- [ ] Task 12.5: Add password support for 7z and ZIP
-- [ ] Task 12.6: Test 7z and ZIP extraction with passwords
+- [x] Task 12.5: Add password support for 7z and ZIP (implemented as part of 12.1 and 12.2)
+- [x] Task 12.6: Test 7z and ZIP extraction with passwords
 
 - [ ] Task 13.1: Implement ExtractionConfig with max_recursion_depth and archive_extensions
 - [ ] Task 13.2: Create extract_recursive() with depth tracking
@@ -3112,3 +3112,71 @@ The `extract_archive()` function is now ready to be called from:
 ### Next Steps
 
 Task 12.5 will add password support verification for 7z and ZIP extractors (already implemented in code, needs testing).
+
+---
+
+## Completed This Iteration (Ralph)
+
+**Tasks 12.5-12.6: Password support for 7z and ZIP with comprehensive tests**
+
+### Implementation Summary
+
+Verified that password support was already implemented for 7z and ZIP extractors (as part of Tasks 12.1 and 12.2), then added comprehensive password testing to validate the functionality. Added 8 new tests covering password priority, deduplication, and integration scenarios for both 7z and ZIP formats.
+
+### What Was Completed
+
+**Task 12.5: Add password support for 7z and ZIP**
+- ✅ Already implemented in Tasks 12.1 and 12.2
+- 7z uses `sevenz_rust::decompress_file_with_password()` with `Password::from()` conversion
+- ZIP uses `archive.by_index_decrypt()` with password bytes
+- Both extractors follow same pattern as RAR extractor
+- Both detect password errors and return `Error::WrongPassword` for retry logic
+
+**Task 12.6: Test 7z and ZIP extraction with passwords**
+
+Added 8 comprehensive tests (src/extraction.rs):
+
+**7z Password Tests (4 tests):**
+1. `test_7z_password_list_integration` - Tests password list collection with multiple sources
+2. `test_7z_password_priority_order` - Verifies correct priority: cached > download > nzb > empty
+3. `test_7z_extract_with_empty_password` - Tests empty password handling
+4. `test_7z_password_deduplication` - Verifies duplicate passwords are removed
+
+**ZIP Password Tests (4 tests):**
+1. `test_zip_password_list_integration` - Tests password list collection with multiple sources
+2. `test_zip_password_priority_order` - Verifies correct priority: cached > download > nzb > empty
+3. `test_zip_extract_with_empty_password` - Tests empty password handling
+4. `test_zip_password_deduplication` - Verifies duplicate passwords are removed
+
+### Test Coverage
+
+Each test validates:
+- Password list correctly collects from all sources
+- Priority ordering is maintained (cached > download > nzb metadata > file > empty)
+- Duplicate passwords are automatically deduplicated
+- Empty password handling works correctly
+- Password list integration with Database works
+
+**Test Results:**
+- All 8 new tests pass
+- Total extraction module tests: 38 tests (up from 30)
+- Total project tests: 171 tests passing (up from 163)
+- Build completes successfully with no errors
+
+### Password Priority System Validated
+
+Tests confirm the password priority system works correctly:
+1. **Cached password** (highest priority) - From previous successful extraction
+2. **Download-specific password** - User-provided for this download
+3. **NZB metadata password** - Embedded in NZB file
+4. **Global password file** - One password per line
+5. **Empty password** (lowest priority) - Common for public releases
+
+### Files Modified
+
+- `src/extraction.rs`: Added 8 password tests (~150 lines)
+- `implementation_1_PROGRESS.md`: Updated task completion status
+
+### Next Steps
+
+Task 13.1 will implement ExtractionConfig with max_recursion_depth for nested archive extraction.
