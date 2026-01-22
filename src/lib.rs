@@ -472,6 +472,9 @@ impl UsenetDownloader {
             let mut downloaded_articles = 0;
             let mut downloaded_bytes: u64 = 0;
 
+            // Track download start time for speed calculation
+            let download_start = std::time::Instant::now();
+
             // Create temp directory for this download
             let download_temp_dir = config.temp_dir.join(format!("download_{}", download_id));
             tokio::fs::create_dir_all(&download_temp_dir).await.map_err(|e| {
@@ -533,11 +536,19 @@ impl UsenetDownloader {
                             (downloaded_articles as f32 / total_articles as f32) * 100.0
                         };
 
+                        // Calculate download speed (bytes per second)
+                        let elapsed_secs = download_start.elapsed().as_secs_f64();
+                        let speed_bps = if elapsed_secs > 0.0 {
+                            (downloaded_bytes as f64 / elapsed_secs) as u64
+                        } else {
+                            0
+                        };
+
                         // Update progress in database
                         db.update_progress(
                             download_id,
                             progress_percent,
-                            0, // TODO: Calculate speed in Task 4.8
+                            speed_bps,
                             downloaded_bytes,
                         )
                         .await?;
@@ -547,7 +558,7 @@ impl UsenetDownloader {
                             .send(Event::Downloading {
                                 id: download_id,
                                 percent: progress_percent,
-                                speed_bps: 0, // TODO: Calculate speed in Task 4.8
+                                speed_bps,
                             })
                             .ok();
                     }

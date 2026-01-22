@@ -8,15 +8,15 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (24/53 tasks complete)
+- Phase 1: 🔄 In Progress (25/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
-  - Tasks 4.1-4.7: ✅ Basic article downloading complete (45 tests passing)
-  - Tasks 4.8-9.8: ⏳ Remaining (Progress tracking, Queue, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 29/253 tasks complete (11.5%)
+  - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete (45 tests passing)
+  - Tasks 5.1-9.8: ⏳ Remaining (Queue, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 30/253 tasks complete (11.9%)
 
-**Next Task:** Task 4.8 - Add progress tracking (update download progress in DB and emit events)
+**Next Task:** Task 5.1 - Implement priority queue (BinaryHeap or sorted Vec with Priority ordering)
 
 ## Analysis
 
@@ -169,7 +169,7 @@ The implementation will require these major dependencies:
 - [x] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
 - [x] Task 4.6: Create download task spawner (spawn_download_task)
 - [x] Task 4.7: Implement basic article downloading loop using nntp-rs
-- [ ] Task 4.8: Add progress tracking (update download progress in DB and emit events)
+- [x] Task 4.8: Add progress tracking (update download progress in DB and emit events)
 
 - [ ] Task 5.1: Implement priority queue (BinaryHeap or sorted Vec with Priority ordering)
 - [ ] Task 5.2: Add queue management (add, remove, reorder by priority)
@@ -434,6 +434,39 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Download Manager - Task 4.8 Complete: Speed Tracking Implementation**
+
+- Task 4.8: Implemented download speed calculation ✓
+  - Added `download_start` timestamp using `std::time::Instant::now()`
+  - Tracks elapsed time during download with `download_start.elapsed().as_secs_f64()`
+  - Calculates speed as bytes_per_second: `downloaded_bytes / elapsed_seconds`
+  - Updates database with actual speed using `db.update_progress()` (previously hardcoded to 0)
+  - Emits progress events with real-time speed in `Event::Downloading`
+  - Handles edge case: returns 0 bps if elapsed time is 0 (very first article)
+  - All 45 existing tests still passing
+  - Code compiles successfully with no errors
+
+**Implementation Details:**
+- Uses `std::time::Instant` for monotonic time measurement (immune to system clock changes)
+- Speed calculated after each article download for real-time updates
+- Formula: `speed_bps = (downloaded_bytes as f64 / elapsed_secs) as u64`
+- Speed stored as `u64` (bytes per second) in database and events
+- Updated both database record AND emitted events with same speed value
+
+**Technical Notes:**
+- Instant::now() is efficient and designed for elapsed time measurement
+- as_secs_f64() provides sub-second precision for accurate speed calculation
+- Speed increases over time as more bytes are downloaded (reflects actual download rate)
+- Zero-division protection: returns 0 bps if elapsed_secs <= 0.0
+- Speed is recalculated after every article, providing smooth progress updates
+
+**Testing:**
+- All 45 existing tests still passing (no regressions)
+- Speed calculation tested implicitly through existing download flow tests
+- Future: Can add specific speed calculation unit tests if needed
+
+## Previous Completed Iterations
 
 **Phase 1 Download Manager - Task 4.7 Complete: Basic Article Downloading Loop**
 
