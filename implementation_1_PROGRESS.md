@@ -18,15 +18,15 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (26/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (31/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
   - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
-  - Task 14.1: ✅ Obfuscated filename detection with heuristics complete (203 tests passing)
-- Total: 92/253 tasks complete (36.4%)
+  - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
+- Total: 97/253 tasks complete (38.3%)
 
-**Next Task:** Task 14.2 - Create DeobfuscationConfig with enabled flag and min_length
+**Next Task:** Task 15.1 - Implement FileCollisionAction enum (Rename, Overwrite, Skip)
 
 ## Analysis
 
@@ -254,11 +254,11 @@ The implementation will require these major dependencies:
 - [x] Task 13.5: Add safeguard against infinite recursion (depth limit)
 
 - [x] Task 14.1: Implement is_obfuscated() with heuristics (entropy, UUID, hex, no vowels)
-- [ ] Task 14.2: Create DeobfuscationConfig with enabled flag and min_length
-- [ ] Task 14.3: Implement determine_final_name() with priority order (job name, NZB meta, largest file)
-- [ ] Task 14.4: Add NZB metadata parsing for <meta type="name">
-- [ ] Task 14.5: Implement find_largest_file() helper
-- [ ] Task 14.6: Test deobfuscation with obfuscated and normal filenames
+- [x] Task 14.2: Create DeobfuscationConfig with enabled flag and min_length
+- [x] Task 14.3: Implement determine_final_name() with priority order (job name, NZB meta, largest file)
+- [x] Task 14.4: Add NZB metadata parsing for <meta type="name">
+- [x] Task 14.5: Implement find_largest_file() helper
+- [x] Task 14.6: Test deobfuscation with obfuscated and normal filenames
 
 - [ ] Task 15.1: Implement FileCollisionAction enum (Rename, Overwrite, Skip)
 - [ ] Task 15.2: Create get_unique_path() with (1), (2) suffix logic
@@ -445,7 +445,59 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Tasks 13.1-13.5 Complete: Nested archive extraction with recursion support**
+**Tasks 14.2-14.6 Complete: Deobfuscation with final name determination**
+
+Successfully completed the deobfuscation system for handling obfuscated Usenet filenames:
+
+1. **DeobfuscationConfig** - Already existed in src/config.rs with:
+   - `enabled: bool` flag (default: true)
+   - `min_length: usize` field (default: 12)
+   - Proper Default trait implementation
+
+2. **determine_final_name() function** - Implements SABnzbd-style priority logic (src/deobfuscation.rs:154-209):
+   - Priority 1: Job name (NZB filename without extension) if not obfuscated
+   - Priority 2: NZB metadata title (from `<meta type="name">`) if not obfuscated
+   - Priority 3: Largest non-obfuscated extracted file's stem
+   - Fallback: Job name even if obfuscated
+   - Uses is_obfuscated() for each source to determine if usable
+
+3. **find_largest_file() helper** - Utility function to find largest file (src/deobfuscation.rs:211-247):
+   - Iterates through file list and tracks largest by size
+   - Uses fs::metadata() to get file sizes
+   - Skips directories automatically
+   - Returns None if no files found or all fail to stat
+
+4. **NZB metadata parsing** - Already implemented in src/lib.rs:1130:
+   - Extracts title from `nzb.meta.get("title")`
+   - Stores in `nzb_meta_name` field in database
+   - Used for both deobfuscation and job name determination
+   - nntp-rs library handles XML parsing of `<head><meta type="name">` elements
+
+5. **Comprehensive tests** - Added 10 new unit tests covering:
+   - determine_final_name() with each priority source
+   - Fallback behavior when all sources are obfuscated
+   - Empty extracted files list handling
+   - Extension handling (stems vs full names)
+   - find_largest_file() with various scenarios:
+     - Basic size comparison
+     - Empty file list
+     - Directory filtering
+     - Non-existent files (graceful handling)
+   - Real filesystem integration tests using temp directories
+
+**Test Results:** 213 tests passing (up from 203, +10 new tests)
+
+**Key Design Decisions:**
+- Used SABnzbd's proven priority ordering for name determination
+- Made deobfuscation check at each priority level (not just once at end)
+- find_largest_file() is resilient to filesystem errors (skips failed files)
+- Comprehensive filesystem integration tests ensure real-world correctness
+
+**Next Steps:** Task 15.1 - Implement FileCollisionAction enum for handling file overwrites
+
+---
+
+**Previous Iteration: Tasks 13.1-13.5 Complete: Nested archive extraction with recursion support**
 
 Successfully implemented recursive archive extraction to handle nested archives:
 

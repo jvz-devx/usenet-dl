@@ -3,7 +3,8 @@
 //! Usenet releases often use obfuscated (random) filenames. This module provides
 //! heuristics to detect such filenames and utilities to determine proper names.
 
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Check if a filename appears to be obfuscated (random/meaningless)
 ///
@@ -144,6 +145,111 @@ fn has_no_vowels(s: &str) -> bool {
     !s.chars().any(|c| vowels.contains(&c))
 }
 
+/// Determine the final name for a download using priority-based sources
+///
+/// Priority order (SABnzbd-style):
+/// 1. Job name (NZB filename without extension)
+/// 2. NZB meta title (<meta type="name"> from NZB)
+/// 3. Largest non-obfuscated file in extracted files
+/// 4. Fallback to job name even if obfuscated
+///
+/// # Arguments
+///
+/// * `job_name` - The NZB filename without extension
+/// * `nzb_meta_name` - Optional title from NZB metadata
+/// * `extracted_files` - List of files extracted from archives
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use usenet_dl::deobfuscation::determine_final_name;
+///
+/// let job_name = "Movie.Name.2024.1080p";
+/// let extracted = vec![PathBuf::from("movie.mkv")];
+/// let name = determine_final_name(job_name, None, &extracted);
+/// assert_eq!(name, "Movie.Name.2024.1080p");
+/// ```
+pub fn determine_final_name(
+    job_name: &str,
+    nzb_meta_name: Option<&str>,
+    extracted_files: &[PathBuf],
+) -> String {
+    // 1. Job name (NZB filename) - if not obfuscated
+    if !is_obfuscated(job_name) {
+        return job_name.to_string();
+    }
+
+    // 2. NZB meta title - if present and not obfuscated
+    if let Some(meta_name) = nzb_meta_name {
+        if !is_obfuscated(meta_name) {
+            return meta_name.to_string();
+        }
+    }
+
+    // 3. Largest non-obfuscated file
+    if let Some(largest) = find_largest_file(extracted_files) {
+        if let Some(name) = largest.file_stem().and_then(|s| s.to_str()) {
+            if !is_obfuscated(name) {
+                return name.to_string();
+            }
+        }
+    }
+
+    // Fallback to job name even if obfuscated
+    job_name.to_string()
+}
+
+/// Find the largest file in a list of paths
+///
+/// Returns the path to the largest file by size, or None if the list is empty
+/// or all files fail to stat.
+///
+/// # Arguments
+///
+/// * `files` - List of file paths to check
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::PathBuf;
+/// use usenet_dl::deobfuscation::find_largest_file;
+///
+/// let files = vec![
+///     PathBuf::from("small.txt"),
+///     PathBuf::from("large.mkv"),
+/// ];
+/// let largest = find_largest_file(&files);
+/// ```
+pub fn find_largest_file(files: &[PathBuf]) -> Option<PathBuf> {
+    let mut largest: Option<(PathBuf, u64)> = None;
+
+    for file in files {
+        // Skip directories
+        if file.is_dir() {
+            continue;
+        }
+
+        // Get file size
+        if let Ok(metadata) = fs::metadata(file) {
+            let size = metadata.len();
+
+            match &largest {
+                None => {
+                    largest = Some((file.clone(), size));
+                }
+                Some((_, current_size)) => {
+                    if size > *current_size {
+                        largest = Some((file.clone(), size));
+                    }
+                }
+            }
+        }
+    }
+
+    largest.map(|(path, _)| path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +372,142 @@ mod tests {
         assert!(!is_obfuscated("x264.mkv")); // Codec name
         assert!(!is_obfuscated("h264.mp4")); // Codec name
         assert!(!is_obfuscated("BD1080p.mkv")); // Quality tag
+    }
+
+    #[test]
+    fn test_determine_final_name_from_job_name() {
+        // Job name is not obfuscated - use it
+        let job_name = "Movie.Name.2024.1080p";
+        let extracted = vec![PathBuf::from("movie.mkv")];
+        let name = determine_final_name(job_name, None, &extracted);
+        assert_eq!(name, "Movie.Name.2024.1080p");
+    }
+
+    #[test]
+    fn test_determine_final_name_from_nzb_meta() {
+        // Job name is obfuscated, but NZB meta is good
+        let job_name = "a3f8b2c9d1e5f7a4b6c8d0e2f4a6b8c0";
+        let nzb_meta = Some("Movie.Name.2024.1080p");
+        let extracted = vec![PathBuf::from("random.mkv")];
+        let name = determine_final_name(job_name, nzb_meta, &extracted);
+        assert_eq!(name, "Movie.Name.2024.1080p");
+    }
+
+    #[test]
+    fn test_determine_final_name_from_largest_file() {
+        // Job name and NZB meta are obfuscated, use largest file
+        let job_name = "a3f8b2c9d1e5f7a4b6c8d0e2f4a6b8c0";
+        let nzb_meta = Some("550e8400-e29b-41d4-a716-446655440000");
+
+        // Create temp files for testing
+        let temp_dir = std::env::temp_dir().join("usenet_dl_test_determine_name");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let small_file = temp_dir.join("Movie.Name.2024.sample.mkv");
+        let large_file = temp_dir.join("Movie.Name.2024.1080p.mkv");
+
+        fs::write(&small_file, b"small").unwrap();
+        fs::write(&large_file, b"large content here").unwrap();
+
+        let extracted = vec![small_file.clone(), large_file.clone()];
+        let name = determine_final_name(job_name, nzb_meta, &extracted);
+
+        // Should use the largest file's stem
+        assert_eq!(name, "Movie.Name.2024.1080p");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_determine_final_name_fallback_to_obfuscated_job_name() {
+        // Everything is obfuscated - fallback to job name
+        let job_name = "a3f8b2c9d1e5f7a4b6c8d0e2f4a6b8c0";
+        let nzb_meta = Some("550e8400-e29b-41d4-a716-446655440000");
+        let extracted = vec![PathBuf::from("xkcd1234mnbvcxz.mkv")];
+        let name = determine_final_name(job_name, nzb_meta, &extracted);
+        assert_eq!(name, "a3f8b2c9d1e5f7a4b6c8d0e2f4a6b8c0");
+    }
+
+    #[test]
+    fn test_determine_final_name_empty_extracted_files() {
+        // No extracted files - should use job name
+        let job_name = "Movie.Name.2024";
+        let extracted = vec![];
+        let name = determine_final_name(job_name, None, &extracted);
+        assert_eq!(name, "Movie.Name.2024");
+    }
+
+    #[test]
+    fn test_find_largest_file_basic() {
+        let temp_dir = std::env::temp_dir().join("usenet_dl_test_largest_basic");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let file1 = temp_dir.join("small.txt");
+        let file2 = temp_dir.join("large.mkv");
+        let file3 = temp_dir.join("medium.avi");
+
+        fs::write(&file1, b"small").unwrap();
+        fs::write(&file2, b"large content here with more bytes").unwrap();
+        fs::write(&file3, b"medium size").unwrap();
+
+        let files = vec![file1.clone(), file2.clone(), file3.clone()];
+        let largest = find_largest_file(&files);
+
+        assert_eq!(largest, Some(file2));
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_find_largest_file_empty_list() {
+        let files = vec![];
+        let largest = find_largest_file(&files);
+        assert_eq!(largest, None);
+    }
+
+    #[test]
+    fn test_find_largest_file_ignores_directories() {
+        let temp_dir = std::env::temp_dir().join("usenet_dl_test_largest_dirs");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let file = temp_dir.join("file.mkv");
+        let subdir = temp_dir.join("subdir");
+
+        fs::write(&file, b"content").unwrap();
+        fs::create_dir(&subdir).unwrap();
+
+        let files = vec![subdir.clone(), file.clone()];
+        let largest = find_largest_file(&files);
+
+        // Should return the file, not the directory
+        assert_eq!(largest, Some(file));
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_find_largest_file_nonexistent_files() {
+        // Non-existent files should be skipped
+        let files = vec![
+            PathBuf::from("/nonexistent/file1.mkv"),
+            PathBuf::from("/nonexistent/file2.avi"),
+        ];
+        let largest = find_largest_file(&files);
+        assert_eq!(largest, None);
+    }
+
+    #[test]
+    fn test_determine_final_name_with_extensions() {
+        // Ensure extensions don't affect obfuscation detection
+        let job_name = "Movie.Name.2024";
+        let extracted = vec![PathBuf::from("video.mkv")];
+        let name = determine_final_name(job_name, None, &extracted);
+        assert_eq!(name, "Movie.Name.2024");
     }
 }
