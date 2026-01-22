@@ -18,9 +18,11 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Total: 66/253 tasks complete (26.1%)
+- Phase 2: 🔄 In Progress (6/71 tasks) - Post-processing pipeline
+  - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
+- Total: 72/253 tasks complete (28.5%)
 
-**Next Task:** Task 10.1 - Create PostProcess enum (None, Verify, Repair, Unpack, UnpackAndCleanup)
+**Next Task:** Task 11.1 - Integrate unrar crate for RAR extraction
 
 ## Analysis
 
@@ -218,12 +220,12 @@ The implementation will require these major dependencies:
 
 ### Phase 2: Post-Processing (Steps 10-16)
 
-- [ ] Task 10.1: Create PostProcess enum (None, Verify, Repair, Unpack, UnpackAndCleanup)
-- [ ] Task 10.2: Define post-processing pipeline trait/interface
-- [ ] Task 10.3: Implement start_post_processing() entry point
-- [ ] Task 10.4: Create stage executor (run_stage function that calls verify/repair/extract)
-- [ ] Task 10.5: Add post-processing state machine (track current stage in DB)
-- [ ] Task 10.6: Emit stage events (Verifying, Extracting, Moving, Cleaning)
+- [x] Task 10.1: Create PostProcess enum (None, Verify, Repair, Unpack, UnpackAndCleanup)
+- [x] Task 10.2: Define post-processing pipeline trait/interface
+- [x] Task 10.3: Implement start_post_processing() entry point
+- [x] Task 10.4: Create stage executor (run_stage function that calls verify/repair/extract)
+- [x] Task 10.5: Add post-processing state machine (track current stage in DB)
+- [x] Task 10.6: Emit stage events (Verifying, Extracting, Moving, Cleaning)
 
 - [ ] Task 11.1: Integrate unrar crate for RAR extraction
 - [ ] Task 11.2: Implement detect_rar_files() to find .rar/.r00 archives
@@ -2694,3 +2696,79 @@ This provides the foundation for robust crash recovery.
 Task 9.7 is complete. The shutdown state tracking system is fully implemented and tested. The database now properly tracks clean vs unclean shutdowns, enabling future recovery logic. The implementation is minimal, elegant, and follows the design document specifications exactly.
 
 Next: Task 9.8 will add integration tests for the complete graceful shutdown and recovery flow.
+
+---
+
+## Completed This Iteration (Ralph)
+
+**Tasks 10.1-10.6: Post-Processing Pipeline Skeleton**
+
+### Implementation Summary
+
+Implemented the complete post-processing pipeline skeleton with all stages defined but not yet fully implemented. This provides the architecture for PAR2 verification, repair, archive extraction, file moving, and cleanup.
+
+### What Was Completed
+
+1. **PostProcess Enum** (Task 10.1):
+   - Already existed in `src/config.rs` with all variants: None, Verify, Repair, Unpack, UnpackAndCleanup
+   - Default value: UnpackAndCleanup
+   - Conversion methods to/from i32 for database storage
+
+2. **Post-Processing Module** (Task 10.2):
+   - Created `src/post_processing.rs` with PostProcessor struct
+   - Event-driven architecture using tokio::broadcast
+   - Clean separation of concerns for each pipeline stage
+
+3. **Pipeline Entry Point** (Task 10.3):
+   - Added `start_post_processing()` method to UsenetDownloader
+   - Integrated with database for status tracking
+   - Proper error handling and event emission
+
+4. **Stage Executors** (Task 10.4):
+   - `run_verify_stage()` - PAR2 verification (stubbed)
+   - `run_repair_stage()` - PAR2 repair (stubbed)
+   - `run_extract_stage()` - Archive extraction (stubbed)
+   - `run_move_stage()` - File moving (stubbed)
+   - `run_cleanup_stage()` - Cleanup (stubbed)
+
+5. **State Machine** (Task 10.5):
+   - Updates download status to Processing when pipeline starts
+   - Updates to Complete or Failed when pipeline finishes
+   - Stores error messages in database on failure
+
+6. **Event Emission** (Task 10.6):
+   - Verifying / VerifyComplete events
+   - Repairing / RepairComplete events
+   - Extracting / ExtractComplete events
+   - Moving events
+   - Cleaning events
+
+### Architecture
+
+```
+UsenetDownloader
+    └─> start_post_processing(id)
+        └─> PostProcessor::start_post_processing(path, mode, dest)
+            ├─> run_verify_stage()    → Verifying / VerifyComplete
+            ├─> run_repair_stage()    → Repairing / RepairComplete
+            ├─> run_extract_stage()   → Extracting / ExtractComplete
+            ├─> run_move_stage()      → Moving
+            └─> run_cleanup_stage()   → Cleaning
+```
+
+### Tests Added
+
+4 new tests in `src/post_processing.rs`:
+- `test_post_processing_none` - Verifies no-op pipeline
+- `test_post_processing_verify` - Verifies verify-only pipeline with events
+- `test_post_processing_unpack_and_cleanup` - Verifies full pipeline with all events
+- `test_stage_executor_ordering` - Verifies stages execute in correct order
+
+All tests pass. Total test count: 141 tests passing.
+
+### Next Steps
+
+Task 11.1-11.8 will implement actual RAR extraction with password handling, using the unrar crate.
+
+---
+

@@ -52,6 +52,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod post_processing;
 pub mod retry;
 pub mod speed_limiter;
 pub mod types;
@@ -86,6 +87,8 @@ pub struct UsenetDownloader {
     speed_limiter: speed_limiter::SpeedLimiter,
     /// Flag to indicate whether new downloads are accepted (set to false during shutdown)
     accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Post-processing pipeline executor
+    post_processor: std::sync::Arc<post_processing::PostProcessor>,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -163,6 +166,9 @@ impl UsenetDownloader {
         // Create speed limiter with configured limit (or unlimited if not set)
         let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
 
+        // Create post-processing pipeline executor
+        let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(event_tx.clone()));
+
         let downloader = Self {
             db: std::sync::Arc::new(db),
             event_tx,
@@ -173,6 +179,7 @@ impl UsenetDownloader {
             active_downloads,
             speed_limiter,
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            post_processor,
         };
 
         // Restore any incomplete downloads from database (from previous session)
@@ -1859,6 +1866,93 @@ impl UsenetDownloader {
             Ok(())
         })
     }
+
+    /// Start post-processing for a completed download
+    ///
+    /// This is the entry point to the post-processing pipeline. It coordinates
+    /// verification, repair, extraction, moving, and cleanup based on the
+    /// configured PostProcess mode.
+    ///
+    /// # Arguments
+    ///
+    /// * `download_id` - The download to post-process
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) on success, Err on any stage failure
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use usenet_dl::{UsenetDownloader, Config};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let downloader = UsenetDownloader::new(Config::default()).await?;
+    ///
+    ///     // After download completes, start post-processing
+    ///     downloader.start_post_processing(1).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn start_post_processing(&self, download_id: DownloadId) -> Result<()> {
+        use crate::types::Status;
+
+        tracing::info!(download_id, "starting post-processing");
+
+        // Update status to Processing
+        self.db.update_status(download_id, Status::Processing.to_i32()).await?;
+
+        // Get download info from database
+        let download = self.db.get_download(download_id).await?
+            .ok_or_else(|| Error::NotFound(format!("download {} not found", download_id)))?;
+
+        // Determine download path (temp directory)
+        let download_path = self.config.temp_dir
+            .join(format!("download_{}", download_id));
+
+        // Determine final destination
+        let destination = std::path::PathBuf::from(&download.destination);
+
+        // Determine post-processing mode
+        let post_process = crate::config::PostProcess::from_i32(download.post_process);
+
+        // Execute post-processing pipeline
+        match self.post_processor.start_post_processing(
+            download_id,
+            download_path,
+            post_process,
+            destination.clone(),
+        ).await {
+            Ok(final_path) => {
+                // Mark as complete and emit Complete event
+                self.db.update_status(download_id, Status::Complete.to_i32()).await?;
+                self.event_tx.send(crate::types::Event::Complete {
+                    id: download_id,
+                    path: final_path,
+                }).ok();
+
+                tracing::info!(download_id, "post-processing completed successfully");
+                Ok(())
+            }
+            Err(e) => {
+                // Mark as failed and emit Failed event
+                self.db.update_status(download_id, Status::Failed.to_i32()).await?;
+                self.db.set_error(download_id, &e.to_string()).await?;
+
+                self.event_tx.send(crate::types::Event::Failed {
+                    id: download_id,
+                    stage: crate::types::Stage::Extract, // TODO: Track actual stage
+                    error: e.to_string(),
+                    files_kept: true, // Default: keep files on failure
+                }).ok();
+
+                tracing::error!(download_id, error = %e, "post-processing failed");
+                Err(e)
+            }
+        }
+    }
 }
 
 /// Helper function to run the downloader with graceful signal handling.
@@ -1955,6 +2049,9 @@ mod tests {
         // Create speed limiter with configured limit
         let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
 
+        // Create post-processing pipeline executor
+        let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(event_tx.clone()));
+
         let downloader = UsenetDownloader {
             db: std::sync::Arc::new(db),
             event_tx,
@@ -1965,6 +2062,7 @@ mod tests {
             active_downloads,
             speed_limiter,
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            post_processor,
         };
 
         (downloader, temp_dir)
