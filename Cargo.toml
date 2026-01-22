@@ -23,7 +23,7 @@ sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
 
 # Archive extraction
 unrar = "0.5"
-sevenz-rust = "0.5"
+sevenz-rust = { version = "0.5", features = ["aes256"] }
 zip = "0.6"
 
 # Serialization

@@ -307,6 +307,203 @@ impl RarExtractor {
     }
 }
 
+/// Archive extractor for 7z files
+pub struct SevenZipExtractor;
+
+impl SevenZipExtractor {
+    /// Detect 7z archive files in a directory
+    pub fn detect_7z_files(download_path: &Path) -> Result<Vec<PathBuf>> {
+        debug!(?download_path, "detecting 7z archives");
+
+        let mut archives = Vec::new();
+
+        // Read directory
+        let entries = std::fs::read_dir(download_path)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+            let path = entry.path();
+
+            // Skip directories
+            if path.is_dir() {
+                continue;
+            }
+
+            // Check for .7z extension
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if ext_str == "7z" {
+                    archives.push(path);
+                }
+            }
+        }
+
+        debug!("found {} 7z archive(s)", archives.len());
+        Ok(archives)
+    }
+
+    /// Try to extract a 7z archive with a single password
+    pub fn try_extract(archive_path: &Path, password: &str, dest_path: &Path) -> Result<Vec<PathBuf>> {
+        debug!(
+            ?archive_path,
+            password_length = password.len(),
+            ?dest_path,
+            "attempting 7z extraction"
+        );
+
+        // Create destination directory if it doesn't exist
+        std::fs::create_dir_all(dest_path)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create destination: {}", e))))?;
+
+        // Decompress with optional password
+        use sevenz_rust::Password;
+        let result = if password.is_empty() {
+            sevenz_rust::decompress_file(archive_path, dest_path)
+        } else {
+            let pw = Password::from(password);
+            sevenz_rust::decompress_file_with_password(archive_path, dest_path, pw)
+        };
+
+        match result {
+            Ok(()) => {
+                // Collect the extracted files by scanning the destination directory
+                let extracted_files = Self::collect_extracted_files(dest_path)?;
+
+                info!(
+                    ?archive_path,
+                    extracted_count = extracted_files.len(),
+                    "7z extraction successful"
+                );
+                Ok(extracted_files)
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                // Check if it's a password error
+                if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("Wrong password") {
+                    Err(Error::WrongPassword)
+                } else {
+                    Err(Error::ExtractionFailed(format!("failed to extract 7z archive: {}", e)))
+                }
+            }
+        }
+    }
+
+    /// Recursively collect all files (not directories) from a directory
+    fn collect_extracted_files(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+
+        fn visit_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+            let entries = std::fs::read_dir(dir)
+                .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+
+            for entry in entries {
+                let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+                let path = entry.path();
+
+                if path.is_dir() {
+                    visit_dir(&path, files)?;
+                } else {
+                    files.push(path);
+                }
+            }
+            Ok(())
+        }
+
+        visit_dir(dir, &mut files)?;
+        Ok(files)
+    }
+
+    /// Extract 7z archive with password attempts
+    pub async fn extract_with_passwords(
+        download_id: DownloadId,
+        archive_path: &Path,
+        dest_path: &Path,
+        passwords: &PasswordList,
+        db: &Database,
+    ) -> Result<Vec<PathBuf>> {
+        if passwords.is_empty() {
+            warn!(
+                download_id,
+                ?archive_path,
+                "no passwords to try for 7z extraction"
+            );
+            return Err(Error::NoPasswordsAvailable);
+        }
+
+        info!(
+            download_id,
+            ?archive_path,
+            password_count = passwords.len(),
+            "attempting 7z extraction with {} password(s)",
+            passwords.len()
+        );
+
+        for (i, password) in passwords.iter().enumerate() {
+            debug!(
+                download_id,
+                attempt = i + 1,
+                total = passwords.len(),
+                password_length = password.len(),
+                "trying password {}/{}",
+                i + 1,
+                passwords.len()
+            );
+
+            match Self::try_extract(archive_path, password, dest_path) {
+                Ok(files) => {
+                    info!(
+                        download_id,
+                        ?archive_path,
+                        attempt = i + 1,
+                        "7z extraction successful on attempt {}/{}",
+                        i + 1,
+                        passwords.len()
+                    );
+
+                    // Cache successful password
+                    if let Err(e) = db.set_correct_password(download_id, password).await {
+                        warn!(
+                            download_id,
+                            error = %e,
+                            "failed to cache correct password"
+                        );
+                    }
+
+                    return Ok(files);
+                }
+                Err(Error::WrongPassword) => {
+                    debug!(
+                        download_id,
+                        attempt = i + 1,
+                        "wrong password, trying next"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Other error (corrupt archive, disk full, etc.)
+                    warn!(
+                        download_id,
+                        error = %e,
+                        ?archive_path,
+                        "7z extraction failed with non-password error"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+
+        // All passwords failed
+        warn!(
+            download_id,
+            ?archive_path,
+            attempted = passwords.len(),
+            "all passwords failed for 7z extraction"
+        );
+        Err(Error::AllPasswordsFailed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,6 +635,53 @@ mod tests {
         std::fs::write(temp_dir.path().join("split.r00"), b"r00").unwrap();
 
         let result = RarExtractor::detect_rar_files(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_detect_7z_files_empty_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = SevenZipExtractor::detect_7z_files(temp_dir.path()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_detect_7z_files_with_7z() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a fake .7z file
+        let seven_z_path = temp_dir.path().join("test.7z");
+        std::fs::write(&seven_z_path, b"fake 7z").unwrap();
+
+        let result = SevenZipExtractor::detect_7z_files(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], seven_z_path);
+    }
+
+    #[test]
+    fn test_detect_7z_files_ignores_other_extensions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create various files
+        std::fs::write(temp_dir.path().join("test.7z"), b"7z").unwrap();
+        std::fs::write(temp_dir.path().join("test.txt"), b"txt").unwrap();
+        std::fs::write(temp_dir.path().join("test.rar"), b"rar").unwrap();
+        std::fs::write(temp_dir.path().join("test.zip"), b"zip").unwrap();
+
+        let result = SevenZipExtractor::detect_7z_files(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1); // Only .7z file
+    }
+
+    #[test]
+    fn test_detect_7z_files_multiple_archives() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create multiple 7z files
+        std::fs::write(temp_dir.path().join("archive1.7z"), b"7z1").unwrap();
+        std::fs::write(temp_dir.path().join("archive2.7z"), b"7z2").unwrap();
+        std::fs::write(temp_dir.path().join("archive3.7z"), b"7z3").unwrap();
+
+        let result = SevenZipExtractor::detect_7z_files(temp_dir.path()).unwrap();
         assert_eq!(result.len(), 3);
     }
 }
