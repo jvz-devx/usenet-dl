@@ -8,18 +8,18 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (41/53 tasks complete)
+- Phase 1: 🔄 In Progress (44/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
   - Tasks 5.1-5.9: ✅ Priority queue with complete persistence (79 tests passing)
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
-  - Task 7.1: ✅ SpeedLimiter with token bucket algorithm (92 tests + 11 speed limiter tests)
-  - Tasks 7.2-9.8: ⏳ Remaining (Speed Limiting integration, Retry, Shutdown)
-- Total: 46/253 tasks complete (18.2%)
+  - Tasks 7.1-7.3, 7.5: ✅ SpeedLimiter with token bucket algorithm (103 tests passing)
+  - Tasks 7.4, 7.6-9.8: ⏳ Remaining (Speed Limiting integration, Retry, Shutdown)
+- Total: 49/253 tasks complete (19.4%)
 
-**Next Task:** Task 7.2 - Use AtomicU64 for lock-free token tracking
+**Next Task:** Task 7.4 - Share SpeedLimiter (Arc) across all download tasks
 
 ## Analysis
 
