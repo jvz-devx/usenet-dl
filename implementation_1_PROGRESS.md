@@ -18,7 +18,7 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (40/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (38/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Task 16.1: ✅ Cleanup target file extensions defined (228 tests passing)
-- Total: 106/253 tasks complete (41.9%)
+- Total: 104/253 tasks complete (41.1%)
 
 **Next Task:** Task 16.2 - Implement delete_samples flag and folder detection
 
