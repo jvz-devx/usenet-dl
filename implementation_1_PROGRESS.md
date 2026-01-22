@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (31/53 tasks complete)
+- Phase 1: 🔄 In Progress (32/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Tasks 5.1-5.6: ✅ Priority queue, automatic download spawning, pause, and resume complete (62 tests passing)
-  - Tasks 5.7-9.8: ⏳ Remaining (Cancel, Speed Limiting, Retry, Shutdown)
-- Total: 36/253 tasks complete (14.2%)
+  - Tasks 5.1-5.7: ✅ Priority queue, automatic download spawning, pause, resume, and cancel complete (69 tests passing)
+  - Tasks 5.8-9.8: ⏳ Remaining (Queue-wide operations, Speed Limiting, Retry, Shutdown)
+- Total: 37/253 tasks complete (14.6%)
 
-**Next Task:** Task 5.7 - Implement cancel() to remove download and delete files
+**Next Task:** Task 5.8 - Add pause_all() and resume_all() queue-wide operations
 
 ## Analysis
 
@@ -178,7 +178,7 @@ The implementation will require these major dependencies:
 - [x] Task 5.4: Create queue processor task that spawns downloads
 - [x] Task 5.5: Implement pause() to stop download without removing from queue
 - [x] Task 5.6: Implement resume() to restart paused download
-- [ ] Task 5.7: Implement cancel() to remove download and delete files
+- [x] Task 5.7: Implement cancel() to remove download and delete files
 - [ ] Task 5.8: Add pause_all() and resume_all() queue-wide operations
 - [ ] Task 5.9: Persist queue state to SQLite on every change
 
@@ -435,6 +435,88 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Queue Management - Task 5.7 Complete: Cancel Implementation**
+
+- Task 5.7: Implemented cancel() to remove download and delete files ✓
+  - Verifies download exists before cancellation
+  - Cancels active download task if running (via cancellation token)
+  - Removes download from priority queue
+  - Deletes temp directory and all downloaded files
+  - Removes download record from database (cascades to articles and passwords)
+  - Emits Removed event to all subscribers
+  - Graceful error handling: logs warning if file deletion fails but continues
+  - Works for any download status (Queued, Paused, Downloading, Complete, Failed)
+  - Comprehensive test coverage (7 new tests added)
+  - All 69 tests passing
+
+**Implementation Details:**
+
+cancel() Method Behavior:
+```rust
+pub async fn cancel(&self, id: DownloadId) -> Result<()> {
+    // 1. Verify download exists
+    let _download = self.db.get_download(id).await?
+        .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+
+    // 2. Cancel active download task if running
+    if let Some(cancel_token) = active_downloads.get(&id) {
+        cancel_token.cancel();
+        active_downloads.remove(&id);
+    }
+
+    // 3. Remove from priority queue
+    self.remove_from_queue(id).await;
+
+    // 4. Delete temp directory and files
+    let download_temp_dir = self.config.temp_dir.join(format!("download_{}", id));
+    if download_temp_dir.exists() {
+        tokio::fs::remove_dir_all(&download_temp_dir).await?;
+    }
+
+    // 5. Delete from database (cascades to articles, passwords)
+    self.db.delete_download(id).await?;
+
+    // 6. Emit Removed event
+    self.emit_event(Event::Removed { id });
+
+    Ok(())
+}
+```
+
+File Cleanup:
+- Temp directory structure: `temp_dir/download_{id}/article_*.dat`
+- remove_dir_all() deletes entire directory tree recursively
+- Graceful handling: logs warning if deletion fails but continues with database cleanup
+- Database cleanup is more critical than file cleanup
+- Orphaned files can be cleaned up manually if deletion fails
+
+Test Coverage:
+- test_cancel_queued_download: Cancel before download starts (removed from queue and DB)
+- test_cancel_paused_download: Cancel paused download (status doesn't matter)
+- test_cancel_deletes_temp_files: Verifies temp directory and files are deleted
+- test_cancel_nonexistent_download: Error handling for invalid download ID
+- test_cancel_completed_download: Can cancel completed downloads (removes from history)
+- test_cancel_removes_from_queue: Verifies queue removal works correctly
+- test_cancel_emits_removed_event: Verifies Removed event is emitted to subscribers
+
+**Technical Notes:**
+- UsenetDownloader now implements Clone (all fields are Arc-wrapped)
+- Clone is shallow - clones share the same underlying data
+- Enables cloning downloader for background tasks in tests
+- Database delete cascades to download_articles and passwords tables (foreign keys)
+- File deletion errors don't block database cleanup (logged as warnings)
+- Idempotent with active downloads: safe to call even if not actively running
+- Ready for pause_all() and resume_all() implementations (Task 5.8)
+
+**Architectural Impact:**
+- Complete download lifecycle now implemented: add → queue → download → pause → resume → cancel
+- Foundation for queue-wide operations (pause_all/resume_all)
+- Demonstrates robustness of cancellation token pattern
+- Clean resource management: files, database, and queue state all properly cleaned up
+- Validates design decision to use tokio_util::CancellationToken
+
+## Previous Completed Iterations
 
 **Phase 1 Queue Management - Task 5.6 Complete: Resume Implementation**
 

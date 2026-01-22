@@ -63,6 +63,8 @@ pub use types::{
 };
 
 /// Main entry point for the usenet-dl library
+/// Main downloader instance (cloneable - all fields are Arc-wrapped)
+#[derive(Clone)]
 pub struct UsenetDownloader {
     /// Database instance for persistence (wrapped in Arc for sharing across tasks)
     db: std::sync::Arc<Database>,
@@ -438,6 +440,73 @@ impl UsenetDownloader {
         // The queue processor will automatically pick it up
         // Article-level tracking ensures only pending articles are downloaded
         self.add_to_queue(id).await?;
+
+        Ok(())
+    }
+
+    /// Cancel a download and delete its files
+    ///
+    /// This method removes a download from the queue, stops it if actively running,
+    /// deletes all downloaded files from the temp directory, and removes it from the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to cancel
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if the download was successfully cancelled, or an error if:
+    /// - The download doesn't exist
+    /// - Database deletion fails
+    /// - File deletion fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Cancel a download and remove all files
+    /// downloader.cancel(id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn cancel(&self, id: DownloadId) -> Result<()> {
+        // Verify download exists
+        let _download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+
+        // If download is actively running, cancel its task
+        let mut active_downloads = self.active_downloads.lock().await;
+        if let Some(cancel_token) = active_downloads.get(&id) {
+            // Signal the download task to stop
+            cancel_token.cancel();
+            // Remove from active downloads
+            active_downloads.remove(&id);
+        }
+        drop(active_downloads); // Release lock
+
+        // Remove from queue if it's still queued (not yet started)
+        self.remove_from_queue(id).await;
+
+        // Delete downloaded files from temp directory
+        let download_temp_dir = self.config.temp_dir.join(format!("download_{}", id));
+        if download_temp_dir.exists() {
+            if let Err(e) = tokio::fs::remove_dir_all(&download_temp_dir).await {
+                tracing::warn!(
+                    download_id = id,
+                    path = ?download_temp_dir,
+                    error = %e,
+                    "Failed to delete download temp directory"
+                );
+                // Continue anyway - database deletion is more important
+            }
+        }
+
+        // Delete download from database (cascades to articles, passwords)
+        self.db.delete_download(id).await?;
+
+        // Emit Removed event
+        self.emit_event(crate::types::Event::Removed { id });
 
         Ok(())
     }
@@ -1975,5 +2044,186 @@ mod tests {
         // High priority download should still come first
         assert_eq!(downloader.get_next_download().await, Some(id));
         assert_eq!(downloader.get_next_download().await, Some(normal_id));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_queued_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Verify download exists in database
+        assert!(downloader.db.get_download(id).await.unwrap().is_some());
+
+        // Verify download is in queue
+        assert_eq!(downloader.queue_size().await, 1);
+
+        // Cancel the download
+        downloader.cancel(id).await.unwrap();
+
+        // Download should be removed from database
+        assert!(downloader.db.get_download(id).await.unwrap().is_none());
+
+        // Download should be removed from queue
+        assert_eq!(downloader.queue_size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_paused_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Pause the download
+        downloader.pause(id).await.unwrap();
+
+        // Verify it's paused
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Paused.to_i32());
+
+        // Cancel the paused download
+        downloader.cancel(id).await.unwrap();
+
+        // Download should be removed from database
+        assert!(downloader.db.get_download(id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_deletes_temp_files() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Create temp directory and some files (simulating partially downloaded)
+        let download_temp_dir = downloader.config.temp_dir.join(format!("download_{}", id));
+        tokio::fs::create_dir_all(&download_temp_dir).await.unwrap();
+
+        let test_file = download_temp_dir.join("article_1.dat");
+        tokio::fs::write(&test_file, b"test data").await.unwrap();
+
+        // Verify temp directory exists
+        assert!(download_temp_dir.exists());
+        assert!(test_file.exists());
+
+        // Cancel the download
+        downloader.cancel(id).await.unwrap();
+
+        // Temp directory should be deleted
+        assert!(!download_temp_dir.exists());
+        assert!(!test_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_nonexistent_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Try to cancel download that doesn't exist
+        let result = downloader.cancel(999).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_completed_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark as completed
+        downloader.db.update_status(id, Status::Complete.to_i32()).await.unwrap();
+
+        // Cancel completed download (should succeed - removes from history)
+        downloader.cancel(id).await.unwrap();
+
+        // Download should be removed from database
+        assert!(downloader.db.get_download(id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_removes_from_queue() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add multiple downloads
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test1", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test2", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id3 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test3", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Verify all are queued
+        assert_eq!(downloader.queue_size().await, 3);
+
+        // Cancel middle download
+        downloader.cancel(id2).await.unwrap();
+
+        // Queue should have 2 items
+        assert_eq!(downloader.queue_size().await, 2);
+
+        // Get downloads from queue - should only be id1 and id3
+        let next = downloader.get_next_download().await;
+        assert!(next == Some(id1) || next == Some(id3));
+
+        let next2 = downloader.get_next_download().await;
+        assert!(next2 == Some(id1) || next2 == Some(id3));
+        assert_ne!(next, next2);
+
+        // Queue should now be empty
+        assert_eq!(downloader.queue_size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_emits_removed_event() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Subscribe to events
+        let mut events = downloader.subscribe();
+
+        // Cancel the download (in background to avoid blocking)
+        let downloader_clone = downloader.clone();
+        tokio::spawn(async move {
+            downloader_clone.cancel(id).await.unwrap();
+        });
+
+        // Wait for Removed event
+        let mut received_removed = false;
+        for _ in 0..10 {
+            match tokio::time::timeout(std::time::Duration::from_millis(100), events.recv()).await {
+                Ok(Ok(crate::types::Event::Removed { id: event_id })) => {
+                    assert_eq!(event_id, id);
+                    received_removed = true;
+                    break;
+                }
+                Ok(Ok(_)) => continue, // Other events, keep checking
+                Ok(Err(_)) => break,   // Channel closed
+                Err(_) => break,       // Timeout
+            }
+        }
+
+        assert!(received_removed, "Should have received Removed event");
     }
 }
