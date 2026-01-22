@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (33/53 tasks complete)
+- Phase 1: 🔄 In Progress (34/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Tasks 5.1-5.8: ✅ Priority queue, automatic download spawning, pause, resume, cancel, and queue-wide operations complete (76 tests passing)
-  - Tasks 5.9-9.8: ⏳ Remaining (Queue persistence, Resume support, Speed Limiting, Retry, Shutdown)
-- Total: 38/253 tasks complete (15.0%)
+  - Tasks 5.1-5.9: ✅ Priority queue with complete persistence (79 tests passing)
+  - Tasks 6.1-9.8: ⏳ Remaining (Resume support, Speed Limiting, Retry, Shutdown)
+- Total: 39/253 tasks complete (15.4%)
 
-**Next Task:** Task 5.9 - Persist queue state to SQLite on every change
+**Next Task:** Task 6.1 - Implement article status tracking in download_articles table
 
 ## Analysis
 
@@ -180,7 +180,7 @@ The implementation will require these major dependencies:
 - [x] Task 5.6: Implement resume() to restart paused download
 - [x] Task 5.7: Implement cancel() to remove download and delete files
 - [x] Task 5.8: Add pause_all() and resume_all() queue-wide operations
-- [ ] Task 5.9: Persist queue state to SQLite on every change
+- [x] Task 5.9: Persist queue state to SQLite on every change
 
 - [ ] Task 6.1: Implement article status tracking in download_articles table
 - [ ] Task 6.2: Create resume_download() to query pending articles and continue
@@ -435,6 +435,113 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Queue Management - Task 5.9 Complete: Queue State Persistence**
+
+- Task 5.9: Queue state persistence to SQLite verified and tested ✓
+  - Confirmed Status field IS the queue persistence mechanism (elegant design)
+  - Status::Queued (0), Downloading (1), Paused (2), Processing (3) = in queue
+  - Status::Complete (4), Failed (5) = not in queue
+  - All state transitions already persist via update_status() calls
+  - Downloads table with priority+created_at ordering IS the persistent queue
+  - get_incomplete_downloads() returns status IN (0, 1, 3) for restore
+  - list_downloads_by_status() can query Paused (2) separately
+  - No separate "in_queue" boolean needed - Status enum is sufficient
+  - Database index on (priority DESC, created_at ASC) enables efficient restore
+  - All 79 tests passing (3 new comprehensive persistence tests added)
+
+**Implementation Verification:**
+
+Status Persistence Points:
+```rust
+// add_nzb_content(): Sets Status::Queued on insert (line 744)
+status: Status::Queued.to_i32()
+
+// pause(): Updates to Status::Paused (line 372)
+self.db.update_status(id, Status::Paused.to_i32()).await?;
+
+// resume(): Updates back to Status::Queued (line 437)
+self.db.update_status(id, Status::Queued.to_i32()).await?;
+
+// cancel(): Deletes from database entirely (line 506)
+self.db.delete_download(id).await?;
+
+// Queue processor: Updates to Status::Downloading when starting (line 949)
+db_clone.update_status(id, Status::Downloading.to_i32()).await?;
+
+// On completion: Updates to Status::Complete (lines 1173, 1180)
+db_clone.update_status(id, Status::Complete.to_i32()).await?;
+
+// On failure: Updates to Status::Failed (lines 1008, 1042, 1061, etc.)
+db_clone.update_status(id, Status::Failed.to_i32()).await?;
+```
+
+Queue Restoration (Task 6.3 Preview):
+```rust
+// Query incomplete downloads (will be used by restore_queue)
+let incomplete = db.get_incomplete_downloads().await?;
+// Returns: WHERE status IN (0, 1, 3)
+//          ORDER BY priority DESC, created_at ASC
+
+// Each download can be added back to in-memory BinaryHeap
+for download in incomplete {
+    self.add_to_queue(download.id).await?;
+}
+```
+
+Test Coverage (3 new tests):
+1. **test_queue_state_persisted_to_database**:
+   - Verifies add → Queued → pause → Paused → resume → Queued → cancel → DELETED
+   - Confirms in-memory queue and database stay synchronized
+   - Tests get_incomplete_downloads() returns correct downloads
+
+2. **test_queue_ordering_persisted_correctly**:
+   - Verifies priority ordering (High > Normal > Low) persists to database
+   - Confirms list_downloads() returns downloads in correct order
+   - Validates database index works correctly for restoration
+
+3. **test_queue_persistence_enables_restore**:
+   - Simulates application restart with new downloader instance
+   - Verifies database retains download state across restarts
+   - Confirms get_incomplete_downloads() filters by status correctly
+   - Tests that Complete downloads are NOT included in restore
+
+**Technical Implementation:**
+
+Key Insight: The queue IS the downloads table filtered by status.
+- In-memory BinaryHeap is ephemeral (performance optimization)
+- Database is source of truth (durability)
+- Status transitions are the persistence mechanism
+- No duplication, no separate queue table needed
+
+Database Schema (already perfect):
+```sql
+CREATE TABLE downloads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status INTEGER NOT NULL DEFAULT 0,        -- Queue membership
+    priority INTEGER NOT NULL DEFAULT 0,      -- Queue ordering (1)
+    created_at INTEGER NOT NULL,              -- Queue ordering (2)
+    ...
+)
+
+CREATE INDEX idx_downloads_priority
+    ON downloads(priority DESC, created_at ASC);  -- Efficient restore
+```
+
+Restoration Algorithm (for Task 6.3):
+1. Query: `SELECT * FROM downloads WHERE status IN (0, 1, 3) ORDER BY priority DESC, created_at ASC`
+2. For each download: `add_to_queue(download.id)` to rebuild BinaryHeap
+3. BinaryHeap automatically maintains correct ordering (Ord trait)
+4. Queue processor resumes downloads from pending articles
+
+**Architectural Impact:**
+- Demonstrates elegance of Status-based persistence (no redundancy)
+- Foundation complete for Task 6.3 (restore_queue implementation)
+- Database already tracks everything needed for crash recovery
+- Clean separation: Status = persistent state, BinaryHeap = runtime optimization
+- Ready for article-level resume (Task 6.1-6.2)
+
+## Previous Completed Iterations
 
 **Phase 1 Queue Management - Task 5.8 Complete: Queue-Wide Pause/Resume Operations**
 

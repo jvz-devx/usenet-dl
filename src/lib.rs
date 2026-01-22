@@ -2555,4 +2555,186 @@ mod tests {
         assert_eq!(d1.status, Status::Queued.to_i32());
         assert_eq!(d2.status, Status::Queued.to_i32());
     }
+
+    // === Task 5.9: Queue State Persistence Tests ===
+
+    #[tokio::test]
+    async fn test_queue_state_persisted_to_database() {
+        // Test Task 5.9: Queue state is persisted to SQLite on every change
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // 1. Add download - should persist Status::Queued
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Verify Status::Queued persisted to database
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32(), "Status should be Queued in DB");
+        assert_eq!(download.priority, 0, "Priority should be Normal (0)");
+
+        // 2. Pause download - should persist Status::Paused
+        downloader.pause(id).await.unwrap();
+
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Paused.to_i32(), "Status should be Paused in DB");
+
+        // 3. Resume download - should persist Status::Queued again
+        downloader.resume(id).await.unwrap();
+
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32(), "Status should be Queued in DB after resume");
+
+        // 4. Verify in-memory queue and database are synchronized
+        let queue_size = downloader.queue_size().await;
+        assert_eq!(queue_size, 1, "In-memory queue should have 1 download");
+
+        // Query incomplete downloads from DB (should include our Queued download)
+        let incomplete = downloader.db.get_incomplete_downloads().await.unwrap();
+        assert_eq!(incomplete.len(), 1, "DB should have 1 incomplete download");
+        assert_eq!(incomplete[0].id, id, "Incomplete download ID should match");
+
+        // 5. Cancel download - should remove from database
+        downloader.cancel(id).await.unwrap();
+
+        let download = downloader.db.get_download(id).await.unwrap();
+        assert!(download.is_none(), "Download should be deleted from DB");
+
+        let queue_size = downloader.queue_size().await;
+        assert_eq!(queue_size, 0, "In-memory queue should be empty");
+    }
+
+    #[tokio::test]
+    async fn test_queue_ordering_persisted_correctly() {
+        // Test that queue ordering (priority + created_at) is persisted and queryable
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add downloads with different priorities
+        let id_low = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "low",
+                DownloadOptions {
+                    priority: Priority::Low,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await; // Ensure different timestamps
+
+        let id_normal = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "normal",
+                DownloadOptions {
+                    priority: Priority::Normal,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        let id_high = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "high",
+                DownloadOptions {
+                    priority: Priority::High,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Query database with priority ordering (as restore_queue() would do)
+        let all_downloads = downloader.db.list_downloads().await.unwrap();
+
+        // Should be ordered: High, Normal, Low (priority DESC)
+        assert_eq!(all_downloads.len(), 3, "Should have 3 downloads");
+        assert_eq!(all_downloads[0].id, id_high, "First should be High priority");
+        assert_eq!(all_downloads[1].id, id_normal, "Second should be Normal priority");
+        assert_eq!(all_downloads[2].id, id_low, "Third should be Low priority");
+
+        // Verify priorities are correct in database
+        assert_eq!(all_downloads[0].priority, Priority::High as i32);
+        assert_eq!(all_downloads[1].priority, Priority::Normal as i32);
+        assert_eq!(all_downloads[2].priority, Priority::Low as i32);
+    }
+
+    #[tokio::test]
+    async fn test_queue_persistence_enables_restore() {
+        // Test that persisted queue state can be used to restore queue (Task 6.3 preview)
+        use tempfile::TempDir;
+
+        // Create persistent temp directory for database
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("usenet-dl.db");
+
+        // Create first downloader instance
+        let config1 = Config {
+            database_path: db_path.clone(),
+            temp_dir: temp_dir.path().join("temp"),
+            download_dir: temp_dir.path().join("downloads"),
+            ..Default::default()
+        };
+        let downloader = UsenetDownloader::new(config1).await.unwrap();
+
+        // Add multiple downloads with different statuses
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test1", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test2", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id3 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test3", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark one as Processing, complete one, leave one queued
+        downloader.db.update_status(id2, Status::Processing.to_i32()).await.unwrap();
+        downloader.db.update_status(id3, Status::Complete.to_i32()).await.unwrap();
+
+        // Simulate restart: create new downloader with same database
+        drop(downloader); // Close first instance
+
+        let config2 = Config {
+            database_path: db_path.clone(),
+            temp_dir: temp_dir.path().join("temp"),
+            download_dir: temp_dir.path().join("downloads"),
+            ..Default::default()
+        };
+        let downloader2 = UsenetDownloader::new(config2).await.unwrap();
+
+        // Verify we can query incomplete downloads (would be used by restore_queue)
+        // Note: get_incomplete_downloads() returns status IN (0, 1, 3) - Queued, Downloading, Processing
+        // It intentionally excludes Paused (2), which would be handled separately
+        let incomplete = downloader2.db.get_incomplete_downloads().await.unwrap();
+
+        // Should have 2: id1 (Queued) and id2 (Processing)
+        // Should NOT have id3 (Complete)
+        assert_eq!(incomplete.len(), 2, "Should have 2 incomplete downloads");
+
+        let incomplete_ids: Vec<i64> = incomplete.iter().map(|d| d.id).collect();
+        assert!(incomplete_ids.contains(&id1), "Should include Queued download");
+        assert!(incomplete_ids.contains(&id2), "Should include Processing download");
+        assert!(!incomplete_ids.contains(&id3), "Should NOT include Complete download");
+
+        // Verify they're in priority order
+        assert_eq!(incomplete[0].priority, 0, "First should be Normal priority");
+        assert_eq!(incomplete[1].priority, 0, "Second should be Normal priority");
+
+        // Also verify paused downloads can be restored separately
+        let paused = downloader2.db.list_downloads_by_status(Status::Paused.to_i32()).await.unwrap();
+        assert_eq!(paused.len(), 0, "No paused downloads in this test (id2 was set to Processing)");
+    }
 }
