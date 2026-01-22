@@ -387,10 +387,165 @@ impl PostProcessor {
             })
             .ok();
 
-        // TODO: Implement cleanup (.par2, .nzb, archives, samples)
-        warn!(download_id, "cleanup not yet implemented");
+        // Check if cleanup is enabled
+        if !self.config.cleanup.enabled {
+            debug!(download_id, "cleanup disabled, skipping");
+            return Ok(());
+        }
+
+        // Perform cleanup
+        self.cleanup(download_id, download_path).await
+    }
+
+    /// Remove intermediate files and sample folders
+    ///
+    /// This function removes:
+    /// - Files with target extensions (.par2, .nzb, .sfv, .srr, .nfo)
+    /// - Archive files after extraction (.rar, .zip, .7z, etc.)
+    /// - Sample folders (if delete_samples is enabled)
+    ///
+    /// Errors are logged as warnings but don't cause the cleanup to fail.
+    ///
+    /// # Arguments
+    ///
+    /// * `download_id` - The download ID for logging
+    /// * `download_path` - Path to the download directory to clean
+    async fn cleanup(&self, download_id: DownloadId, download_path: &PathBuf) -> Result<()> {
+        use tokio::fs;
+
+        debug!(
+            download_id,
+            ?download_path,
+            "cleaning up intermediate files"
+        );
+
+        if !download_path.exists() {
+            debug!(download_id, ?download_path, "download path does not exist, skipping cleanup");
+            return Ok(());
+        }
+
+        // Collect all target extensions (case-insensitive comparison)
+        let target_extensions: Vec<String> = self
+            .config
+            .cleanup
+            .target_extensions
+            .iter()
+            .chain(self.config.cleanup.archive_extensions.iter())
+            .map(|ext| ext.to_lowercase())
+            .collect();
+
+        // Recursively walk the directory and collect files/folders to delete
+        let mut files_to_delete = Vec::new();
+        let mut folders_to_delete = Vec::new();
+
+        self.collect_cleanup_targets(
+            download_path,
+            &target_extensions,
+            &mut files_to_delete,
+            &mut folders_to_delete,
+        )
+        .await;
+
+        // Delete files
+        let mut deleted_files = 0;
+        for file in &files_to_delete {
+            match fs::remove_file(file).await {
+                Ok(_) => {
+                    debug!(download_id, ?file, "deleted intermediate file");
+                    deleted_files += 1;
+                }
+                Err(e) => {
+                    warn!(download_id, ?file, error = %e, "failed to delete file");
+                }
+            }
+        }
+
+        // Delete sample folders
+        let mut deleted_folders = 0;
+        for folder in &folders_to_delete {
+            match fs::remove_dir_all(folder).await {
+                Ok(_) => {
+                    debug!(download_id, ?folder, "deleted sample folder");
+                    deleted_folders += 1;
+                }
+                Err(e) => {
+                    warn!(download_id, ?folder, error = %e, "failed to delete folder");
+                }
+            }
+        }
+
+        info!(
+            download_id,
+            deleted_files,
+            deleted_folders,
+            "cleanup complete"
+        );
 
         Ok(())
+    }
+
+    /// Recursively collect files and folders to delete during cleanup
+    fn collect_cleanup_targets<'a>(
+        &'a self,
+        path: &'a PathBuf,
+        target_extensions: &'a [String],
+        files_to_delete: &'a mut Vec<PathBuf>,
+        folders_to_delete: &'a mut Vec<PathBuf>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            use tokio::fs;
+
+            // Check if this is a sample folder
+            if path.is_dir() && self.config.cleanup.delete_samples {
+                if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Check if folder name matches any sample folder names (case-insensitive)
+                    let is_sample = self
+                        .config
+                        .cleanup
+                        .sample_folder_names
+                        .iter()
+                        .any(|sample_name| folder_name.eq_ignore_ascii_case(sample_name));
+
+                    if is_sample {
+                        // Mark this entire folder for deletion
+                        folders_to_delete.push(path.clone());
+                        return; // Don't recurse into sample folders
+                    }
+                }
+            }
+
+            // Read directory entries
+            let mut entries = match fs::read_dir(path).await {
+                Ok(entries) => entries,
+                Err(e) => {
+                    warn!(?path, error = %e, "failed to read directory during cleanup");
+                    return;
+                }
+            };
+
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let entry_path = entry.path();
+
+                if entry_path.is_file() {
+                    // Check if file extension matches target extensions
+                    if let Some(extension) = entry_path.extension().and_then(|e| e.to_str()) {
+                        let ext_lower = extension.to_lowercase();
+                        if target_extensions.contains(&ext_lower) {
+                            files_to_delete.push(entry_path);
+                        }
+                    }
+                } else if entry_path.is_dir() {
+                    // Recursively check subdirectories
+                    self.collect_cleanup_targets(
+                        &entry_path,
+                        target_extensions,
+                        files_to_delete,
+                        folders_to_delete,
+                    )
+                    .await;
+                }
+            }
+        })
     }
 }
 
@@ -742,5 +897,294 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(renamed, "new content");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_removes_target_extensions() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create files with target extensions
+        fs::write(download_path.join("file.par2"), b"par2 data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.nzb"), b"nzb data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.sfv"), b"sfv data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.srr"), b"srr data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.nfo"), b"nfo data")
+            .await
+            .unwrap();
+
+        // Create files that should NOT be deleted
+        fs::write(download_path.join("video.mkv"), b"video data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("readme.txt"), b"readme")
+            .await
+            .unwrap();
+
+        processor.cleanup(1, &download_path).await.unwrap();
+
+        // Verify target files were deleted
+        assert!(!download_path.join("file.par2").exists());
+        assert!(!download_path.join("file.nzb").exists());
+        assert!(!download_path.join("file.sfv").exists());
+        assert!(!download_path.join("file.srr").exists());
+        assert!(!download_path.join("file.nfo").exists());
+
+        // Verify other files still exist
+        assert!(download_path.join("video.mkv").exists());
+        assert!(download_path.join("readme.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_removes_archive_files() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create archive files
+        fs::write(download_path.join("file.rar"), b"rar data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.zip"), b"zip data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.7z"), b"7z data")
+            .await
+            .unwrap();
+
+        // Create extracted files (should NOT be deleted)
+        fs::write(download_path.join("video.mkv"), b"video data")
+            .await
+            .unwrap();
+
+        processor.cleanup(1, &download_path).await.unwrap();
+
+        // Verify archive files were deleted
+        assert!(!download_path.join("file.rar").exists());
+        assert!(!download_path.join("file.zip").exists());
+        assert!(!download_path.join("file.7z").exists());
+
+        // Verify extracted files still exist
+        assert!(download_path.join("video.mkv").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_removes_sample_folders() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create sample folders with various case variations
+        let sample_dir = download_path.join("sample");
+        fs::create_dir_all(&sample_dir).await.unwrap();
+        fs::write(sample_dir.join("sample.mkv"), b"sample video")
+            .await
+            .unwrap();
+
+        let samples_dir = download_path.join("Samples");
+        fs::create_dir_all(&samples_dir).await.unwrap();
+        fs::write(samples_dir.join("sample.mkv"), b"sample video")
+            .await
+            .unwrap();
+
+        // Create a normal folder (should NOT be deleted)
+        let content_dir = download_path.join("content");
+        fs::create_dir_all(&content_dir).await.unwrap();
+        fs::write(content_dir.join("video.mkv"), b"real video")
+            .await
+            .unwrap();
+
+        processor.cleanup(1, &download_path).await.unwrap();
+
+        // Verify sample folders were deleted
+        assert!(!sample_dir.exists());
+        assert!(!samples_dir.exists());
+
+        // Verify normal folder still exists
+        assert!(content_dir.exists());
+        assert!(content_dir.join("video.mkv").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_case_insensitive() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create files with uppercase extensions
+        fs::write(download_path.join("file.PAR2"), b"par2 data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.NZB"), b"nzb data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.RAR"), b"rar data")
+            .await
+            .unwrap();
+
+        processor.cleanup(1, &download_path).await.unwrap();
+
+        // Verify uppercase files were deleted (case-insensitive)
+        assert!(!download_path.join("file.PAR2").exists());
+        assert!(!download_path.join("file.NZB").exists());
+        assert!(!download_path.join("file.RAR").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_recursive() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create nested directory structure
+        let subdir = download_path.join("subdir");
+        fs::create_dir_all(&subdir).await.unwrap();
+
+        // Create target files in subdirectory
+        fs::write(subdir.join("file.par2"), b"par2 data")
+            .await
+            .unwrap();
+        fs::write(subdir.join("file.nzb"), b"nzb data")
+            .await
+            .unwrap();
+
+        // Create normal file in subdirectory
+        fs::write(subdir.join("video.mkv"), b"video data")
+            .await
+            .unwrap();
+
+        processor.cleanup(1, &download_path).await.unwrap();
+
+        // Verify target files in subdirectory were deleted
+        assert!(!subdir.join("file.par2").exists());
+        assert!(!subdir.join("file.nzb").exists());
+
+        // Verify normal file still exists
+        assert!(subdir.join("video.mkv").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_disabled() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let mut config = Config::default();
+        config.cleanup.enabled = false;
+        let processor = PostProcessor::new(tx, Arc::new(config));
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create files that would normally be deleted
+        fs::write(download_path.join("file.par2"), b"par2 data")
+            .await
+            .unwrap();
+        fs::write(download_path.join("file.nzb"), b"nzb data")
+            .await
+            .unwrap();
+
+        processor
+            .run_cleanup_stage(1, &download_path)
+            .await
+            .unwrap();
+
+        // Verify files still exist (cleanup was disabled)
+        assert!(download_path.join("file.par2").exists());
+        assert!(download_path.join("file.nzb").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_delete_samples_disabled() {
+        use tempfile::TempDir;
+        use tokio::fs;
+
+        let (tx, _rx) = broadcast::channel(100);
+        let mut config = Config::default();
+        config.cleanup.delete_samples = false;
+        let processor = PostProcessor::new(tx, Arc::new(config));
+
+        let temp_dir = TempDir::new().unwrap();
+        let download_path = temp_dir.path().join("download");
+        fs::create_dir_all(&download_path).await.unwrap();
+
+        // Create sample folder
+        let sample_dir = download_path.join("sample");
+        fs::create_dir_all(&sample_dir).await.unwrap();
+        fs::write(sample_dir.join("sample.mkv"), b"sample video")
+            .await
+            .unwrap();
+
+        // Create target files (should still be deleted)
+        fs::write(download_path.join("file.par2"), b"par2 data")
+            .await
+            .unwrap();
+
+        processor.cleanup(1, &download_path).await.unwrap();
+
+        // Verify sample folder still exists (delete_samples disabled)
+        assert!(sample_dir.exists());
+        assert!(sample_dir.join("sample.mkv").exists());
+
+        // Verify target files were still deleted
+        assert!(!download_path.join("file.par2").exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_nonexistent_path() {
+        let (tx, _rx) = broadcast::channel(100);
+        let config = Arc::new(Config::default());
+        let processor = PostProcessor::new(tx, config);
+
+        let nonexistent_path = PathBuf::from("/tmp/nonexistent_path_12345");
+
+        // Should not error when path doesn't exist
+        let result = processor.cleanup(1, &nonexistent_path).await;
+        assert!(result.is_ok());
     }
 }

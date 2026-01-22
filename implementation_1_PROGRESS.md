@@ -18,17 +18,17 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (38/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (42/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
   - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
-  - Tasks 16.1-16.2: ✅ Cleanup configuration and sample detection complete (232 tests passing)
-- Total: 105/253 tasks complete (41.5%)
+  - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
+- Total: 109/253 tasks complete (43.1%)
 
-**Next Task:** Task 16.3 - Create cleanup() function to remove intermediate files
+**Next Task:** Task 17.1 - Add axum, tower, tower-http dependencies
 
 ## Analysis
 
@@ -271,10 +271,10 @@ The implementation will require these major dependencies:
 
 - [x] Task 16.1: Define cleanup target file extensions (.par2, .nzb, .sfv, .srr, archives)
 - [x] Task 16.2: Implement delete_samples flag and folder detection
-- [ ] Task 16.3: Create cleanup() function to remove intermediate files
-- [ ] Task 16.4: Add error handling (log warnings, don't fail on cleanup errors)
-- [ ] Task 16.5: Emit Cleaning event
-- [ ] Task 16.6: Test cleanup with various file types
+- [x] Task 16.3: Create cleanup() function to remove intermediate files
+- [x] Task 16.4: Add error handling (log warnings, don't fail on cleanup errors)
+- [x] Task 16.5: Emit Cleaning event
+- [x] Task 16.6: Test cleanup with various file types
 
 ### Phase 3: REST API (Steps 17-23)
 
@@ -3551,3 +3551,64 @@ Implemented CleanupConfig structure with comprehensive configuration for cleanup
 - Sample folder names support common naming conventions (singular/plural, various cases)
 - Configuration is serde-compatible for JSON/TOML deserialization
 - Default values align with design document specifications (implementation_1.md lines 1271-1279)
+
+
+---
+
+### Task 16.3: Create cleanup() function to remove intermediate files ✅
+
+**Summary:**
+Implemented complete cleanup functionality that recursively removes intermediate files (.par2, .nzb, .sfv, .srr, .nfo), archive files after extraction (.rar, .zip, .7z), and sample folders based on CleanupConfig settings.
+
+**Changes Made:**
+
+1. **Implemented run_cleanup_stage()** (src/post_processing.rs):
+   - Checks if cleanup is enabled via config
+   - Emits Cleaning event
+   - Delegates to cleanup() function
+   - Returns Ok even if cleanup disabled (non-blocking)
+
+2. **Implemented cleanup() function** (src/post_processing.rs):
+   - Recursively walks download directory
+   - Collects files matching target extensions (case-insensitive)
+   - Identifies sample folders by name (case-insensitive)
+   - Deletes files and folders
+   - Logs warnings for failures (does not fail entire cleanup)
+   - Reports statistics (deleted_files, deleted_folders)
+
+3. **Implemented collect_cleanup_targets()** (src/post_processing.rs):
+   - Recursive async function for directory traversal
+   - Checks file extensions against target list (case-insensitive)
+   - Detects sample folders by name matching config
+   - Skips recursing into sample folders (deletes entire folder)
+   - Handles I/O errors gracefully with warnings
+
+4. **Added 8 comprehensive tests**:
+   - test_cleanup_removes_target_extensions - Verifies .par2, .nzb, .sfv, .srr, .nfo deletion
+   - test_cleanup_removes_archive_files - Verifies .rar, .zip, .7z deletion
+   - test_cleanup_removes_sample_folders - Verifies sample folder deletion
+   - test_cleanup_case_insensitive - Verifies case-insensitive extension matching
+   - test_cleanup_recursive - Verifies recursive subdirectory processing
+   - test_cleanup_disabled - Verifies cleanup respects enabled flag
+   - test_cleanup_delete_samples_disabled - Verifies sample folder preservation when disabled
+   - test_cleanup_nonexistent_path - Verifies graceful handling of missing paths
+
+**Test Results:**
+- All 18 post-processing tests pass (including 8 new cleanup tests)
+- Total test count: 240 tests passing
+
+**Design Decisions:**
+
+1. **Case-insensitive matching**: Files with .PAR2, .par2, .Par2 all match
+2. **Non-blocking errors**: Individual file deletion failures log warnings but dont fail cleanup
+3. **Recursive processing**: Handles nested directory structures
+4. **Sample folder handling**: Entire folder deleted without recursion into contents
+5. **Configurable behavior**: Respects enabled flags and configurable extension lists
+
+**Next Steps:**
+Tasks 16.4, 16.5, and 16.6 were also completed as part of this implementation:
+- 16.4: Error handling implemented (log warnings, non-blocking)
+- 16.5: Cleaning event emitted in run_cleanup_stage()
+- 16.6: 8 comprehensive tests cover various file types and scenarios
+
+Ready for Phase 3: REST API implementation.
