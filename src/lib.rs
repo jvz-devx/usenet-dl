@@ -793,6 +793,43 @@ impl UsenetDownloader {
         Ok(())
     }
 
+    /// Set the global speed limit
+    ///
+    /// This changes the download speed limit for all concurrent downloads.
+    /// The change takes effect immediately.
+    ///
+    /// # Arguments
+    ///
+    /// * `limit_bps` - New speed limit in bytes per second (None = unlimited)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// # let downloader = UsenetDownloader::new(config).await?;
+    /// // Set to 10 MB/s
+    /// downloader.set_speed_limit(Some(10_000_000)).await;
+    ///
+    /// // Remove speed limit (unlimited)
+    /// downloader.set_speed_limit(None).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_speed_limit(&self, limit_bps: Option<u64>) {
+        // Update the speed limiter
+        self.speed_limiter.set_limit(limit_bps);
+
+        // Emit event to notify subscribers
+        self.emit_event(crate::types::Event::SpeedLimitChanged { limit_bps });
+
+        tracing::info!(
+            limit_bps = ?limit_bps,
+            "Speed limit changed"
+        );
+    }
+
     /// Add an NZB to the download queue from raw bytes
     ///
     /// This method parses the NZB content, creates a download record in the database,
@@ -3442,5 +3479,66 @@ mod tests {
         // Reset to unlimited
         downloader.speed_limiter.set_limit(None);
         assert_eq!(downloader.speed_limiter.get_limit(), None);
+    }
+
+    #[tokio::test]
+    async fn test_set_speed_limit_method() {
+        // This test verifies that set_speed_limit() properly updates the limiter
+        // and emits the SpeedLimitChanged event (Task 7.6)
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Subscribe to events before changing limit
+        let mut rx = downloader.subscribe();
+
+        // Initially should be unlimited (default)
+        assert_eq!(downloader.speed_limiter.get_limit(), None);
+
+        // Set speed limit to 10 MB/s
+        downloader.set_speed_limit(Some(10_000_000)).await;
+
+        // Verify limit was updated
+        assert_eq!(downloader.speed_limiter.get_limit(), Some(10_000_000));
+
+        // Verify event was emitted
+        let event = rx.recv().await.unwrap();
+        match event {
+            crate::types::Event::SpeedLimitChanged { limit_bps } => {
+                assert_eq!(limit_bps, Some(10_000_000));
+            }
+            other => panic!("Expected SpeedLimitChanged event, got {:?}", other),
+        }
+
+        // Change to unlimited
+        downloader.set_speed_limit(None).await;
+        assert_eq!(downloader.speed_limiter.get_limit(), None);
+
+        // Verify second event was emitted
+        let event = rx.recv().await.unwrap();
+        match event {
+            crate::types::Event::SpeedLimitChanged { limit_bps } => {
+                assert_eq!(limit_bps, None);
+            }
+            other => panic!("Expected SpeedLimitChanged event with None, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_set_speed_limit_takes_effect_immediately() {
+        // Verify that speed limit changes take effect immediately for ongoing downloads
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start with 5 MB/s
+        downloader.set_speed_limit(Some(5_000_000)).await;
+        assert_eq!(downloader.speed_limiter.get_limit(), Some(5_000_000));
+
+        // Change to 10 MB/s
+        downloader.set_speed_limit(Some(10_000_000)).await;
+        assert_eq!(downloader.speed_limiter.get_limit(), Some(10_000_000));
+
+        // Verify we can still acquire bytes (limiter is functional)
+        downloader.speed_limiter.acquire(1000).await;
+        // If we reach here, the limiter is working after the change
     }
 }

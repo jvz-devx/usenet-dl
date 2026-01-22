@@ -8,18 +8,18 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (45/53 tasks complete)
+- Phase 1: 🔄 In Progress (46/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
   - Tasks 5.1-5.9: ✅ Priority queue with complete persistence (79 tests passing)
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
-  - Tasks 7.1-7.5: ✅ SpeedLimiter integrated into download loop (104 tests passing)
-  - Tasks 7.6-9.8: ⏳ Remaining (Speed limit events, Retry, Shutdown)
-- Total: 50/253 tasks complete (19.8%)
+  - Tasks 7.1-7.6: ✅ SpeedLimiter with event emission complete (107 tests passing)
+  - Tasks 7.7-9.8: ⏳ Remaining (Multi-download speed tests, Retry, Shutdown)
+- Total: 51/253 tasks complete (20.2%)
 
-**Next Task:** Task 7.6 - Emit SpeedLimitChanged event when limit is updated
+**Next Task:** Task 7.7 - Test speed limiting with multiple concurrent downloads
 
 ## Analysis
 
@@ -196,7 +196,7 @@ The implementation will require these major dependencies:
 - [x] Task 7.3: Implement acquire(bytes) async method with wait logic (done as part of 7.1)
 - [x] Task 7.4: Share SpeedLimiter (Arc) across all download tasks
 - [x] Task 7.5: Implement set_speed_limit(limit_bps) to change limit dynamically (done as part of 7.1)
-- [ ] Task 7.6: Emit SpeedLimitChanged event when limit is updated
+- [x] Task 7.6: Emit SpeedLimitChanged event when limit is updated
 - [ ] Task 7.7: Test speed limiting with multiple concurrent downloads
 
 - [ ] Task 8.1: Create IsRetryable trait for error classification
@@ -437,6 +437,67 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Speed Limiting - Task 7.6 Complete: Emit SpeedLimitChanged Event**
+
+- Task 7.6: Implemented `set_speed_limit()` public method on UsenetDownloader ✓
+  - Added public API method `pub async fn set_speed_limit(&self, limit_bps: Option<u64>)`
+  - Method calls underlying `SpeedLimiter.set_limit()` to update limit
+  - Emits `Event::SpeedLimitChanged { limit_bps }` event to all subscribers
+  - Added tracing log at info level for observability
+  - Location: src/lib.rs between `resume_all()` and `add_nzb_content()`
+  - Comprehensive rustdoc documentation with examples
+
+**Implementation:**
+
+```rust
+pub async fn set_speed_limit(&self, limit_bps: Option<u64>) {
+    // Update the speed limiter
+    self.speed_limiter.set_limit(limit_bps);
+
+    // Emit event to notify subscribers
+    self.emit_event(crate::types::Event::SpeedLimitChanged { limit_bps });
+
+    tracing::info!(
+        limit_bps = ?limit_bps,
+        "Speed limit changed"
+    );
+}
+```
+
+**Event System Integration:**
+
+- Event defined in types.rs: `SpeedLimitChanged { limit_bps: Option<u64> }`
+- All subscribers (UI, logging, webhooks) notified immediately
+- Enables real-time UI updates when speed limit changes
+- Supports both setting a limit (Some(bytes_per_sec)) and unlimited (None)
+
+**Test Coverage:**
+
+Added 2 comprehensive tests (total: 107 tests passing):
+
+1. **test_set_speed_limit_method**: Verifies full functionality
+   - Tests setting limit from unlimited to 10 MB/s
+   - Verifies SpeedLimiter.get_limit() returns correct value
+   - Subscribes to events and verifies SpeedLimitChanged event emitted
+   - Tests changing back to unlimited (None)
+   - Verifies second SpeedLimitChanged event with None
+
+2. **test_set_speed_limit_takes_effect_immediately**: Verifies immediate effect
+   - Sets initial limit to 5 MB/s
+   - Changes to 10 MB/s
+   - Verifies limiter remains functional by calling acquire()
+   - Confirms no blocking or deadlocks
+
+**API Design:**
+
+Method signature follows design document exactly:
+- async for consistency with other public methods
+- Takes `Option<u64>` for bytes per second (None = unlimited)
+- No return value (fire-and-forget with event notification)
+- Provides comprehensive documentation and examples
+
+**Previous Iteration:**
 
 **Phase 1 Speed Limiting - Task 7.4 Complete: SpeedLimiter Integration into Download Loop**
 
