@@ -64,14 +64,14 @@ pub use types::{
 
 /// Main entry point for the usenet-dl library
 pub struct UsenetDownloader {
-    /// Database instance for persistence
-    db: Database,
+    /// Database instance for persistence (wrapped in Arc for sharing across tasks)
+    db: std::sync::Arc<Database>,
     /// Event broadcast channel sender (multiple subscribers supported)
     event_tx: tokio::sync::broadcast::Sender<crate::types::Event>,
-    /// Configuration
-    config: Config,
-    /// NNTP connection pools (one per server)
-    nntp_pools: Vec<nntp_rs::NntpPool>,
+    /// Configuration (wrapped in Arc for sharing across tasks)
+    config: std::sync::Arc<Config>,
+    /// NNTP connection pools (one per server, wrapped in Arc for sharing across tasks)
+    nntp_pools: std::sync::Arc<Vec<nntp_rs::NntpPool>>,
 }
 
 impl UsenetDownloader {
@@ -100,10 +100,10 @@ impl UsenetDownloader {
         }
 
         Ok(Self {
-            db,
+            db: std::sync::Arc::new(db),
             event_tx,
-            config,
-            nntp_pools,
+            config: std::sync::Arc::new(config),
+            nntp_pools: std::sync::Arc::new(nntp_pools),
         })
     }
 
@@ -375,6 +375,186 @@ impl UsenetDownloader {
         // Delegate to add_nzb_content
         self.add_nzb_content(&content, &name, options).await
     }
+
+    /// Spawn a download task for a queued download
+    ///
+    /// This method spawns an asynchronous task that:
+    /// 1. Fetches the download record from the database
+    /// 2. Gets all pending articles (not yet downloaded)
+    /// 3. Downloads each article from NNTP servers
+    /// 4. Updates progress and article status in the database
+    /// 5. Emits progress events to subscribers
+    ///
+    /// The task runs independently and completes when all articles are downloaded
+    /// or an error occurs.
+    ///
+    /// # Arguments
+    ///
+    /// * `download_id` - The ID of the download to process
+    ///
+    /// # Returns
+    ///
+    /// Returns a `tokio::task::JoinHandle` that can be awaited to get the result
+    /// of the download task.
+    ///
+    /// # Errors
+    ///
+    /// The spawned task will fail if:
+    /// - The download ID doesn't exist in the database
+    /// - NNTP connection fails
+    /// - Articles cannot be fetched from the server
+    /// - Database updates fail
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Spawn the download task
+    /// let handle = downloader.spawn_download_task(id);
+    ///
+    /// // Optionally await the result
+    /// match handle.await {
+    ///     Ok(Ok(())) => println!("Download completed successfully"),
+    ///     Ok(Err(e)) => println!("Download failed: {}", e),
+    ///     Err(e) => println!("Task panicked: {}", e),
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn spawn_download_task(
+        &self,
+        download_id: DownloadId,
+    ) -> tokio::task::JoinHandle<Result<()>> {
+        let db = self.db.clone();
+        let event_tx = self.event_tx.clone();
+        let nntp_pools = self.nntp_pools.clone();
+
+        tokio::spawn(async move {
+            // Fetch download record
+            let download = match db.get_download(download_id).await? {
+                Some(d) => d,
+                None => {
+                    return Err(Error::Database(format!(
+                        "Download with ID {} not found",
+                        download_id
+                    )))
+                }
+            };
+
+            // Update status to Downloading and record start time
+            db.update_status(download_id, Status::Downloading.to_i32()).await?;
+            db.set_started(download_id).await?;
+
+            // Emit Downloading event (initial progress 0%)
+            event_tx
+                .send(Event::Downloading {
+                    id: download_id,
+                    percent: 0.0,
+                    speed_bps: 0,
+                })
+                .ok();
+
+            // Get all pending articles
+            let pending_articles = db.get_pending_articles(download_id).await?;
+
+            if pending_articles.is_empty() {
+                // No articles to download - mark as complete
+                event_tx
+                    .send(Event::DownloadComplete { id: download_id })
+                    .ok();
+                return Ok(());
+            }
+
+            let total_articles = pending_articles.len();
+            let total_size_bytes = download.size_bytes as u64;
+            let mut downloaded_articles = 0;
+            let mut downloaded_bytes: u64 = 0;
+
+            // Download each article
+            for article in pending_articles {
+                // Get a connection from the first NNTP pool
+                // TODO: Add multi-server failover in future tasks
+                let pool = nntp_pools
+                    .first()
+                    .ok_or_else(|| Error::Database("No NNTP pools configured".to_string()))?;
+
+                let mut conn = pool.get().await.map_err(|e| {
+                    Error::Database(format!("Failed to get NNTP connection: {}", e))
+                })?;
+
+                // Fetch the article from the server
+                match conn.fetch_article(&article.message_id).await {
+                    Ok(_response) => {
+                        // Mark article as downloaded
+                        db.update_article_status(
+                            article.id,
+                            crate::db::article_status::DOWNLOADED,
+                        )
+                        .await?;
+
+                        downloaded_articles += 1;
+                        downloaded_bytes += article.size_bytes as u64;
+
+                        // Calculate progress percentage
+                        let progress_percent = if total_size_bytes > 0 {
+                            (downloaded_bytes as f32 / total_size_bytes as f32) * 100.0
+                        } else {
+                            (downloaded_articles as f32 / total_articles as f32) * 100.0
+                        };
+
+                        // Update progress in database
+                        db.update_progress(
+                            download_id,
+                            progress_percent,
+                            0, // TODO: Calculate speed in Task 4.8
+                            downloaded_bytes,
+                        )
+                        .await?;
+
+                        // Emit progress event
+                        event_tx
+                            .send(Event::Downloading {
+                                id: download_id,
+                                percent: progress_percent,
+                                speed_bps: 0, // TODO: Calculate speed in Task 4.8
+                            })
+                            .ok();
+                    }
+                    Err(e) => {
+                        // Mark article as failed
+                        db.update_article_status(article.id, crate::db::article_status::FAILED)
+                            .await?;
+
+                        // For now, fail the entire download on first article failure
+                        // TODO: Add retry logic in Tasks 8.1-8.6
+                        db.update_status(download_id, Status::Failed.to_i32()).await?;
+                        db.set_error(download_id, &format!("Article fetch failed: {}", e))
+                            .await?;
+
+                        event_tx
+                            .send(Event::DownloadFailed {
+                                id: download_id,
+                                error: format!("Article fetch failed: {}", e),
+                            })
+                            .ok();
+
+                        return Err(Error::Database(format!("Article fetch failed: {}", e)));
+                    }
+                }
+            }
+
+            // All articles downloaded successfully
+            db.update_status(download_id, Status::Complete.to_i32()).await?;
+            db.set_completed(download_id).await?;
+
+            event_tx
+                .send(Event::DownloadComplete { id: download_id })
+                .ok();
+
+            Ok(())
+        })
+    }
 }
 
 #[cfg(test)]
@@ -404,10 +584,10 @@ mod tests {
         let nntp_pools = Vec::new();
 
         let downloader = UsenetDownloader {
-            db,
+            db: std::sync::Arc::new(db),
             event_tx,
-            config,
-            nntp_pools,
+            config: std::sync::Arc::new(config),
+            nntp_pools: std::sync::Arc::new(nntp_pools),
         };
 
         (downloader, temp_dir)

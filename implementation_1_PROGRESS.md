@@ -8,15 +8,15 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (22/53 tasks complete)
+- Phase 1: 🔄 In Progress (23/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
-  - Tasks 4.1-4.5: ✅ Add NZB methods complete (45 tests passing, including add_nzb() from file)
-  - Tasks 4.6-9.8: ⏳ Remaining (Download operations, Queue, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 27/253 tasks complete (10.7%)
+  - Tasks 4.1-4.6: ✅ Download task spawner complete (45 tests passing, spawn_download_task implemented)
+  - Tasks 4.7-9.8: ⏳ Remaining (Article downloading, Queue, Resume, Speed Limiting, Retry, Shutdown)
+- Total: 28/253 tasks complete (11.1%)
 
-**Next Task:** Task 4.6 - Create download task spawner (spawn_download_task)
+**Next Task:** Task 4.7 - Implement basic article downloading loop using nntp-rs
 
 ## Analysis
 
@@ -167,7 +167,7 @@ The implementation will require these major dependencies:
 - [x] Task 4.3: Create nntp-rs connection pool (NntpPool) from ServerConfig
 - [x] Task 4.4: Implement add_nzb_content() to parse NZB and create download record
 - [x] Task 4.5: Implement add_nzb() to read file and delegate to add_nzb_content()
-- [ ] Task 4.6: Create download task spawner (spawn_download_task)
+- [x] Task 4.6: Create download task spawner (spawn_download_task)
 - [ ] Task 4.7: Implement basic article downloading loop using nntp-rs
 - [ ] Task 4.8: Add progress tracking (update download progress in DB and emit events)
 
@@ -434,6 +434,54 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Download Manager - Task 4.6 Complete: spawn_download_task() Implementation**
+
+- Task 4.6: Implemented spawn_download_task() method ✓
+  - Spawns an independent tokio task for downloading
+  - Fetches download record and pending articles from database
+  - Gets NNTP connection from pool for article fetching
+  - Uses nntp-rs fetch_article() to download each article
+  - Updates article status (DOWNLOADED/FAILED) in real-time
+  - Calculates and tracks download progress percentage
+  - Emits progress events (Downloading, DownloadComplete, DownloadFailed)
+  - Comprehensive error handling with status updates
+  - Returns JoinHandle for optional task monitoring
+
+**Architectural Changes:**
+- Wrapped Database, Config, and Vec<NntpPool> in Arc for sharing across tasks
+- Updated UsenetDownloader struct to use Arc<Database>, Arc<Config>, Arc<Vec<NntpPool>>
+- Modified constructor to wrap values in Arc
+- Updated test helper to wrap values in Arc
+
+**Implementation Details:**
+- Spawns async task with tokio::spawn()
+- Updates status to Downloading and records start time
+- Fetches pending articles using db.get_pending_articles()
+- Iterates through articles sequentially (parallel downloading in future tasks)
+- Uses first NNTP pool (multi-server failover planned for future)
+- Calculates progress based on bytes downloaded vs total size
+- Updates database progress after each article
+- Handles failures by marking article as FAILED and entire download as Failed
+- Marks download as Complete when all articles are downloaded
+- All status changes use Status::*.to_i32() for database storage
+
+**Technical Notes:**
+- Returns JoinHandle<Result<()>> for optional awaiting
+- Task runs independently - non-blocking to caller
+- Database and pools shared via Arc cloning (thread-safe)
+- Progress calculation handles both byte-based and article-count-based tracking
+- Speed calculation placeholder (TODO for Task 4.8)
+- Retry logic placeholder (TODO for Tasks 8.1-8.6)
+- Multi-server failover placeholder (future enhancement)
+
+**Test Coverage:**
+- All 45 existing tests still passing
+- Code compiles successfully with no errors
+- Test helper updated to use Arc wrapping
+- Ready for integration with queue management (Tasks 5.1-5.9)
+
+## Previous Completed Iterations
 
 **Phase 1 Download Manager - Task 4.5 Complete: add_nzb() Implementation**
 
