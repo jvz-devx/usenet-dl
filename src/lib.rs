@@ -515,6 +515,296 @@ impl UsenetDownloader {
         self.add_nzb_content(&content, &name, options).await
     }
 
+    /// Start the queue processor task
+    ///
+    /// This method spawns a background task that continuously:
+    /// 1. Waits for the next download in the priority queue
+    /// 2. Acquires a permit from the concurrency limiter (respects max_concurrent_downloads)
+    /// 3. Spawns a download task for that download
+    /// 4. Repeats until shutdown
+    ///
+    /// The queue processor ensures downloads are started in priority order and
+    /// respects the configured concurrency limit.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `tokio::task::JoinHandle` for the processor task. The task runs
+    /// indefinitely until the queue is empty and no more downloads are added.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader) -> Result<()> {
+    /// // Start the queue processor
+    /// let processor_handle = downloader.start_queue_processor();
+    ///
+    /// // Add downloads to the queue
+    /// // ...
+    ///
+    /// // Queue processor will automatically spawn downloads
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn start_queue_processor(&self) -> tokio::task::JoinHandle<()> {
+        let queue = self.queue.clone();
+        let concurrent_limit = self.concurrent_limit.clone();
+        let db = self.db.clone();
+        let event_tx = self.event_tx.clone();
+        let nntp_pools = self.nntp_pools.clone();
+        let config = self.config.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // Get the next download from the queue
+                let download_id = {
+                    let mut queue_guard = queue.lock().await;
+                    queue_guard.pop().map(|item| item.id)
+                };
+
+                if let Some(id) = download_id {
+                    // Acquire a permit from the semaphore (blocks if at max concurrent downloads)
+                    // Clone the permit Arc so it's held for the duration of the download
+                    let permit = concurrent_limit.clone().acquire_owned().await;
+
+                    // Check if permit acquisition failed (should be Ok unless semaphore is closed)
+                    let permit = match permit {
+                        Ok(p) => p,
+                        Err(_) => {
+                            // Semaphore closed, exit processor
+                            break;
+                        }
+                    };
+
+                    // Clone dependencies for the download task
+                    let db_clone = db.clone();
+                    let event_tx_clone = event_tx.clone();
+                    let nntp_pools_clone = nntp_pools.clone();
+                    let config_clone = config.clone();
+
+                    // Spawn the download task
+                    tokio::spawn(async move {
+                        // Permit is held for the entire duration of this task
+                        let _permit = permit;
+
+                        // Fetch download record
+                        let download = match db_clone.get_download(id).await {
+                            Ok(Some(d)) => d,
+                            Ok(None) => {
+                                tracing::warn!(download_id = id, "Download not found in database");
+                                return;
+                            }
+                            Err(e) => {
+                                tracing::error!(download_id = id, error = %e, "Failed to fetch download");
+                                return;
+                            }
+                        };
+
+                        // Update status to Downloading and record start time
+                        if let Err(e) = db_clone.update_status(id, Status::Downloading.to_i32()).await {
+                            tracing::error!(download_id = id, error = %e, "Failed to update status");
+                            return;
+                        }
+                        if let Err(e) = db_clone.set_started(id).await {
+                            tracing::error!(download_id = id, error = %e, "Failed to set start time");
+                            return;
+                        }
+
+                        // Emit Downloading event (initial progress 0%)
+                        event_tx_clone
+                            .send(Event::Downloading {
+                                id,
+                                percent: 0.0,
+                                speed_bps: 0,
+                            })
+                            .ok();
+
+                        // Get all pending articles
+                        let pending_articles = match db_clone.get_pending_articles(id).await {
+                            Ok(articles) => articles,
+                            Err(e) => {
+                                tracing::error!(download_id = id, error = %e, "Failed to get pending articles");
+                                return;
+                            }
+                        };
+
+                        if pending_articles.is_empty() {
+                            // No articles to download - mark as complete
+                            event_tx_clone
+                                .send(Event::DownloadComplete { id })
+                                .ok();
+                            return;
+                        }
+
+                        let total_articles = pending_articles.len();
+                        let total_size_bytes = download.size_bytes as u64;
+                        let mut downloaded_articles = 0;
+                        let mut downloaded_bytes: u64 = 0;
+
+                        // Track download start time for speed calculation
+                        let download_start = std::time::Instant::now();
+
+                        // Create temp directory for this download
+                        let download_temp_dir = config_clone.temp_dir.join(format!("download_{}", id));
+                        if let Err(e) = tokio::fs::create_dir_all(&download_temp_dir).await {
+                            tracing::error!(download_id = id, error = %e, "Failed to create temp directory");
+                            let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                            let _ = db_clone.set_error(id, &format!("Failed to create temp directory: {}", e)).await;
+                            event_tx_clone
+                                .send(Event::DownloadFailed {
+                                    id,
+                                    error: format!("Failed to create temp directory: {}", e),
+                                })
+                                .ok();
+                            return;
+                        }
+
+                        // Download each article
+                        for article in pending_articles {
+                            // Get a connection from the first NNTP pool
+                            // TODO: Add multi-server failover in future tasks
+                            let pool = match nntp_pools_clone.first() {
+                                Some(p) => p,
+                                None => {
+                                    tracing::error!(download_id = id, "No NNTP pools configured");
+                                    let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                                    let _ = db_clone.set_error(id, "No NNTP pools configured").await;
+                                    event_tx_clone
+                                        .send(Event::DownloadFailed {
+                                            id,
+                                            error: "No NNTP pools configured".to_string(),
+                                        })
+                                        .ok();
+                                    return;
+                                }
+                            };
+
+                            let mut conn = match pool.get().await {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::error!(download_id = id, error = %e, "Failed to get NNTP connection");
+                                    let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                                    let _ = db_clone.set_error(id, &format!("Failed to get NNTP connection: {}", e)).await;
+                                    event_tx_clone
+                                        .send(Event::DownloadFailed {
+                                            id,
+                                            error: format!("Failed to get NNTP connection: {}", e),
+                                        })
+                                        .ok();
+                                    return;
+                                }
+                            };
+
+                            // Fetch the article from the server
+                            match conn.fetch_article(&article.message_id).await {
+                                Ok(response) => {
+                                    // Save article content to temp directory
+                                    let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
+
+                                    // Join response lines into single string for storage
+                                    let article_content = response.lines.join("\n");
+                                    if let Err(e) = tokio::fs::write(&article_file, article_content.as_bytes()).await {
+                                        tracing::error!(download_id = id, error = %e, "Failed to write article file");
+                                        let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                                        let _ = db_clone.set_error(id, &format!("Failed to write article file: {}", e)).await;
+                                        event_tx_clone
+                                            .send(Event::DownloadFailed {
+                                                id,
+                                                error: format!("Failed to write article file: {}", e),
+                                            })
+                                            .ok();
+                                        return;
+                                    }
+
+                                    // Mark article as downloaded
+                                    if let Err(e) = db_clone.update_article_status(
+                                        article.id,
+                                        crate::db::article_status::DOWNLOADED,
+                                    ).await {
+                                        tracing::error!(download_id = id, error = %e, "Failed to update article status");
+                                        continue;
+                                    }
+
+                                    downloaded_articles += 1;
+                                    downloaded_bytes += article.size_bytes as u64;
+
+                                    // Calculate progress percentage
+                                    let progress_percent = if total_size_bytes > 0 {
+                                        (downloaded_bytes as f32 / total_size_bytes as f32) * 100.0
+                                    } else {
+                                        (downloaded_articles as f32 / total_articles as f32) * 100.0
+                                    };
+
+                                    // Calculate download speed (bytes per second)
+                                    let elapsed_secs = download_start.elapsed().as_secs_f64();
+                                    let speed_bps = if elapsed_secs > 0.0 {
+                                        (downloaded_bytes as f64 / elapsed_secs) as u64
+                                    } else {
+                                        0
+                                    };
+
+                                    // Update progress in database
+                                    if let Err(e) = db_clone.update_progress(
+                                        id,
+                                        progress_percent,
+                                        speed_bps,
+                                        downloaded_bytes,
+                                    ).await {
+                                        tracing::error!(download_id = id, error = %e, "Failed to update progress");
+                                    }
+
+                                    // Emit progress event
+                                    event_tx_clone
+                                        .send(Event::Downloading {
+                                            id,
+                                            percent: progress_percent,
+                                            speed_bps,
+                                        })
+                                        .ok();
+                                }
+                                Err(e) => {
+                                    // Mark article as failed
+                                    let _ = db_clone.update_article_status(article.id, crate::db::article_status::FAILED).await;
+
+                                    // For now, fail the entire download on first article failure
+                                    // TODO: Add retry logic in Tasks 8.1-8.6
+                                    tracing::error!(download_id = id, error = %e, "Article fetch failed");
+                                    let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                                    let _ = db_clone.set_error(id, &format!("Article fetch failed: {}", e)).await;
+
+                                    event_tx_clone
+                                        .send(Event::DownloadFailed {
+                                            id,
+                                            error: format!("Article fetch failed: {}", e),
+                                        })
+                                        .ok();
+
+                                    return;
+                                }
+                            }
+                        }
+
+                        // All articles downloaded successfully
+                        if let Err(e) = db_clone.update_status(id, Status::Complete.to_i32()).await {
+                            tracing::error!(download_id = id, error = %e, "Failed to mark download complete");
+                            return;
+                        }
+                        if let Err(e) = db_clone.set_completed(id).await {
+                            tracing::error!(download_id = id, error = %e, "Failed to set completion time");
+                        }
+
+                        event_tx_clone
+                            .send(Event::DownloadComplete { id })
+                            .ok();
+                    });
+                } else {
+                    // Queue is empty, wait a bit before checking again
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+        })
+    }
+
     /// Spawn a download task for a queued download
     ///
     /// This method spawns an asynchronous task that:

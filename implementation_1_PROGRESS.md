@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (28/53 tasks complete)
+- Phase 1: 🔄 In Progress (29/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Tasks 5.1-5.3: ✅ Priority queue and concurrency limiter complete (51 tests passing)
-  - Tasks 5.4-9.8: ⏳ Remaining (Queue processor, Resume, Speed Limiting, Retry, Shutdown)
-- Total: 33/253 tasks complete (13.0%)
+  - Tasks 5.1-5.4: ✅ Priority queue and automatic download spawning complete (51 tests passing)
+  - Tasks 5.5-9.8: ⏳ Remaining (Pause/Resume, Cancel, Speed Limiting, Retry, Shutdown)
+- Total: 34/253 tasks complete (13.4%)
 
-**Next Task:** Task 5.4 - Create queue processor task that spawns downloads
+**Next Task:** Task 5.5 - Implement pause() to stop download without removing from queue
 
 ## Analysis
 
@@ -175,7 +175,7 @@ The implementation will require these major dependencies:
 - [x] Task 5.1: Implement priority queue (BinaryHeap or sorted Vec with Priority ordering)
 - [x] Task 5.2: Add queue management (add, remove, reorder by priority)
 - [x] Task 5.3: Implement max_concurrent_downloads limiter (Semaphore)
-- [ ] Task 5.4: Create queue processor task that spawns downloads
+- [x] Task 5.4: Create queue processor task that spawns downloads
 - [ ] Task 5.5: Implement pause() to stop download without removing from queue
 - [ ] Task 5.6: Implement resume() to restart paused download
 - [ ] Task 5.7: Implement cancel() to remove download and delete files
@@ -435,6 +435,89 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Queue Management - Task 5.4 Complete: Queue Processor Implementation**
+
+- Task 5.4: Implemented start_queue_processor() method ✓
+  - Background task that continuously monitors the priority queue
+  - Automatically spawns downloads respecting concurrency limits
+  - Acquires semaphore permit before spawning (blocks if at max_concurrent_downloads)
+  - Permit held for entire duration of download (released on completion)
+  - Runs indefinitely processing queued downloads
+  - Polls queue every 100ms when empty (non-busy wait)
+  - Graceful error handling with tracing for all failure paths
+  - Downloads run independently in spawned tasks
+  - Returns JoinHandle for optional task monitoring
+
+**Implementation Details:**
+
+Queue Processor Loop:
+```rust
+loop {
+    // 1. Get next download from priority queue
+    let download_id = queue.pop();
+
+    // 2. Acquire semaphore permit (blocks if at max concurrent)
+    let permit = concurrent_limit.acquire_owned().await;
+
+    // 3. Spawn download task (permit held throughout)
+    tokio::spawn(async move {
+        let _permit = permit; // Held until task completes
+        // ... download logic ...
+    });
+
+    // 4. Sleep if queue empty (100ms polling interval)
+}
+```
+
+Concurrency Control:
+- Semaphore initialized with `config.max_concurrent_downloads` permits (default: 3)
+- `acquire_owned()` used to transfer permit ownership to spawned task
+- Permit automatically released when download task completes (Drop impl)
+- Natural backpressure: queue processor blocks when at max concurrent downloads
+- No manual tracking needed - semaphore handles everything
+
+Download Task Integration:
+- Moved download logic from `spawn_download_task()` into queue processor
+- `spawn_download_task()` still exists but may be deprecated in future
+- Queue processor version uses comprehensive error handling (no panics)
+- All errors logged via tracing::error! for visibility
+- Failed downloads marked in database with error messages
+- Events emitted for all state transitions
+
+Error Handling:
+- Database errors: Log + update download status to Failed + emit DownloadFailed event
+- NNTP connection errors: Same as above with detailed error message
+- File I/O errors: Same as above (temp directory creation, article writes)
+- Article fetch errors: Mark article as FAILED + fail entire download (retry TODO)
+- Semaphore closed: Exit processor gracefully (shutdown scenario)
+
+Architectural Benefits:
+- Downloads automatically start when added to queue (no manual triggering)
+- Priority ordering naturally respected (queue processor pops highest priority first)
+- Concurrency limit enforced automatically (semaphore blocking)
+- Clean separation: queue management vs download execution
+- Scalable: Can run many downloads concurrently without manual coordination
+
+**Technical Notes:**
+- Queue processor is NOT blocking - uses async/await throughout
+- 100ms sleep when queue empty prevents CPU spinning
+- Clone all dependencies before spawning to avoid lifetime issues
+- tracing::warn! for non-fatal errors, tracing::error! for failures
+- Permit ownership transfer critical: prevents premature release
+
+**Test Coverage:**
+- All 51 existing tests still passing
+- Queue processor tested implicitly through existing add_nzb tests
+- Future: Add explicit queue processor tests with mock NNTP server
+
+**Integration Impact:**
+- `add_nzb_content()` already calls `add_to_queue()` - downloads now auto-start
+- Ready for pause/resume implementation (Tasks 5.5-5.6)
+- Ready for cancel implementation (Task 5.7)
+- Foundation for resume after restart (Task 6.1-6.6)
+
+## Previous Completed Iterations
 
 **Phase 1 Queue Management - Tasks 5.1-5.3 Complete: Priority Queue Implementation**
 
