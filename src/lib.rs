@@ -151,7 +151,7 @@ impl UsenetDownloader {
             std::collections::HashMap::new()
         ));
 
-        Ok(Self {
+        let downloader = Self {
             db: std::sync::Arc::new(db),
             event_tx,
             config: std::sync::Arc::new(config),
@@ -159,7 +159,12 @@ impl UsenetDownloader {
             queue,
             concurrent_limit,
             active_downloads,
-        })
+        };
+
+        // Restore any incomplete downloads from database (from previous session)
+        downloader.restore_queue().await?;
+
+        Ok(downloader)
     }
 
     /// Subscribe to download events
@@ -512,6 +517,96 @@ impl UsenetDownloader {
 
             Ok(())
         }
+    }
+
+    /// Restore incomplete downloads from database on startup
+    ///
+    /// This method is called automatically during initialization to restore
+    /// any downloads that were in progress when the application last shut down.
+    ///
+    /// The restoration process:
+    /// 1. Queries database for downloads with status: Queued, Downloading, or Processing
+    /// 2. For downloads in Downloading or Processing state, calls resume_download()
+    /// 3. For downloads in Queued state, adds them back to the priority queue
+    ///
+    /// Downloads with status Complete or Failed are not restored (they're in history).
+    /// Paused downloads are also not restored (user explicitly paused them).
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if restoration succeeds, or an error if:
+    /// - Database query fails
+    /// - Resume operation fails for any download
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example() -> Result<()> {
+    /// // restore_queue() is called automatically in UsenetDownloader::new()
+    /// let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// // Queue is now restored from previous session
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn restore_queue(&self) -> Result<()> {
+        tracing::info!("Restoring queue from database");
+
+        // Get all incomplete downloads (status IN (0=Queued, 1=Downloading, 3=Processing))
+        let incomplete_downloads = self.db.get_incomplete_downloads().await?;
+
+        if incomplete_downloads.is_empty() {
+            tracing::info!("No incomplete downloads to restore");
+            return Ok(());
+        }
+
+        tracing::info!(
+            count = incomplete_downloads.len(),
+            "Found incomplete downloads to restore"
+        );
+
+        // Store count before iterating
+        let restore_count = incomplete_downloads.len();
+
+        // Process each download based on its status
+        for download in incomplete_downloads {
+            let status = Status::from_i32(download.status);
+
+            match status {
+                Status::Downloading | Status::Processing => {
+                    // These were actively running - resume them
+                    tracing::info!(
+                        download_id = download.id,
+                        status = ?status,
+                        "Resuming interrupted download"
+                    );
+                    self.resume_download(download.id).await?;
+                }
+                Status::Queued => {
+                    // These were waiting in queue - add back to queue
+                    tracing::info!(
+                        download_id = download.id,
+                        "Re-adding queued download to priority queue"
+                    );
+                    self.add_to_queue(download.id).await?;
+                }
+                _ => {
+                    // Shouldn't happen (get_incomplete_downloads filters by status)
+                    tracing::warn!(
+                        download_id = download.id,
+                        status = ?status,
+                        "Unexpected download status during restore - skipping"
+                    );
+                }
+            }
+        }
+
+        tracing::info!(
+            restored_count = restore_count,
+            "Queue restoration complete"
+        );
+
+        Ok(())
     }
 
     /// Cancel a download and delete its files
@@ -2928,5 +3023,257 @@ mod tests {
             matches!(event, Event::Verifying { id } if id == download_id),
             "Should emit Verifying event when no pending articles"
         );
+    }
+
+    // Task 6.3: restore_queue() tests
+
+    #[tokio::test]
+    async fn test_restore_queue_with_no_incomplete_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Restore queue with empty database
+        downloader.restore_queue().await.unwrap();
+
+        // Queue should remain empty
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 0, "Queue should be empty when no incomplete downloads");
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_with_queued_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add multiple downloads with different priorities
+        let id1 = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "download1",
+                DownloadOptions {
+                    priority: Priority::Low,
+                    ..Default::default()
+                }
+            )
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "download2",
+                DownloadOptions {
+                    priority: Priority::High,
+                    ..Default::default()
+                }
+            )
+            .await
+            .unwrap();
+
+        // Clear the queue (simulating a restart)
+        downloader.queue.lock().await.clear();
+
+        // Restore queue
+        downloader.restore_queue().await.unwrap();
+
+        // Queue should have both downloads restored
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 2, "Queue should have 2 downloads restored");
+
+        // Verify priority ordering (High priority should be first)
+        let next = downloader.queue.lock().await.pop().unwrap();
+        assert_eq!(next.id, id2, "High priority download should be first");
+        assert_eq!(next.priority, Priority::High);
+
+        let next = downloader.queue.lock().await.pop().unwrap();
+        assert_eq!(next.id, id1, "Low priority download should be second");
+        assert_eq!(next.priority, Priority::Low);
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_with_downloading_status() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Manually set status to Downloading (simulating interrupted download)
+        downloader.db.update_status(download_id, Status::Downloading.to_i32()).await.unwrap();
+
+        // Clear the queue
+        downloader.queue.lock().await.clear();
+
+        // Restore queue
+        downloader.restore_queue().await.unwrap();
+
+        // Download should be back in queue with Queued status (resume_download does this)
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            Status::from_i32(download.status),
+            Status::Queued,
+            "Download status should be Queued after restore"
+        );
+
+        // Queue should contain the download
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 1, "Queue should have 1 download");
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_with_processing_status() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download and mark all articles as downloaded
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark all articles as downloaded
+        let articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+        for article in articles {
+            downloader.db.update_article_status(
+                article.id,
+                crate::db::article_status::DOWNLOADED
+            ).await.unwrap();
+        }
+
+        // Manually set status to Processing (simulating interrupted post-processing)
+        downloader.db.update_status(download_id, Status::Processing.to_i32()).await.unwrap();
+
+        // Clear the queue
+        downloader.queue.lock().await.clear();
+
+        // Restore queue
+        downloader.restore_queue().await.unwrap();
+
+        // Download should still be in Processing status (ready for post-processing)
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            Status::from_i32(download.status),
+            Status::Processing,
+            "Download status should remain Processing after restore"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_skips_completed_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download and mark as complete
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        downloader.db.update_status(download_id, Status::Complete.to_i32()).await.unwrap();
+
+        // Clear the queue
+        downloader.queue.lock().await.clear();
+
+        // Restore queue
+        downloader.restore_queue().await.unwrap();
+
+        // Queue should be empty (completed downloads not restored)
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 0, "Queue should be empty (completed downloads not restored)");
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_skips_failed_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download and mark as failed
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        downloader.db.update_status(download_id, Status::Failed.to_i32()).await.unwrap();
+
+        // Clear the queue
+        downloader.queue.lock().await.clear();
+
+        // Restore queue
+        downloader.restore_queue().await.unwrap();
+
+        // Queue should be empty (failed downloads not restored)
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 0, "Queue should be empty (failed downloads not restored)");
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_skips_paused_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download and pause it
+        let download_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        downloader.pause(download_id).await.unwrap();
+
+        // Clear the queue
+        downloader.queue.lock().await.clear();
+
+        // Restore queue
+        downloader.restore_queue().await.unwrap();
+
+        // Queue should be empty (paused downloads not restored - user explicitly paused them)
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 0, "Queue should be empty (paused downloads not restored)");
+
+        // Status should still be Paused
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            Status::from_i32(download.status),
+            Status::Paused,
+            "Paused downloads should remain paused"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restore_queue_called_on_startup() {
+        // Create a database with incomplete downloads
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        // Create first downloader instance and add downloads
+        {
+            let config = Config {
+                database_path: db_path.clone(),
+                servers: vec![],
+                max_concurrent_downloads: 3,
+                ..Default::default()
+            };
+            let downloader = UsenetDownloader::new(config).await.unwrap();
+
+            // Add downloads
+            downloader
+                .add_nzb_content(SAMPLE_NZB.as_bytes(), "download1", DownloadOptions::default())
+                .await
+                .unwrap();
+            downloader
+                .add_nzb_content(SAMPLE_NZB.as_bytes(), "download2", DownloadOptions::default())
+                .await
+                .unwrap();
+
+            // downloader is dropped here (simulating shutdown)
+        }
+
+        // Create new downloader instance (simulating restart)
+        let config = Config {
+            database_path: db_path.clone(),
+            servers: vec![],
+            max_concurrent_downloads: 3,
+            ..Default::default()
+        };
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Queue should be automatically restored (new() calls restore_queue())
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 2, "Queue should be restored on startup");
     }
 }
