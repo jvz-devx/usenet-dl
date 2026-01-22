@@ -3276,4 +3276,123 @@ mod tests {
         let queue_size = downloader.queue.lock().await.len();
         assert_eq!(queue_size, 2, "Queue should be restored on startup");
     }
+
+    #[tokio::test]
+    async fn test_resume_after_simulated_crash() {
+        // Task 6.6: Test resume after simulated crash (kill process mid-download)
+        //
+        // This test simulates a crash by:
+        // 1. Starting a download
+        // 2. Marking some articles as downloaded (simulating partial progress)
+        // 3. Setting status to Downloading (simulating crash mid-download)
+        // 4. Dropping the downloader (simulating process termination)
+        // 5. Creating a new downloader instance (simulating restart)
+        // 6. Verifying that restore_queue() correctly resumes the download
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        let download_id;
+        let total_articles;
+
+        // Simulate crash scenario
+        {
+            let config = Config {
+                database_path: db_path.clone(),
+                servers: vec![],
+                max_concurrent_downloads: 3,
+                ..Default::default()
+            };
+            let downloader = UsenetDownloader::new(config).await.unwrap();
+
+            // Add a download
+            download_id = downloader
+                .add_nzb_content(SAMPLE_NZB.as_bytes(), "crash_test", DownloadOptions::default())
+                .await
+                .unwrap();
+
+            // Get all articles
+            let articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+            total_articles = articles.len();
+            assert!(total_articles > 1, "Need at least 2 articles for this test");
+
+            // Mark half of the articles as downloaded (simulating partial progress)
+            let articles_to_download = total_articles / 2;
+            for (i, article) in articles.iter().enumerate() {
+                if i < articles_to_download {
+                    downloader.db.update_article_status(
+                        article.id,
+                        crate::db::article_status::DOWNLOADED
+                    ).await.unwrap();
+                }
+            }
+
+            // Set status to Downloading (simulating crash mid-download)
+            downloader.db.update_status(download_id, Status::Downloading.to_i32()).await.unwrap();
+
+            // Set some progress to verify it's preserved
+            let progress = 50.0;
+            let speed = 1000000u64; // 1 MB/s
+            let downloaded_bytes = 524288u64; // 512 KB
+            downloader.db.update_progress(download_id, progress, speed, downloaded_bytes).await.unwrap();
+
+            // Simulate crash by dropping downloader (no graceful shutdown)
+            // downloader is dropped here
+        }
+
+        // Simulate restart by creating a new downloader instance
+        let config = Config {
+            database_path: db_path.clone(),
+            servers: vec![],
+            max_concurrent_downloads: 3,
+            ..Default::default()
+        };
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Verify the download was restored
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+
+        // Status should be Queued (resume_download sets it back to Queued)
+        assert_eq!(
+            Status::from_i32(download.status),
+            Status::Queued,
+            "Download should be Queued after restore"
+        );
+
+        // Progress should be preserved from before crash
+        assert_eq!(
+            download.progress, 50.0,
+            "Download progress should be preserved after crash"
+        );
+
+        // Downloaded bytes should be preserved
+        assert_eq!(
+            download.downloaded_bytes, 524288,
+            "Downloaded bytes should be preserved after crash"
+        );
+
+        // Queue should contain the download
+        let queue_size = downloader.queue.lock().await.len();
+        assert_eq!(queue_size, 1, "Queue should have 1 download after restore");
+
+        // Verify that only pending articles remain
+        let pending_articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+        let expected_pending = total_articles - (total_articles / 2);
+        assert_eq!(
+            pending_articles.len(),
+            expected_pending,
+            "Only undownloaded articles should be pending"
+        );
+
+        // Verify that downloaded articles are marked correctly
+        let downloaded_count = downloader.db.count_articles_by_status(
+            download_id,
+            crate::db::article_status::DOWNLOADED
+        ).await.unwrap();
+        assert_eq!(
+            downloaded_count as usize,
+            total_articles / 2,
+            "Downloaded articles count should match"
+        );
+    }
 }
