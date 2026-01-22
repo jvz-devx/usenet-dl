@@ -15,9 +15,11 @@ use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 pub mod auth;
+pub mod openapi;
 pub mod routes;
 pub mod state;
 
+pub use openapi::ApiDoc;
 pub use state::AppState;
 
 /// Create the API router with all route definitions

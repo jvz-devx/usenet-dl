@@ -26,12 +26,12 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (11/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (12/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
-  - Tasks 18.1-18.3: ✅ OpenAPI dependencies added, 33 types annotated with ToSchema, all 37 route handlers annotated
-- Total: 120/253 tasks complete (47.4%)
+  - Tasks 18.1-18.4: ✅ OpenAPI integration complete - 33 types annotated, 37 routes annotated, ApiDoc struct created with 8 tests
+- Total: 121/253 tasks complete (47.8%)
 
-**Next Task:** Task 18.4 - Create ApiDoc struct with #[derive(OpenApi)]
+**Next Task:** Task 18.5 - Implement /openapi.json endpoint serving OpenAPI spec
 
 ## Analysis
 
@@ -293,7 +293,7 @@ The implementation will require these major dependencies:
 - [x] Task 18.1: Add utoipa and utoipa-swagger-ui dependencies
 - [x] Task 18.2: Annotate all types with #[derive(ToSchema)]
 - [x] Task 18.3: Annotate all route handlers with #[utoipa::path]
-- [ ] Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]
+- [x] Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]
 - [ ] Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec
 - [ ] Task 18.6: Mount Swagger UI at /swagger-ui
 - [ ] Task 18.7: Test Swagger UI loads and shows all endpoints
@@ -4118,3 +4118,110 @@ The OpenAPI specification will automatically generate JSON Schema for all these 
 - Request/response validation
 - Type-safe API consumption
 
+
+---
+
+## Completed This Iteration (Ralph)
+
+**Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]**
+
+### Summary
+
+Created comprehensive OpenAPI documentation structure (`src/api/openapi.rs`) that ties together all annotated types and route handlers into a complete OpenAPI 3.1 specification. The ApiDoc struct serves as the central definition for generating the OpenAPI JSON spec and Swagger UI.
+
+### Implementation Details
+
+**File Created:**
+- `src/api/openapi.rs` - Complete OpenAPI documentation module
+
+**Key Components:**
+
+1. **ApiDoc Struct:**
+   - Annotated with `#[derive(OpenApi)]`
+   - Includes all 37 route handlers from `src/api/routes.rs`
+   - Includes all 33 ToSchema-annotated types
+   - Defines 9 API tags (downloads, queue, history, servers, config, categories, system, rss, scheduler)
+
+2. **Security Configuration:**
+   - Implemented `SecurityAddon` to add API key authentication scheme
+   - Defines `X-Api-Key` header authentication for optional API security
+
+3. **API Information:**
+   - Title: "usenet-dl REST API"
+   - Version: "0.1.0"
+   - Description with full API overview
+   - License: MIT OR Apache-2.0
+   - Server URL: http://localhost:6789/api/v1
+
+4. **Comprehensive Testing:**
+   - 8 unit tests covering all aspects of OpenAPI generation
+   - Tests validate paths, components, tags, security schemes, and JSON serialization
+
+### Routes Included (37 total)
+
+**Downloads (10):** list_downloads, get_download, add_download, add_download_url, pause_download, resume_download, delete_download, set_download_priority, reprocess_download, reextract_download
+
+**Queue (3):** pause_queue, resume_queue, queue_stats
+
+**History (2):** get_history, clear_history
+
+**Servers (2):** test_server, test_all_servers
+
+**Config (4):** get_config, update_config, get_speed_limit, set_speed_limit
+
+**Categories (3):** list_categories, create_or_update_category, delete_category
+
+**System (4):** health_check, openapi_spec, event_stream, shutdown
+
+**RSS (5):** list_rss_feeds, add_rss_feed, update_rss_feed, delete_rss_feed, check_rss_feed
+
+**Scheduler (4):** list_schedule_rules, add_schedule_rule, update_schedule_rule, delete_schedule_rule
+
+### Types Included (33 total)
+
+**Core Types (7):** Status, Priority, Stage, ArchiveType, DownloadInfo, DownloadOptions, HistoryEntry
+
+**Config Types (26):** Config, ServerConfig, RetryConfig, PostProcess, FailedDownloadAction, ExtractionConfig, FileCollisionAction, DeobfuscationConfig, DuplicateConfig, DuplicateAction, DuplicateMethod, DiskSpaceConfig, CleanupConfig, ApiConfig, RateLimitConfig, ScheduleRule, ScheduleAction, Weekday, WatchFolderConfig, WatchFolderAction, WebhookConfig, WebhookEvent, ScriptConfig, ScriptEvent, CategoryConfig
+
+### Module Integration
+
+Updated `src/api/mod.rs`:
+```rust
+pub mod openapi;
+pub use openapi::ApiDoc;
+```
+
+### Validation
+
+**Compilation:**
+```bash
+$ cargo check --lib
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.97s
+```
+✅ Compiles successfully
+
+**Tests:**
+```bash
+$ cargo test --lib api::openapi
+running 8 tests
+test api::openapi::tests::test_openapi_doc_generation ... ok
+test api::openapi::tests::test_openapi_spec_has_components ... ok
+test api::openapi::tests::test_openapi_spec_has_paths ... ok
+test api::openapi::tests::test_openapi_spec_has_security_scheme ... ok
+test api::openapi::tests::test_openapi_spec_has_tags ... ok
+test api::openapi::tests::test_openapi_spec_info ... ok
+test api::openapi::tests::test_openapi_spec_version ... ok
+test api::openapi::tests::test_openapi_json_serialization ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored
+```
+✅ All 8 tests passing
+
+### Next Steps
+
+The ApiDoc struct is now ready to be used in:
+- **Task 18.5:** Implement /openapi.json endpoint to serve the generated spec
+- **Task 18.6:** Mount Swagger UI at /swagger-ui using the spec
+- **Task 18.7:** Test that Swagger UI loads and displays all endpoints
+
+The OpenAPI specification can now be accessed programmatically via `ApiDoc::openapi()` and serialized to JSON for serving over HTTP.
