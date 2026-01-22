@@ -52,6 +52,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod speed_limiter;
 pub mod types;
 
 // Re-export commonly used types
@@ -80,6 +81,8 @@ pub struct UsenetDownloader {
     concurrent_limit: std::sync::Arc<tokio::sync::Semaphore>,
     /// Map of active downloads to their cancellation tokens (for pause/cancel operations)
     active_downloads: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<DownloadId, tokio_util::sync::CancellationToken>>>,
+    /// Global speed limiter shared across all downloads (token bucket algorithm)
+    speed_limiter: speed_limiter::SpeedLimiter,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -151,6 +154,9 @@ impl UsenetDownloader {
             std::collections::HashMap::new()
         ));
 
+        // Create speed limiter with configured limit (or unlimited if not set)
+        let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
+
         let downloader = Self {
             db: std::sync::Arc::new(db),
             event_tx,
@@ -159,6 +165,7 @@ impl UsenetDownloader {
             queue,
             concurrent_limit,
             active_downloads,
+            speed_limiter,
         };
 
         // Restore any incomplete downloads from database (from previous session)
@@ -1626,6 +1633,9 @@ mod tests {
             std::collections::HashMap::new()
         ));
 
+        // Create speed limiter with configured limit
+        let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
+
         let downloader = UsenetDownloader {
             db: std::sync::Arc::new(db),
             event_tx,
@@ -1634,6 +1644,7 @@ mod tests {
             queue,
             concurrent_limit,
             active_downloads,
+            speed_limiter,
         };
 
         (downloader, temp_dir)

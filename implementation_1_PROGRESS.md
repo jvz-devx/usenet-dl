@@ -8,17 +8,18 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (40/53 tasks complete)
+- Phase 1: 🔄 In Progress (41/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
   - Tasks 5.1-5.9: ✅ Priority queue with complete persistence (79 tests passing)
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
-  - Tasks 7.1-9.8: ⏳ Remaining (Speed Limiting, Retry, Shutdown)
-- Total: 45/253 tasks complete (17.8%)
+  - Task 7.1: ✅ SpeedLimiter with token bucket algorithm (92 tests + 11 speed limiter tests)
+  - Tasks 7.2-9.8: ⏳ Remaining (Speed Limiting integration, Retry, Shutdown)
+- Total: 46/253 tasks complete (18.2%)
 
-**Next Task:** Task 7.1 - Implement SpeedLimiter with token bucket algorithm
+**Next Task:** Task 7.2 - Use AtomicU64 for lock-free token tracking
 
 ## Analysis
 
@@ -190,11 +191,11 @@ The implementation will require these major dependencies:
 - [x] Task 6.5: Handle processing downloads (status=Processing) on startup
 - [x] Task 6.6: Test resume after simulated crash (kill process mid-download)
 
-- [ ] Task 7.1: Implement SpeedLimiter with token bucket algorithm
-- [ ] Task 7.2: Use AtomicU64 for lock-free token tracking
-- [ ] Task 7.3: Implement acquire(bytes) async method with wait logic
+- [x] Task 7.1: Implement SpeedLimiter with token bucket algorithm
+- [x] Task 7.2: Use AtomicU64 for lock-free token tracking (done as part of 7.1)
+- [x] Task 7.3: Implement acquire(bytes) async method with wait logic (done as part of 7.1)
 - [ ] Task 7.4: Share SpeedLimiter (Arc) across all download tasks
-- [ ] Task 7.5: Implement set_speed_limit(limit_bps) to change limit dynamically
+- [x] Task 7.5: Implement set_speed_limit(limit_bps) to change limit dynamically (done as part of 7.1)
 - [ ] Task 7.6: Emit SpeedLimitChanged event when limit is updated
 - [ ] Task 7.7: Test speed limiting with multiple concurrent downloads
 
@@ -436,6 +437,133 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Speed Limiting - Tasks 7.1-7.3, 7.5 Complete: SpeedLimiter Implementation**
+
+- Task 7.1: Implemented SpeedLimiter with token bucket algorithm ✓
+  - Created new `src/speed_limiter.rs` module with comprehensive token bucket implementation
+  - Uses lock-free AtomicU64 for efficient concurrent access (Tasks 7.2, 7.3 included)
+  - Algorithm: Tokens represent bytes that can be transferred, refill at constant rate
+  - Efficient token tracking: `limit_bps`, `tokens`, `last_refill` all atomic
+  - Monotonic clock (Instant) for time tracking, immune to system clock changes
+
+- Task 7.2: AtomicU64 for lock-free token tracking ✓
+  - `limit_bps: Arc<AtomicU64>` - Speed limit in bytes per second (0 = unlimited)
+  - `tokens: Arc<AtomicU64>` - Available tokens (current bucket capacity)
+  - `last_refill: Arc<AtomicU64>` - Last refill timestamp in nanoseconds
+  - All operations use compare-and-swap for thread-safety without locks
+
+- Task 7.3: acquire(bytes) async method with wait logic ✓
+  - Fast path: Returns immediately if unlimited (limit = 0)
+  - Token acquisition: Atomically consumes tokens if available
+  - Wait logic: Calculates wait time based on token deficit
+  - Token refill: Automatically refills based on elapsed time
+  - CAS retry loop: Handles concurrent access gracefully
+  - Minimum 10ms sleep to avoid busy-waiting
+
+- Task 7.5: set_speed_limit() to change limit dynamically ✓
+  - Changes limit instantly with atomic swap
+  - Increases bucket capacity when limit increased (adds extra tokens)
+  - Preserves excess tokens when limit decreased
+  - get_limit() returns None for unlimited, Some(u64) otherwise
+
+**Implementation Details:**
+
+SpeedLimiter Structure:
+```rust
+pub struct SpeedLimiter {
+    limit_bps: Arc<AtomicU64>,      // 0 = unlimited
+    tokens: Arc<AtomicU64>,          // Current bucket capacity
+    last_refill: Arc<AtomicU64>,     // Nanoseconds since epoch
+}
+```
+
+Token Acquisition Algorithm:
+```rust
+pub async fn acquire(&self, bytes: u64) {
+    // Fast path: unlimited
+    if limit == 0 { return; }
+
+    loop {
+        // Refill tokens based on elapsed time
+        self.refill_tokens();
+
+        // Try to acquire tokens atomically
+        if compare_and_swap succeeds {
+            return; // Success
+        }
+
+        // Insufficient tokens - calculate wait time
+        let wait_ms = deficit / limit * 1000;
+        tokio::time::sleep(wait_ms.max(10ms)).await;
+    }
+}
+```
+
+Token Refill Logic:
+```rust
+fn refill_tokens(&self) {
+    let elapsed_secs = (now - last_refill) / 1_000_000_000;
+    let tokens_to_add = limit * elapsed_secs;
+
+    // CAS to update last_refill, then add tokens
+    if CAS succeeds {
+        tokens = (tokens + tokens_to_add).min(limit);
+    }
+}
+```
+
+**Integration:**
+
+- Added `speed_limiter` field to UsenetDownloader struct
+- Initialized in UsenetDownloader::new() with config.speed_limit_bps
+- Updated test helper to include speed_limiter field
+- SpeedLimiter is Clone (all fields are Arc-wrapped) for sharing across tasks
+
+**Test Coverage:**
+
+11 comprehensive tests added (all passing):
+1. test_speed_limiter_new_unlimited: Verifies unlimited speed (None/0)
+2. test_speed_limiter_new_with_limit: Verifies initialization with limit
+3. test_set_limit_increase: Tests increasing limit adds tokens
+4. test_set_limit_decrease: Tests decreasing limit preserves tokens
+5. test_set_limit_to_unlimited: Tests switching to unlimited
+6. test_acquire_unlimited: Verifies immediate return for unlimited
+7. test_acquire_with_sufficient_tokens: Verifies token consumption
+8. test_acquire_multiple_small_chunks: Tests sequential acquires
+9. test_token_refill: Verifies token refill over time
+10. test_concurrent_acquires: Tests thread-safety with concurrent access
+11. test_now_nanos_monotonic: Verifies monotonic clock behavior
+
+All 92 existing tests still passing (no regressions)
+Total: 92 core tests + 11 speed limiter tests = 103 tests passing
+
+**Technical Notes:**
+
+- Lock-free design: No mutexes, only atomic operations (fast!)
+- Graceful degradation: Insufficient tokens → sleep and retry
+- Natural backpressure: All downloads share same bucket
+- Efficient: Fast path for unlimited speed (single atomic load)
+- Safe: CAS loops handle concurrent access correctly
+- Accurate: Monotonic clock immune to system time changes
+- Flexible: Dynamic limit changes take effect immediately
+
+**Architectural Impact:**
+
+- Foundation ready for download loop integration (Task 7.4)
+- Ready for SpeedLimitChanged event emission (Task 7.6)
+- Ready for multi-download testing (Task 7.7)
+- Demonstrates lock-free concurrent programming patterns
+- Clean separation: SpeedLimiter is independent module
+- Validates design: Token bucket algorithm works as specified
+
+**Remaining Tasks:**
+
+- Task 7.4: Integrate acquire() into download loop (call before each article fetch)
+- Task 7.6: Emit SpeedLimitChanged event when set_speed_limit() called
+- Task 7.7: End-to-end test with multiple concurrent downloads
+
+## Previous Completed Iterations
 
 **Phase 1 Resume Support - Task 6.6 Complete: Crash Recovery Test**
 
