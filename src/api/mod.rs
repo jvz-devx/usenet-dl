@@ -569,4 +569,50 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn test_server_starts_and_responds_to_health() {
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Bind to a random available port (port 0)
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn the API server on the random port
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                bind_address: addr,
+                api_key: None, // No authentication for test
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        let server_downloader = downloader.clone();
+        let server_config = config.clone();
+        let server_handle = tokio::spawn(async move {
+            let app = create_router(server_downloader, server_config);
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Give the server a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Make an HTTP request to /health using reqwest
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/health", addr);
+        let response = client.get(&url).send().await.unwrap();
+
+        // Verify response status
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        // Verify response body
+        let body = response.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+
+        // Shutdown the server
+        server_handle.abort();
+    }
 }

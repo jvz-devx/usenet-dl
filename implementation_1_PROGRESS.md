@@ -26,11 +26,11 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (7/71 tasks) - REST API implementation
-  - Tasks 17.1-17.7: ✅ API server with CORS and authentication middleware complete
-- Total: 116/253 tasks complete (45.8%)
+- Phase 3: 🔄 In Progress (8/71 tasks) - REST API implementation
+  - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
+- Total: 117/253 tasks complete (46.2%)
 
-**Next Task:** Task 17.8 - Test API server starts and responds to /health
+**Next Task:** Task 18.1 - Add utoipa and utoipa-swagger-ui dependencies
 
 ## Analysis
 
@@ -287,7 +287,7 @@ The implementation will require these major dependencies:
 - [x] Task 17.5: Implement API server startup (tokio::spawn api_server)
 - [x] Task 17.6: Add CORS middleware (tower-http CorsLayer)
 - [x] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
-- [ ] Task 17.8: Test API server starts and responds to /health
+- [x] Task 17.8: Test API server starts and responds to /health
 
 - [ ] Task 18.1: Add utoipa and utoipa-swagger-ui dependencies
 - [ ] Task 18.2: Annotate all types with #[derive(ToSchema)]
@@ -3875,3 +3875,92 @@ pub async fn require_api_key(
 - ✅ Ready for next phase (OpenAPI integration)
 
 **Next Task:** Task 17.8 - Test API server starts and responds to /health
+
+## Completed This Iteration (Ralph)
+
+**Task 17.8: Test API server starts and responds to /health**
+
+### Implementation
+
+Added integration test `test_server_starts_and_responds_to_health()` that:
+1. Creates a test downloader instance
+2. Binds to a random available port (127.0.0.1:0)
+3. Spawns the API server using `axum::serve()`
+4. Makes a real HTTP GET request to `/health` using `reqwest`
+5. Validates response status (200 OK)
+6. Validates JSON response body contains `status: "ok"` and correct version
+7. Properly shuts down the server
+
+### Key Differences from Existing Tests
+
+This test differs from `test_health_endpoint()` which only tests the router using `tower::ServiceExt::oneshot()`. This new test:
+- Actually binds to a network port
+- Starts a real HTTP server
+- Makes a real HTTP request over the network
+- Tests the complete server startup flow
+
+### Test Results
+
+```
+running 18 tests
+test api::tests::test_server_starts_and_responds_to_health ... ok
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured
+```
+
+All API tests continue to pass with the new integration test.
+
+### Technical Details
+
+**Test Implementation:**
+```rust
+#[tokio::test]
+async fn test_server_starts_and_responds_to_health() {
+    // Bind to random port
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    // Spawn server
+    let server_handle = tokio::spawn(async move {
+        let app = create_router(server_downloader, server_config);
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Make HTTP request
+    let client = reqwest::Client::new();
+    let response = client.get(&format!("http://{}/health", addr)).send().await.unwrap();
+
+    // Verify response
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+
+    // Cleanup
+    server_handle.abort();
+}
+```
+
+### Validation
+
+- ✅ Server successfully starts on random port
+- ✅ Server accepts HTTP connections
+- ✅ /health endpoint responds correctly
+- ✅ JSON response format matches specification
+- ✅ Version number correctly populated from Cargo.toml (0.1.0)
+- ✅ Server shutdown works cleanly
+
+### Build Status
+
+- ✅ All 18 API tests passing (11 test_* functions)
+- ✅ Compiles cleanly
+- ✅ Server startup and HTTP request flow validated
+- ✅ Ready for next phase (OpenAPI integration)
+
+### Next Steps
+
+Phase 3 continues with OpenAPI integration (Tasks 18.1-18.7) to add:
+- utoipa for OpenAPI schema generation
+- Type annotations with #[derive(ToSchema)]
+- Route annotations with #[utoipa::path]
+- /openapi.json endpoint
+- Swagger UI at /swagger-ui
