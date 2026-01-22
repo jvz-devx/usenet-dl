@@ -137,14 +137,14 @@ The implementation will require these major dependencies:
 - [x] Task 1.3: Implement RetryConfig with exponential backoff logic
 - [x] Task 1.4: Create DownloadInfo, DownloadOptions, HistoryEntry types
 
-- [ ] Task 2.1: Create SQLite schema (downloads, download_articles, passwords, processed_nzbs, history)
-- [ ] Task 2.2: Implement Database struct with sqlx connection pool
+- [x] Task 2.1: Create SQLite schema (downloads, download_articles, passwords, processed_nzbs, history)
+- [x] Task 2.2: Implement Database struct with sqlx connection pool
 - [ ] Task 2.3: Implement CRUD operations for downloads table
 - [ ] Task 2.4: Implement article-level tracking (insert, update, query pending articles)
 - [ ] Task 2.5: Add password cache operations (set_correct_password, get_cached_password)
 - [ ] Task 2.6: Add duplicate detection queries (find_by_nzb_hash, find_by_name, find_by_job_name)
 - [ ] Task 2.7: Implement history operations (insert, query, cleanup)
-- [ ] Task 2.8: Add database migration system (sqlx migrations or embedded SQL)
+- [x] Task 2.8: Add database migration system (sqlx migrations or embedded SQL)
 
 - [ ] Task 3.1: Create Event enum with all event types (Queued, Downloading, Complete, Failed, etc.)
 - [ ] Task 3.2: Implement Stage enum (Download, Verify, Repair, Extract, Move, Cleanup)
@@ -425,23 +425,39 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Phase 1 Core Types - Tasks 1.1-1.4 Complete**
+**Phase 1 Database Schema - Tasks 2.1, 2.2, 2.8 Complete**
 
-- Task 1.1: Core types already implemented (DownloadId, Status, Priority, Stage enums) ✓
-- Task 1.2: Config structure with Default trait already complete with all 40+ settings ✓
-- Task 1.3: RetryConfig with exponential backoff already implemented ✓
-- Task 1.4: Added DownloadInfo, DownloadOptions, and HistoryEntry types to src/types.rs
+- Task 2.1: Created complete SQLite schema with all 5 tables (downloads, download_articles, passwords, processed_nzbs, history) ✓
+- Task 2.2: Implemented Database struct with sqlx connection pool ✓
+- Task 2.8: Added embedded SQL migration system with version tracking ✓
 
-### Discoveries
+### Implementation Details
 
-**Phase 0 Already Complete:** Upon inspection, Phase 0 was already finished in a previous iteration. Tasks 1.1-1.3 were also already implemented during Phase 0 setup.
+**Database Module (src/db.rs):**
+Created a complete database layer with:
+- `Database` struct wrapping SqlitePool for connection management
+- Auto-creation of database file and parent directories
+- Migration system with `schema_version` table for tracking applied migrations
+- Migration v1 creates all 5 tables with proper foreign keys and indexes:
+  - `downloads`: Main download queue with 18 columns including nzb_hash, job_name for duplicate detection
+  - `download_articles`: Article-level tracking for resume support (message_id, segment_number, status)
+  - `passwords`: Password cache for successful archive extractions
+  - `processed_nzbs`: Track processed NZB files for watch folder "Keep" action
+  - `history`: Historical records with completed_at timestamp
+- 8 indexes for query optimization (status, priority, nzb_hash, job_name, articles, history)
+- Full test coverage with 2 passing tests (creation and migration idempotency)
 
-**Task 1.4 Implementation:** Added three key types to support the download queue and history:
-- `DownloadInfo`: Complete download state including progress, speed, ETA, timestamps
-- `DownloadOptions`: Configuration options when adding downloads (category, priority, password, etc.)
-- `HistoryEntry`: Historical records of completed/failed downloads with timing data
+**Error Handling:**
+- Added `Database(String)` error variant for custom error messages
+- Kept `Sqlx(sqlx::Error)` for automatic conversion from sqlx errors
+- All database operations return `Result<T>` with proper error context
 
-All types use proper Rust idioms (DateTime<Utc> from chrono, Duration from std::time) and are fully serializable with serde.
+**Key Design Decisions:**
+1. Embedded migrations (no external .sql files) - simpler deployment
+2. Integer timestamps (Unix epoch) - SQLite-friendly, easy to work with
+3. Cascade deletes on foreign keys - automatic cleanup when download is removed
+4. AUTOINCREMENT on primary keys - prevents ID reuse after deletion
+5. Idempotent migrations - safe to run Database::new() multiple times
 
 ## Notes
 

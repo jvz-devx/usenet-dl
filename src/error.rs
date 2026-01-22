@@ -14,7 +14,11 @@ pub enum Error {
 
     /// Database error
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
+
+    /// SQLx database error
+    #[error("database error: {0}")]
+    Sqlx(#[from] sqlx::Error),
 
     /// NNTP error
     #[error("NNTP error: {0}")]

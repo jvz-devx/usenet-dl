@@ -50,11 +50,13 @@
 #![warn(clippy::all)]
 
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod types;
 
 // Re-export commonly used types
 pub use config::{Config, ServerConfig};
+pub use db::Database;
 pub use error::{Error, Result};
 pub use types::{DownloadId, DownloadInfo, DownloadOptions, HistoryEntry, Priority, Status};
 
