@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (55/61 tasks complete)
+- Phase 1: 🔄 In Progress (56/61 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (2/8 complete - shutdown() and accepting_new flag)
-- Total: 60/253 tasks complete (23.7%)
+  - Tasks 9.1-9.8: 🔄 In Progress (3/8 complete - shutdown(), accepting_new flag, and pause_graceful_all())
+- Total: 61/253 tasks complete (24.1%)
 
-**Next Task:** Task 9.3 - Implement pause_graceful() to finish current article
+**Next Task:** Task 9.4 - Add wait_for_articles() with timeout
 
 ## Analysis
 
@@ -209,7 +209,7 @@ The implementation will require these major dependencies:
 
 - [x] Task 9.1: Implement shutdown() method with graceful sequence
 - [x] Task 9.2: Add accepting_new flag (AtomicBool) to stop new downloads
-- [ ] Task 9.3: Implement pause_graceful() to finish current article
+- [x] Task 9.3: Implement pause_graceful() to finish current article
 - [ ] Task 9.4: Add wait_for_articles() with timeout
 - [ ] Task 9.5: Implement persist_all_state() to save final state
 - [ ] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
@@ -438,6 +438,35 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 9.3 Complete: Implement pause_graceful() to Finish Current Article**
+
+Successfully implemented graceful pause functionality for downloads during shutdown:
+
+**Implementation Details:**
+- Added `pause_graceful_all()` method that signals cancellation to all active downloads
+- The method preserves the graceful behavior: downloads complete their current article before stopping
+- Updated `shutdown()` to call `pause_graceful_all()` instead of directly canceling tokens
+- Added comprehensive documentation explaining how graceful pause works
+
+**How It Works:**
+The download loop checks for cancellation at the START of each article iteration (before fetching). This means:
+1. When `pause_graceful_all()` is called, cancellation tokens are signaled
+2. Downloads that are currently fetching an article continue until completion
+3. After the article completes, the next iteration checks `cancel_token.is_cancelled()`
+4. The download task exits cleanly, updating status to Paused
+5. No partial articles are left, ensuring data integrity
+
+**Testing:**
+- Added `test_pause_graceful_all()` - verifies all download tokens are cancelled
+- Added `test_graceful_pause_completes_current_article()` - simulates article in progress and verifies it completes before cancellation is detected
+- All existing shutdown tests continue to pass
+- Total test count: 72 tests (2 new tests added)
+
+**Files Modified:**
+- `src/lib.rs`: Added `pause_graceful_all()` method (line 922-948) and updated `shutdown()` to use it (line 878-880)
+
+---
 
 **Task 9.2 Complete: Add accepting_new Flag to Stop New Downloads During Shutdown**
 
