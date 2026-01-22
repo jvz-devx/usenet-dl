@@ -26,11 +26,11 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (6/71 tasks) - REST API implementation
-  - Tasks 17.1-17.6: ✅ API server with CORS middleware complete
-- Total: 115/253 tasks complete (45.5%)
+- Phase 3: 🔄 In Progress (7/71 tasks) - REST API implementation
+  - Tasks 17.1-17.7: ✅ API server with CORS and authentication middleware complete
+- Total: 116/253 tasks complete (45.8%)
 
-**Next Task:** Task 17.7 - Add optional authentication middleware (check X-Api-Key header)
+**Next Task:** Task 17.8 - Test API server starts and responds to /health
 
 ## Analysis
 
@@ -286,7 +286,7 @@ The implementation will require these major dependencies:
 - [x] Task 17.4: Create AppState with Arc<UsenetDownloader> for handler access
 - [x] Task 17.5: Implement API server startup (tokio::spawn api_server)
 - [x] Task 17.6: Add CORS middleware (tower-http CorsLayer)
-- [ ] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
+- [x] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
 - [ ] Task 17.8: Test API server starts and responds to /health
 
 - [ ] Task 18.1: Add utoipa and utoipa-swagger-ui dependencies
@@ -3789,4 +3789,89 @@ Ready for Phase 3: REST API implementation.
 4. **Testability**: Port 0 in tests allows OS to assign free port
 5. **Documentation**: Comprehensive docs and examples for public APIs
 
-**Next Task:** Task 17.6 - Add CORS middleware (tower-http CorsLayer)
+## Completed This Iteration
+
+**Task 17.7: Add optional authentication middleware (check X-Api-Key header)**
+
+### Implementation Summary
+
+Created a complete authentication middleware system for the REST API that:
+- ✅ Checks X-Api-Key header on all API requests when ApiConfig::api_key is set
+- ✅ Returns 401 Unauthorized with proper JSON error response for invalid/missing keys
+- ✅ Allows all requests through when no API key is configured (default behavior)
+- ✅ Applied conditionally using Axum's middleware layer system
+- ✅ Fully tested with 7 unit tests + 2 integration tests
+
+### Files Created/Modified
+
+1. **Created: src/api/auth.rs** (240 lines)
+   - `require_api_key()` middleware function
+   - `unauthorized_response()` helper for 401 errors
+   - 7 comprehensive unit tests covering all scenarios
+
+2. **Modified: src/api/mod.rs**
+   - Added auth module export
+   - Applied authentication middleware conditionally before CORS
+   - Added 2 integration tests with the full router
+
+### Test Coverage
+
+All 17 API tests passing (9 new tests for authentication):
+
+**Unit Tests (7):**
+- ✅ No API key configured (passes through)
+- ✅ Valid API key (succeeds)
+- ✅ Invalid API key (401 Unauthorized)
+- ✅ Missing API key (401 Unauthorized)
+- ✅ API key case sensitivity (strict comparison)
+- ✅ Header name case insensitivity (HTTP standard)
+- ✅ Whitespace handling (exact comparison)
+
+**Integration Tests (2):**
+- ✅ Authentication with API key configured (blocks unauthorized requests)
+- ✅ Authentication disabled by default (allows all requests)
+
+### Technical Details
+
+**Middleware Signature:**
+```rust
+pub async fn require_api_key(
+    State(expected_api_key): State<Option<String>>,
+    request: Request,
+    next: Next,
+) -> Response
+```
+
+**Application Order:**
+1. Router routes defined
+2. Authentication middleware applied (if api_key configured)
+3. CORS middleware applied (if cors_enabled)
+4. State attached to all routes
+
+**Error Response Format:**
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Missing X-Api-Key header" | "Invalid API key"
+  }
+}
+```
+
+### Design Decisions
+
+1. **Optional by default**: Authentication is disabled by default (api_key = None) for easy local development
+2. **Middleware order**: Authentication applied before CORS to protect API even from cross-origin requests
+3. **Case-sensitive keys**: API keys are compared strictly for security
+4. **Case-insensitive header**: X-Api-Key, x-api-key, etc. all work (HTTP standard)
+5. **No trimming**: Whitespace in keys is preserved (exact match required)
+6. **State-based config**: Uses Axum's State extractor for clean middleware implementation
+
+### Build Status
+
+- ✅ All 17 API tests passing
+- ✅ Compiles cleanly
+- ✅ Authentication fully integrated with router
+- ✅ Ready for next phase (OpenAPI integration)
+
+**Next Task:** Task 17.8 - Test API server starts and responds to /health

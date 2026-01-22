@@ -6,6 +6,7 @@
 use crate::{Config, UsenetDownloader, Result};
 use axum::{
     http::HeaderValue,
+    middleware,
     routing::{delete, get, patch, post, put},
     Router,
 };
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
+pub mod auth;
 pub mod routes;
 pub mod state;
 
@@ -136,6 +138,16 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         .route("/scheduler/:id", delete(routes::delete_schedule_rule))
         // Add state to all routes
         .with_state(state);
+
+    // Apply authentication middleware if API key is configured
+    let router = if config.api.api_key.is_some() {
+        router.layer(middleware::from_fn_with_state(
+            config.api.api_key.clone(),
+            auth::require_api_key,
+        ))
+    } else {
+        router
+    };
 
     // Apply CORS middleware if enabled in config
     if config.api.cors_enabled {
@@ -456,5 +468,105 @@ mod tests {
 
         assert!(body_str.contains("ok"));
         assert!(body_str.contains("0.1.0")); // Version from Cargo.toml
+    }
+
+    #[tokio::test]
+    async fn test_authentication_with_api_key() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Config with API key authentication enabled
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                api_key: Some("test-secret-key".to_string()),
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Create router with authentication
+        let app = create_router(downloader, config);
+
+        // Test 1: Request without API key should return 401
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Test 2: Request with valid API key should succeed
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header("X-Api-Key", "test-secret-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Test 3: Request with invalid API key should return 401
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header("X-Api-Key", "wrong-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_authentication_disabled_by_default() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Config with NO API key (default - authentication disabled)
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                api_key: None, // No authentication
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Create router without authentication
+        let app = create_router(downloader, config);
+
+        // Request without API key should succeed when authentication is disabled
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
