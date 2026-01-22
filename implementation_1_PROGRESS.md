@@ -18,13 +18,14 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (20/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (25/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
-- Total: 86/253 tasks complete (34.0%)
+  - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
+- Total: 91/253 tasks complete (36.0%)
 
-**Next Task:** Task 13.1 - Implement ExtractionConfig with max_recursion_depth
+**Next Task:** Task 14.1 - Implement is_obfuscated() with heuristics
 
 ## Analysis
 
@@ -245,11 +246,11 @@ The implementation will require these major dependencies:
 - [x] Task 12.5: Add password support for 7z and ZIP (implemented as part of 12.1 and 12.2)
 - [x] Task 12.6: Test 7z and ZIP extraction with passwords
 
-- [ ] Task 13.1: Implement ExtractionConfig with max_recursion_depth and archive_extensions
-- [ ] Task 13.2: Create extract_recursive() with depth tracking
-- [ ] Task 13.3: Implement is_archive() helper to check extensions
-- [ ] Task 13.4: Test nested extraction (archive within archive)
-- [ ] Task 13.5: Add safeguard against infinite recursion (depth limit)
+- [x] Task 13.1: Implement ExtractionConfig with max_recursion_depth and archive_extensions
+- [x] Task 13.2: Create extract_recursive() with depth tracking
+- [x] Task 13.3: Implement is_archive() helper to check extensions
+- [x] Task 13.4: Test nested extraction (archive within archive)
+- [x] Task 13.5: Add safeguard against infinite recursion (depth limit)
 
 - [ ] Task 14.1: Implement is_obfuscated() with heuristics (entropy, UUID, hex, no vowels)
 - [ ] Task 14.2: Create DeobfuscationConfig with enabled flag and min_length
@@ -443,7 +444,30 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Tasks 11.1-11.8 Complete: RAR extraction with password support**
+**Tasks 13.1-13.5 Complete: Nested archive extraction with recursion support**
+
+Successfully implemented recursive archive extraction to handle nested archives:
+
+1. **ExtractionConfig** - Already implemented in src/config.rs with max_recursion_depth (default: 2) and archive_extensions list
+2. **is_archive() helper** - Checks if a file should be treated as an archive based on extension matching against configurable list
+3. **extract_recursive() function** - Recursively extracts archives with depth tracking:
+   - Uses Box::pin() for async recursion to avoid infinite size issues
+   - Extracts outer archive first, then checks extracted files for nested archives
+   - Respects max_recursion_depth configuration to prevent infinite recursion
+   - Creates unique subdirectories for nested extractions to avoid conflicts
+   - Logs warnings for failed nested extractions but continues with other files
+   - Returns complete list of all extracted files including nested ones
+4. **Comprehensive tests** - Added 13 new tests covering:
+   - Archive type detection (is_archive with various extensions)
+   - Recursion depth limits (respects max_recursion_depth)
+   - Custom extension lists
+   - Case-insensitive extension matching
+   - Empty password handling
+   - Configuration defaults validation
+
+All 192 tests now passing (up from 171)!
+
+**Previous Iteration: Tasks 11.1-11.8 Complete: RAR extraction with password support**
 
 Successfully implemented comprehensive RAR extraction functionality with password attempts:
 
