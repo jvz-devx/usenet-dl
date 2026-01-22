@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (56/61 tasks complete)
+- Phase 1: 🔄 In Progress (57/61 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (4/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), and wait_for_active_downloads())
-- Total: 62/253 tasks complete (24.5%)
+  - Tasks 9.1-9.8: 🔄 In Progress (5/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), wait_for_active_downloads(), and persist_all_state())
+- Total: 63/253 tasks complete (24.9%)
 
-**Next Task:** Task 9.5 - Implement persist_all_state() to save final state
+**Next Task:** Task 9.6 - Set up signal handling (SIGTERM, SIGINT) using tokio::signal
 
 ## Analysis
 
@@ -211,7 +211,7 @@ The implementation will require these major dependencies:
 - [x] Task 9.2: Add accepting_new flag (AtomicBool) to stop new downloads
 - [x] Task 9.3: Implement pause_graceful() to finish current article
 - [x] Task 9.4: Add wait_for_articles() with timeout (implemented as wait_for_active_downloads())
-- [ ] Task 9.5: Implement persist_all_state() to save final state
+- [x] Task 9.5: Implement persist_all_state() to save final state
 - [ ] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
 - [ ] Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)
 - [ ] Task 9.8: Test graceful shutdown and recovery on restart
@@ -2410,3 +2410,71 @@ This is a planning phase - NO timeline estimates as per instructions. Tasks will
 - Markdown editor
 - OpenAPI validator
 - Curl or Postman for API testing
+
+## Completed This Iteration
+
+**Task 9.5: Implement persist_all_state() to save final state**
+
+### Implementation Details
+
+Added the `persist_all_state()` method to the `UsenetDownloader` struct that:
+
+1. **Queries all downloads from the database** using a new `get_all_downloads()` method
+2. **Identifies interrupted downloads** - downloads in Downloading or Processing state that are no longer in the active_downloads map
+3. **Marks interrupted downloads as Paused** so they can be resumed on next startup
+4. **Preserves truly active downloads** - downloads that are still in the active_downloads map are left unchanged
+
+### Database Changes
+
+Added `get_all_downloads()` method to the `Database` struct in `src/db.rs`:
+- Retrieves all downloads from the database (not just incomplete ones)
+- Used by `persist_all_state()` to check all download states during shutdown
+
+### Shutdown Integration
+
+Updated the `shutdown()` method in `src/lib.rs` to call `persist_all_state()`:
+- Integrated into the graceful shutdown sequence (step 4)
+- Handles errors gracefully - logs error but continues shutdown even if persistence fails
+- Ensures downloads interrupted during shutdown are properly marked for resume
+
+### Tests Added
+
+Added 3 comprehensive tests (130 tests total now, up from 127):
+
+1. **test_persist_all_state_marks_interrupted_downloads_as_paused**
+   - Verifies that downloads in Downloading/Processing state are marked as Paused
+   - Ensures Complete downloads remain unchanged
+   - Tests the core functionality of state persistence
+
+2. **test_persist_all_state_preserves_active_downloads**
+   - Verifies that truly active downloads (in active_downloads map) are not modified
+   - Ensures the method only affects interrupted downloads
+
+3. **test_shutdown_calls_persist_all_state**
+   - Integration test verifying shutdown() calls persist_all_state()
+   - Verifies interrupted downloads are properly handled during shutdown
+
+### Design Considerations
+
+The implementation follows the design document while accounting for the current implementation phase:
+
+- **Current Phase 1 State**: Downloads are already persisted throughout their lifecycle via `update_status()` and `update_progress()` calls
+- **SQLite Auto-Commit**: No need for explicit transaction management or buffer flushing
+- **Future Extension**: The method includes comprehensive documentation noting that it will be extended in future phases to persist:
+  - Folder watcher state (Phase 4)
+  - RSS feed state and seen items (Phase 4)
+  - Scheduler state (Phase 4)
+  - Any in-memory caches or buffers
+
+### Verification
+
+- ✅ Code compiles without errors
+- ✅ All 3 new tests pass
+- ✅ Build completes successfully
+- ✅ 130 total tests in the test suite
+
+## Notes
+
+The `persist_all_state()` implementation is complete and working. The method correctly identifies and marks interrupted downloads as Paused, ensuring they can be resumed on the next startup. This fulfills the requirements of Task 9.5 while maintaining compatibility with the existing architecture.
+
+The next task (9.6) will implement signal handling (SIGTERM, SIGINT) using tokio::signal.

@@ -560,6 +560,26 @@ impl Database {
         Ok(rows)
     }
 
+    /// Get all downloads (for state persistence during shutdown)
+    pub async fn get_all_downloads(&self) -> Result<Vec<Download>> {
+        let rows = sqlx::query_as::<_, Download>(
+            r#"
+            SELECT
+                id, name, nzb_path, nzb_meta_name, nzb_hash, job_name,
+                category, destination, post_process, priority, status,
+                progress, speed_bps, size_bytes, downloaded_bytes,
+                error_message, created_at, started_at, completed_at
+            FROM downloads
+            ORDER BY created_at ASC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to get all downloads: {}", e)))?;
+
+        Ok(rows)
+    }
+
     // Article-level tracking operations (for download resume support)
 
     /// Insert a single article

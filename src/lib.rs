@@ -898,9 +898,13 @@ impl UsenetDownloader {
             }
         }
 
-        // 4. Persist final state (queue state is already persisted in DB)
-        // The queue and download states are automatically persisted via the database
-        tracing::info!("Final state persisted to database");
+        // 4. Persist final state
+        if let Err(e) = self.persist_all_state().await {
+            tracing::error!(error = %e, "Failed to persist final state during shutdown");
+            // Continue with shutdown even if persistence fails
+        } else {
+            tracing::info!("Final state persisted to database");
+        }
 
         // 5. Close database connections
         // Note: Database is in an Arc, so we can't consume it directly.
@@ -963,6 +967,75 @@ impl UsenetDownloader {
             tracing::debug!(active_count, "Waiting for active downloads to complete");
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+    }
+
+    /// Persist all state to the database
+    ///
+    /// This method ensures that all download state is saved to the database before
+    /// shutdown. Since SQLite operations are auto-committed and all state changes
+    /// are immediately persisted during normal operation, this method primarily
+    /// serves as an explicit checkpoint during graceful shutdown.
+    ///
+    /// # Current Implementation
+    ///
+    /// In the current implementation (Phase 1), download states are already persisted
+    /// to the database throughout their lifecycle:
+    /// - Status changes are immediately written via `update_status()`
+    /// - Progress updates are written via `update_progress()`
+    /// - Article status is tracked in the `download_articles` table
+    ///
+    /// # Future Phases
+    ///
+    /// As additional features are implemented, this method will be extended to persist:
+    /// - Folder watcher state (Phase 4)
+    /// - RSS feed state and seen items (Phase 4)
+    /// - Scheduler state (Phase 4)
+    /// - Any in-memory caches or buffers
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if state was persisted successfully, or an error if
+    /// there was a problem writing to the database.
+    async fn persist_all_state(&self) -> Result<()> {
+        tracing::debug!("Persisting all state to database");
+
+        // Get all downloads that are currently in-progress states
+        let downloads = self.db.get_all_downloads().await?;
+
+        let mut persisted_count = 0;
+        for download in downloads {
+            // For downloads in Downloading or Processing state that are no longer active,
+            // ensure their state reflects they were interrupted during shutdown
+            let is_active = {
+                let active = self.active_downloads.lock().await;
+                active.contains_key(&download.id)
+            };
+
+            // If a download is in an active state but not in active_downloads,
+            // it means it was interrupted during shutdown
+            if !is_active && (download.status == Status::Downloading.to_i32() ||
+                             download.status == Status::Processing.to_i32()) {
+                // Mark as Paused so it can be resumed on next startup
+                self.db.update_status(download.id, Status::Paused.to_i32()).await?;
+                persisted_count += 1;
+                tracing::debug!(
+                    download_id = download.id,
+                    "Marked interrupted download as Paused for resume on restart"
+                );
+            }
+        }
+
+        if persisted_count > 0 {
+            tracing::info!(
+                persisted_count,
+                "Persisted state for {} interrupted download(s)",
+                persisted_count
+            );
+        } else {
+            tracing::debug!("All download states already persisted");
+        }
+
+        Ok(())
     }
 
     /// Add an NZB to the download queue from raw bytes
@@ -4127,5 +4200,132 @@ mod tests {
             "Article should have completed"
         );
         assert!(!result, "Download should have stopped after detecting cancellation");
+    }
+
+    #[tokio::test]
+    async fn test_persist_all_state_marks_interrupted_downloads_as_paused() {
+        // Task 9.5: Test persist_all_state() marks interrupted downloads as Paused
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download in Downloading status
+        let id1 = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test1.nzb",
+            DownloadOptions::default(),
+        ).await.unwrap();
+
+        // Manually set it to Downloading status (simulating active download)
+        downloader.db.update_status(id1, Status::Downloading.to_i32()).await.unwrap();
+
+        // Add another download in Processing status
+        let id2 = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test2.nzb",
+            DownloadOptions::default(),
+        ).await.unwrap();
+        downloader.db.update_status(id2, Status::Processing.to_i32()).await.unwrap();
+
+        // Add a download in Complete status (should not be changed)
+        let id3 = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test3.nzb",
+            DownloadOptions::default(),
+        ).await.unwrap();
+        downloader.db.update_status(id3, Status::Complete.to_i32()).await.unwrap();
+
+        // Verify initial states
+        let dl1 = downloader.db.get_download(id1).await.unwrap().unwrap();
+        assert_eq!(dl1.status, Status::Downloading.to_i32());
+        let dl2 = downloader.db.get_download(id2).await.unwrap().unwrap();
+        assert_eq!(dl2.status, Status::Processing.to_i32());
+        let dl3 = downloader.db.get_download(id3).await.unwrap().unwrap();
+        assert_eq!(dl3.status, Status::Complete.to_i32());
+
+        // Call persist_all_state (these downloads are not in active_downloads map)
+        let result = downloader.persist_all_state().await;
+        assert!(result.is_ok(), "persist_all_state should succeed: {:?}", result);
+
+        // Verify interrupted downloads were marked as Paused
+        let dl1_after = downloader.db.get_download(id1).await.unwrap().unwrap();
+        assert_eq!(
+            dl1_after.status,
+            Status::Paused.to_i32(),
+            "Interrupted Downloading should be marked as Paused"
+        );
+
+        let dl2_after = downloader.db.get_download(id2).await.unwrap().unwrap();
+        assert_eq!(
+            dl2_after.status,
+            Status::Paused.to_i32(),
+            "Interrupted Processing should be marked as Paused"
+        );
+
+        // Complete download should remain unchanged
+        let dl3_after = downloader.db.get_download(id3).await.unwrap().unwrap();
+        assert_eq!(
+            dl3_after.status,
+            Status::Complete.to_i32(),
+            "Complete download should remain Complete"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_persist_all_state_preserves_active_downloads() {
+        // Task 9.5: Test persist_all_state() does not modify truly active downloads
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download
+        let id = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        ).await.unwrap();
+
+        // Set it to Downloading status
+        downloader.db.update_status(id, Status::Downloading.to_i32()).await.unwrap();
+
+        // Add it to active_downloads map (simulating it's actually running)
+        {
+            let mut active = downloader.active_downloads.lock().await;
+            active.insert(id, tokio_util::sync::CancellationToken::new());
+        }
+
+        // Call persist_all_state
+        let result = downloader.persist_all_state().await;
+        assert!(result.is_ok(), "persist_all_state should succeed: {:?}", result);
+
+        // Verify the download status was NOT changed (it's still active)
+        let dl_after = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(
+            dl_after.status,
+            Status::Downloading.to_i32(),
+            "Active download should remain in Downloading status"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_calls_persist_all_state() {
+        // Task 9.5: Test shutdown() integrates persist_all_state()
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download in Downloading status (simulating interrupted)
+        let id = downloader.add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        ).await.unwrap();
+        downloader.db.update_status(id, Status::Downloading.to_i32()).await.unwrap();
+
+        // Call shutdown
+        let result = downloader.shutdown().await;
+        assert!(result.is_ok(), "Shutdown should succeed: {:?}", result);
+
+        // Verify the interrupted download was marked as Paused by persist_all_state
+        let dl_after = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(
+            dl_after.status,
+            Status::Paused.to_i32(),
+            "Interrupted download should be marked as Paused after shutdown"
+        );
     }
 }
