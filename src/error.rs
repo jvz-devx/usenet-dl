@@ -68,6 +68,20 @@ pub enum Error {
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// File collision error
+    #[error("file collision at {path}: {reason}")]
+    FileCollision {
+        path: std::path::PathBuf,
+        reason: String,
+    },
+
+    /// Invalid path error
+    #[error("invalid path {path}: {reason}")]
+    InvalidPath {
+        path: std::path::PathBuf,
+        reason: String,
+    },
+
     /// Other error
     #[error("{0}")]
     Other(String),

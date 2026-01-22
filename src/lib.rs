@@ -58,6 +58,7 @@ pub mod post_processing;
 pub mod retry;
 pub mod speed_limiter;
 pub mod types;
+pub mod utils;
 
 // Re-export commonly used types
 pub use config::{Config, ServerConfig};

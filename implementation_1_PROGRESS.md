@@ -18,15 +18,16 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (31/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (33/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
   - Tasks 12.1-12.6: ✅ Archive extraction with comprehensive password tests complete (171 tests passing)
   - Tasks 13.1-13.5: ✅ Nested archive extraction with recursion depth limit complete (192 tests passing)
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
-- Total: 97/253 tasks complete (38.3%)
+  - Tasks 15.1-15.2: ✅ FileCollisionAction enum and get_unique_path utility complete (220 tests passing)
+- Total: 99/253 tasks complete (39.1%)
 
-**Next Task:** Task 15.1 - Implement FileCollisionAction enum (Rename, Overwrite, Skip)
+**Next Task:** Task 15.3 - Implement move_files() to final destination with collision handling
 
 ## Analysis
 
@@ -260,8 +261,8 @@ The implementation will require these major dependencies:
 - [x] Task 14.5: Implement find_largest_file() helper
 - [x] Task 14.6: Test deobfuscation with obfuscated and normal filenames
 
-- [ ] Task 15.1: Implement FileCollisionAction enum (Rename, Overwrite, Skip)
-- [ ] Task 15.2: Create get_unique_path() with (1), (2) suffix logic
+- [x] Task 15.1: Implement FileCollisionAction enum (Rename, Overwrite, Skip)
+- [x] Task 15.2: Create get_unique_path() with (1), (2) suffix logic
 - [ ] Task 15.3: Implement move_files() to final destination with collision handling
 - [ ] Task 15.4: Add category destination resolution
 - [ ] Task 15.5: Emit Moving event with destination path
@@ -3352,3 +3353,54 @@ Added 11 comprehensive tests covering all heuristics:
 ### Next Steps
 
 Task 14.2 will add the `DeobfuscationConfig` struct to enable/disable obfuscation detection and configure minimum filename length thresholds. This will integrate with the existing Config system and allow users to customize obfuscation handling behavior.
+
+---
+
+## Completed This Iteration
+
+### Tasks 15.1-15.2: File Collision Handling Utilities (Complete)
+
+**Summary:** Implemented FileCollisionAction enum and get_unique_path() utility function with comprehensive tests.
+
+**Implementation Details:**
+
+1. **Task 15.1:** FileCollisionAction enum was already implemented in src/config.rs
+   - Three variants: Rename (default), Overwrite, Skip
+   - Integrated into main Config struct
+
+2. **Task 15.2:** Created src/utils.rs module with get_unique_path() function
+   - Handles Rename: Appends (1), (2), (3)... suffixes to avoid collisions
+   - Handles Overwrite: Returns original path unchanged
+   - Handles Skip: Returns error if file already exists
+   - Supports files with and without extensions
+   - Correctly handles multiple dots in filenames (e.g., file.tar.gz)
+
+**New Files:**
+- `src/utils.rs` (217 lines including tests)
+
+**Modified Files:**
+- `src/lib.rs` - Added `pub mod utils;`
+- `src/error.rs` - Added FileCollision and InvalidPath error variants
+- `src/retry.rs` - Updated IsRetryable to handle new error types
+
+**Tests Added:** 7 new tests in utils module
+- `test_get_unique_path_nonexistent_file` - No collision case
+- `test_get_unique_path_rename_with_extension` - Sequential renaming (1), (2)
+- `test_get_unique_path_rename_without_extension` - Files without extensions
+- `test_get_unique_path_overwrite` - Overwrite mode
+- `test_get_unique_path_skip_existing` - Skip mode error handling
+- `test_get_unique_path_multiple_dots` - Complex filenames (tar.gz)
+- `test_get_unique_path_sequential` - Finds first available number
+
+**Test Results:**
+- All 7 new utils tests pass ✓
+- Total project tests: 220 tests passing (up from 213)
+- Build completes successfully with no errors
+- Ready for Task 15.3: Implement actual move_files() function
+
+**Design Notes:**
+- Conservative limit of 9999 rename attempts to prevent infinite loops
+- Clear error messages with path and reason for debugging
+- Works with temporary directories and respects filesystem permissions
+- Thread-safe and suitable for concurrent operations
+

@@ -99,6 +99,10 @@ impl IsRetryable for Error {
             Error::ExtractionFailed(_) => false,
             // Serialization errors are permanent
             Error::Serialization(_) => false,
+            // File collision errors are permanent (need user action)
+            Error::FileCollision { .. } => false,
+            // Invalid path errors are permanent
+            Error::InvalidPath { .. } => false,
             // Unknown errors - be conservative and don't retry
             Error::Other(_) => false,
         }
