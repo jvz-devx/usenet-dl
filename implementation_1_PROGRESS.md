@@ -8,18 +8,18 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (46/53 tasks complete)
+- Phase 1: 🔄 In Progress (47/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
   - Tasks 5.1-5.9: ✅ Priority queue with complete persistence (79 tests passing)
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
-  - Tasks 7.1-7.6: ✅ SpeedLimiter with event emission complete (107 tests passing)
-  - Tasks 7.7-9.8: ⏳ Remaining (Multi-download speed tests, Retry, Shutdown)
-- Total: 51/253 tasks complete (20.2%)
+  - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
+  - Tasks 8.1-9.8: ⏳ Remaining (Retry logic, Shutdown)
+- Total: 52/253 tasks complete (20.6%)
 
-**Next Task:** Task 7.7 - Test speed limiting with multiple concurrent downloads
+**Next Task:** Task 8.1 - Create IsRetryable trait for error classification
 
 ## Analysis
 
@@ -197,7 +197,7 @@ The implementation will require these major dependencies:
 - [x] Task 7.4: Share SpeedLimiter (Arc) across all download tasks
 - [x] Task 7.5: Implement set_speed_limit(limit_bps) to change limit dynamically (done as part of 7.1)
 - [x] Task 7.6: Emit SpeedLimitChanged event when limit is updated
-- [ ] Task 7.7: Test speed limiting with multiple concurrent downloads
+- [x] Task 7.7: Test speed limiting with multiple concurrent downloads
 
 - [ ] Task 8.1: Create IsRetryable trait for error classification
 - [ ] Task 8.2: Implement download_with_retry() generic function
