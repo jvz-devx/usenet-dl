@@ -49,6 +49,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+pub mod api;
 pub mod config;
 pub mod db;
 pub mod deobfuscation;

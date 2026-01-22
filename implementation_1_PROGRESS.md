@@ -26,11 +26,11 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (1/71 tasks) - REST API implementation
-  - Task 17.1: ✅ Dependencies added (axum, tower, tower-http already in Cargo.toml)
-- Total: 110/253 tasks complete (43.5%)
+- Phase 3: 🔄 In Progress (4/71 tasks) - REST API implementation
+  - Tasks 17.1-17.4: ✅ API infrastructure complete (router, state, routes stubs)
+- Total: 113/253 tasks complete (44.7%)
 
-**Next Task:** Task 17.2 - Create ApiConfig struct with bind_address, api_key, cors, swagger_ui, rate_limit
+**Next Task:** Task 17.5 - Implement API server startup (tokio::spawn api_server)
 
 ## Analysis
 
@@ -281,9 +281,9 @@ The implementation will require these major dependencies:
 ### Phase 3: REST API (Steps 17-23)
 
 - [x] Task 17.1: Add axum, tower, tower-http dependencies
-- [ ] Task 17.2: Create ApiConfig struct with bind_address, api_key, cors, swagger_ui, rate_limit
-- [ ] Task 17.3: Implement create_router() with all route definitions
-- [ ] Task 17.4: Create AppState with Arc<UsenetDownloader> for handler access
+- [x] Task 17.2: Create ApiConfig struct with bind_address, api_key, cors, swagger_ui, rate_limit
+- [x] Task 17.3: Implement create_router() with all route definitions
+- [x] Task 17.4: Create AppState with Arc<UsenetDownloader> for handler access
 - [ ] Task 17.5: Implement API server startup (tokio::spawn api_server)
 - [ ] Task 17.6: Add CORS middleware (tower-http CorsLayer)
 - [ ] Task 17.7: Add optional authentication middleware (check X-Api-Key header)
@@ -474,7 +474,56 @@ Successfully verified REST API dependencies are in place:
 
 **Test Results:** Project compiles successfully, 240 tests still passing
 
-**Next:** Task 17.2 - Create ApiConfig struct with bind_address, api_key, cors, swagger_ui, rate_limit
+**Next:** Task 17.5 - Implement API server startup (tokio::spawn api_server)
+
+---
+
+**Current Iteration: Tasks 17.2-17.4: API Infrastructure**
+
+Successfully implemented core API infrastructure:
+
+1. **Task 17.2: ApiConfig Verification**:
+   - ✅ ApiConfig struct already existed in src/config.rs (lines 458-496)
+   - ✅ Contains all required fields: bind_address, api_key, cors_enabled, cors_origins, swagger_ui, rate_limit
+   - ✅ Default implementation with sensible defaults (localhost:6789, CORS enabled, Swagger UI enabled)
+   - ✅ RateLimitConfig nested struct with enabled, requests_per_second, burst_size
+
+2. **Task 17.3: create_router() Implementation** (src/api/mod.rs):
+   - Created comprehensive API router with all 40+ route definitions
+   - Organized routes into logical groups:
+     * Queue Management (10 routes for downloads)
+     * Queue-Wide Operations (3 routes)
+     * History (2 routes)
+     * Server Management (2 routes)
+     * Configuration (7 routes)
+     * Categories (3 routes)
+     * System (4 routes including /health, /events, /openapi.json)
+     * RSS Feeds (5 routes)
+     * Scheduler (4 routes)
+   - All routes mapped to handler functions in routes module
+   - Comprehensive documentation with route descriptions
+
+3. **Task 17.4: AppState Implementation** (src/api/state.rs):
+   - Created AppState struct with Arc<UsenetDownloader> and Arc<Config>
+   - Implements Clone for cheap sharing across requests
+   - Simple, focused design for handler access to core functionality
+
+4. **Route Stubs** (src/api/routes.rs):
+   - Created stub implementations for all 40+ route handlers
+   - All handlers return NOT_IMPLEMENTED (501) status
+   - Proper function signatures with State and Path extractors
+   - Only /health endpoint is fully implemented
+   - Ready for incremental implementation in subsequent tasks
+
+5. **Module Structure**:
+   - Added `pub mod api;` to src/lib.rs
+   - Created api module with mod.rs, state.rs, routes.rs
+   - Exported AppState from api module
+   - Clean separation of concerns
+
+**Test Results:** Project compiles successfully with no errors (only missing doc warnings)
+
+**Next:** Task 17.5 - Implement API server startup with tokio::spawn
 
 ---
 
