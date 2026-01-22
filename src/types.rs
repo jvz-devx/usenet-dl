@@ -106,6 +106,18 @@ pub enum Stage {
     Cleanup,
 }
 
+/// Archive type detected by file extension
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ArchiveType {
+    /// RAR archive (.rar, .r00, .r01, etc.)
+    Rar,
+    /// 7-Zip archive (.7z)
+    SevenZip,
+    /// ZIP archive (.zip)
+    Zip,
+}
+
 /// Event emitted during download lifecycle
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

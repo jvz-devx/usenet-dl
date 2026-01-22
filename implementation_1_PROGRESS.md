@@ -18,13 +18,13 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (16/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (17/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
-  - Tasks 12.1-12.2: ✅ 7z and ZIP extraction with password support complete
-- Total: 82/253 tasks complete (32.4%)
+  - Tasks 12.1-12.3: ✅ 7z and ZIP extraction with archive type detection complete (158 tests passing)
+- Total: 83/253 tasks complete (32.8%)
 
-**Next Task:** Task 12.3 - Implement detect_archive_type() by extension
+**Next Task:** Task 12.4 - Create unified extract_archive() dispatcher
 
 ## Analysis
 
@@ -240,7 +240,7 @@ The implementation will require these major dependencies:
 
 - [x] Task 12.1: Integrate sevenz-rust crate for 7z extraction
 - [x] Task 12.2: Integrate zip crate for ZIP extraction
-- [ ] Task 12.3: Implement detect_archive_type() by extension
+- [x] Task 12.3: Implement detect_archive_type() by extension
 - [ ] Task 12.4: Create unified extract_archive() dispatcher
 - [ ] Task 12.5: Add password support for 7z and ZIP
 - [ ] Task 12.6: Test 7z and ZIP extraction with passwords
@@ -2989,3 +2989,51 @@ Task 12.2 will add ZIP extraction support using the zip crate, completing the tr
 
 ---
 
+
+## Completed This Iteration (Ralph)
+
+**Task 12.3: Implement detect_archive_type() by extension**
+
+### Implementation Summary
+
+Created a unified archive type detection system that identifies archive formats based on file extensions. This provides a clean abstraction layer for the upcoming unified extract_archive() dispatcher.
+
+### What Was Completed
+
+1. **ArchiveType Enum** (src/types.rs):
+   - Added new `ArchiveType` enum with three variants: `Rar`, `SevenZip`, and `Zip`
+   - Follows the same pattern as other enums (Status, Priority, Stage)
+   - Implements Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize
+   - Uses serde `rename_all = "lowercase"` for consistent JSON representation
+
+2. **detect_archive_type() Function** (src/extraction.rs):
+   - Public function that takes a Path and returns `Option<ArchiveType>`
+   - Detects archive type based on file extension (case-insensitive)
+   - Supports:
+     - RAR: `.rar` and `.r00` (split archive first part)
+     - 7-Zip: `.7z`
+     - ZIP: `.zip`
+   - Returns `None` for unrecognized or missing extensions
+   - Clean, simple implementation using pattern matching
+
+3. **Comprehensive Tests** (6 new tests):
+   - `test_detect_archive_type_rar` - Tests .rar detection (case-insensitive)
+   - `test_detect_archive_type_rar_split` - Tests .r00 detection
+   - `test_detect_archive_type_7z` - Tests .7z detection
+   - `test_detect_archive_type_zip` - Tests .zip detection  
+   - `test_detect_archive_type_unknown` - Tests unrecognized extensions return None
+   - `test_detect_archive_type_with_path` - Tests detection with full file paths
+
+**Test Results:**
+- All 6 new tests pass
+- Total test count: 158 tests passing (up from 152)
+- Build completes successfully with no errors
+
+### Files Modified
+
+- `src/types.rs`: Added ArchiveType enum
+- `src/extraction.rs`: Added detect_archive_type() function and updated imports
+
+### Next Steps
+
+Task 12.4 will create a unified extract_archive() dispatcher that uses this archive type detection to route to the appropriate extractor (RAR/7z/ZIP).

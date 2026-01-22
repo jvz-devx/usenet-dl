@@ -5,9 +5,24 @@
 
 use crate::db::Database;
 use crate::error::{Error, Result};
-use crate::types::DownloadId;
+use crate::types::{ArchiveType, DownloadId};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+
+/// Detect archive type by file extension
+///
+/// Returns the archive type based on the file extension.
+/// Supports RAR (.rar, .r00), 7z (.7z), and ZIP (.zip) formats.
+pub fn detect_archive_type(path: &Path) -> Option<ArchiveType> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+
+    match ext.as_str() {
+        "rar" | "r00" => Some(ArchiveType::Rar),
+        "7z" => Some(ArchiveType::SevenZip),
+        "zip" => Some(ArchiveType::Zip),
+        _ => None,
+    }
+}
 
 /// Password list collector for archive extraction
 ///
@@ -951,5 +966,85 @@ mod tests {
 
         let result = ZipExtractor::detect_zip_files(temp_dir.path()).unwrap();
         assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_detect_archive_type_rar() {
+        use crate::types::ArchiveType;
+        use std::path::Path;
+
+        let path = Path::new("test.rar");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Rar));
+
+        let path = Path::new("TEST.RAR");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Rar));
+    }
+
+    #[test]
+    fn test_detect_archive_type_rar_split() {
+        use crate::types::ArchiveType;
+        use std::path::Path;
+
+        let path = Path::new("test.r00");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Rar));
+
+        let path = Path::new("TEST.R00");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Rar));
+    }
+
+    #[test]
+    fn test_detect_archive_type_7z() {
+        use crate::types::ArchiveType;
+        use std::path::Path;
+
+        let path = Path::new("test.7z");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::SevenZip));
+
+        let path = Path::new("TEST.7Z");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::SevenZip));
+    }
+
+    #[test]
+    fn test_detect_archive_type_zip() {
+        use crate::types::ArchiveType;
+        use std::path::Path;
+
+        let path = Path::new("test.zip");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Zip));
+
+        let path = Path::new("TEST.ZIP");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Zip));
+    }
+
+    #[test]
+    fn test_detect_archive_type_unknown() {
+        use std::path::Path;
+
+        let path = Path::new("test.txt");
+        assert_eq!(detect_archive_type(path), None);
+
+        let path = Path::new("test.nzb");
+        assert_eq!(detect_archive_type(path), None);
+
+        let path = Path::new("test.par2");
+        assert_eq!(detect_archive_type(path), None);
+
+        let path = Path::new("test");
+        assert_eq!(detect_archive_type(path), None);
+    }
+
+    #[test]
+    fn test_detect_archive_type_with_path() {
+        use crate::types::ArchiveType;
+        use std::path::Path;
+
+        let path = Path::new("/path/to/archive.rar");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Rar));
+
+        let path = Path::new("/another/path/file.7z");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::SevenZip));
+
+        let path = Path::new("relative/path/file.zip");
+        assert_eq!(detect_archive_type(path), Some(ArchiveType::Zip));
     }
 }
