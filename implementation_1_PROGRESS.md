@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (59/61 tasks complete)
+- Phase 1: ✅ COMPLETE (61/61 tasks) - Core library fully implemented with 137 tests passing!
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (7/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), wait_for_active_downloads(), persist_all_state(), signal handling, and shutdown flag complete)
-- Total: 65/253 tasks complete (25.7%)
+  - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
+- Total: 66/253 tasks complete (26.1%)
 
-**Next Task:** Task 9.8 - Test graceful shutdown and recovery on restart
+**Next Task:** Task 10.1 - Create PostProcess enum (None, Verify, Repair, Unpack, UnpackAndCleanup)
 
 ## Analysis
 
@@ -214,7 +214,7 @@ The implementation will require these major dependencies:
 - [x] Task 9.5: Implement persist_all_state() to save final state
 - [x] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
 - [x] Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)
-- [ ] Task 9.8: Test graceful shutdown and recovery on restart
+- [x] Task 9.8: Test graceful shutdown and recovery on restart
 
 ### Phase 2: Post-Processing (Steps 10-16)
 
@@ -439,7 +439,101 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 9.6 Complete: Set up signal handling (SIGTERM, SIGINT) using tokio::signal**
+**Task 9.8 Complete: Test graceful shutdown and recovery on restart**
+
+Successfully implemented comprehensive integration test for graceful shutdown and recovery:
+
+**Test Implementation** (src/lib.rs:4443-4576, 134 lines)
+
+The test `test_graceful_shutdown_and_recovery_on_restart()` is a comprehensive integration test that validates the entire graceful shutdown and recovery cycle:
+
+**Test Phases:**
+
+1. **Phase 1: Setup and Graceful Shutdown**
+   - Creates a downloader with persistent database
+   - Adds a download with multiple articles
+   - Simulates partial download progress (marks first article as downloaded)
+   - Sets status to Downloading (active download simulation)
+   - Sets progress metadata (50% complete, 512KB downloaded)
+   - Calls graceful `shutdown()`
+   - Verifies database is marked as "clean shutdown" (not unclean)
+   - Verifies download status changed from Downloading to Paused
+
+2. **Phase 2: Restart and Recovery**
+   - Opens database BEFORE creating new downloader to check shutdown state
+   - Verifies `was_unclean_shutdown()` returns false (clean shutdown detected)
+   - Creates new downloader instance (simulating application restart)
+   - Verifies download was properly restored from database
+   - Verifies status remains Paused (not reset)
+   - Verifies progress is preserved (50%, 512KB)
+   - Verifies downloaded bytes preserved
+   - Verifies article tracking preserved (only pending articles remain)
+   - Verifies download can be resumed after restart
+   - Verifies status becomes Queued after resume
+
+**Key Testing Insights:**
+
+1. **Shutdown State Detection Logic:**
+   - Must check `was_unclean_shutdown()` BEFORE `UsenetDownloader::new()`
+   - `new()` calls `db.set_clean_start()` which sets flag to 'false' (app running)
+   - The pattern: open DB → check flag → close DB → create downloader
+   - This matches the pattern used in existing database tests
+
+2. **Graceful vs Crash Recovery:**
+   - Graceful shutdown: `shutdown()` → `set_clean_shutdown()` → flag = 'true'
+   - Crash: No `shutdown()` called → flag remains 'false'
+   - On restart: check flag before `new()` to distinguish scenarios
+
+3. **State Preservation:**
+   - Download status changed from Downloading to Paused by `persist_all_state()`
+   - Progress, downloaded bytes, and article status all preserved in SQLite
+   - Resume functionality works correctly after restart
+
+**Test Coverage:**
+
+This test completes the graceful shutdown test suite, which now includes:
+- `test_shutdown_graceful` - Basic shutdown mechanics ✅
+- `test_shutdown_with_active_downloads` - Cancellation of active downloads ✅
+- `test_shutdown_waits_for_completion` - Wait timeout behavior ✅
+- `test_shutdown_rejects_new_downloads` - accepting_new flag ✅
+- `test_pause_graceful_all` - Graceful pause signaling ✅
+- `test_graceful_pause_completes_current_article` - Article completion ✅
+- `test_shutdown_calls_persist_all_state` - State persistence integration ✅
+- `test_shutdown_emits_shutdown_event` - Event emission ✅
+- `test_run_with_shutdown_basic` - Signal handler function ✅
+- `test_graceful_shutdown_and_recovery_on_restart` - Full cycle integration ✅ (NEW)
+
+**Related Tests:**
+
+Also complements the existing crash recovery tests:
+- `test_resume_after_simulated_crash` - Crash scenario (unclean shutdown)
+- `test_shutdown_state_unclean_detection` - Database-level unclean detection
+- `test_shutdown_state_clean_lifecycle` - Database-level clean lifecycle
+
+**Total Test Count:** 137 tests passing (1 new test added)
+
+**Files Modified:**
+- `src/lib.rs`: Added `test_graceful_shutdown_and_recovery_on_restart()` test (line 4443-4576)
+- `implementation_1_PROGRESS.md`: Marked Task 9.8 complete, updated Phase 1 to COMPLETE (61/61 tasks)
+
+**Phase 1 Milestone: COMPLETE!**
+
+Phase 1 (Core Library) is now 100% complete with all 61 tasks implemented and tested:
+- ✅ Core types and configuration (Tasks 1.1-1.4)
+- ✅ SQLite persistence with migrations (Tasks 2.1-2.8)
+- ✅ Event system with broadcast channels (Tasks 3.1-3.5)
+- ✅ Download manager with nntp-rs integration (Tasks 4.1-4.8)
+- ✅ Priority queue with persistence (Tasks 5.1-5.9)
+- ✅ Resume support with article tracking (Tasks 6.1-6.6)
+- ✅ Speed limiting with token bucket (Tasks 7.1-7.7)
+- ✅ Retry logic with exponential backoff (Tasks 8.1-8.6)
+- ✅ Graceful shutdown with recovery (Tasks 9.1-9.8)
+
+**Next Phase:** Phase 2 - Post-Processing (Steps 10-16)
+
+---
+
+**Previous Iteration: Task 9.6 Complete: Set up signal handling (SIGTERM, SIGINT) using tokio::signal**
 
 Successfully implemented signal handling infrastructure for graceful shutdown:
 

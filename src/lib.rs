@@ -4438,4 +4438,135 @@ mod tests {
         let result = downloader.shutdown().await;
         assert!(result.is_ok(), "Shutdown should succeed: {:?}", result);
     }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown_and_recovery_on_restart() {
+        // Task 9.8: Test complete graceful shutdown and recovery on restart
+        //
+        // This integration test verifies:
+        // 1. Active downloads are gracefully paused on shutdown
+        // 2. Database is marked as "clean shutdown"
+        // 3. On restart, downloads are properly restored
+        // 4. Progress and state are preserved across restart
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        let download_id;
+        let total_articles;
+
+        // Phase 1: Create downloader, add download, and perform graceful shutdown
+        {
+            let config = Config {
+                database_path: db_path.clone(),
+                servers: vec![],
+                max_concurrent_downloads: 3,
+                ..Default::default()
+            };
+
+            let downloader = UsenetDownloader::new(config).await.unwrap();
+
+            // Add a download
+            download_id = downloader.add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "test.nzb",
+                DownloadOptions::default()
+            ).await.unwrap();
+
+            // Get all articles
+            let articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+            total_articles = articles.len();
+            assert!(total_articles > 1, "Need at least 2 articles for this test");
+
+            // Mark first article as downloaded (simulating partial progress)
+            if let Some(first_article) = articles.first() {
+                downloader.db.update_article_status(
+                    first_article.id,
+                    crate::db::article_status::DOWNLOADED
+                ).await.unwrap();
+            }
+
+            // Set status to Downloading (simulating active download)
+            downloader.db.update_status(download_id, Status::Downloading.to_i32()).await.unwrap();
+
+            // Set some progress to verify it's preserved
+            let progress = 50.0;
+            let speed = 1000000u64; // 1 MB/s
+            let downloaded_bytes = 524288u64; // 512 KB
+            downloader.db.update_progress(download_id, progress, speed, downloaded_bytes).await.unwrap();
+
+            // Perform graceful shutdown
+            let shutdown_result = downloader.shutdown().await;
+            assert!(shutdown_result.is_ok(), "Graceful shutdown should succeed: {:?}", shutdown_result);
+
+            // Verify database was marked as clean shutdown
+            let was_unclean = downloader.db.was_unclean_shutdown().await.unwrap();
+            assert!(!was_unclean, "Database should be marked as CLEAN shutdown after graceful shutdown");
+
+            // Verify download was marked as Paused (not Downloading)
+            let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+            assert_eq!(
+                Status::from_i32(download.status),
+                Status::Paused,
+                "Download should be marked as Paused after graceful shutdown"
+            );
+        }
+
+        // Phase 2: Simulate restart by creating new downloader instance
+        {
+            // First, check the shutdown state BEFORE creating the downloader
+            // (UsenetDownloader::new() calls set_clean_start() which would override the flag)
+            let db_for_check = Database::new(&db_path).await.unwrap();
+            let was_unclean = db_for_check.was_unclean_shutdown().await.unwrap();
+            assert!(!was_unclean, "Database should show clean shutdown from previous session");
+            db_for_check.close().await;
+
+            // Now create the downloader (which will call set_clean_start() internally)
+            let config = Config {
+                database_path: db_path.clone(),
+                servers: vec![],
+                max_concurrent_downloads: 3,
+                ..Default::default()
+            };
+
+            let downloader = UsenetDownloader::new(config).await.unwrap();
+
+            // Verify download was restored
+            let restored_download = downloader.db.get_download(download_id).await.unwrap();
+            assert!(restored_download.is_some(), "Download should be restored after restart");
+
+            let download = restored_download.unwrap();
+
+            // After graceful shutdown, download should remain Paused
+            assert_eq!(
+                Status::from_i32(download.status),
+                Status::Paused,
+                "Download should remain Paused after restart"
+            );
+
+            // Progress should be preserved
+            assert_eq!(download.progress, 50.0, "Progress should be preserved");
+            assert_eq!(download.downloaded_bytes, 524288, "Downloaded bytes should be preserved");
+
+            // Verify article tracking was preserved
+            let pending_articles = downloader.db.get_pending_articles(download_id).await.unwrap();
+            assert_eq!(
+                pending_articles.len(),
+                total_articles - 1,
+                "Should have {} pending articles (1 was downloaded before shutdown)",
+                total_articles - 1
+            );
+
+            // Verify we can resume the download after restart
+            let resume_result = downloader.resume(download_id).await;
+            assert!(resume_result.is_ok(), "Should be able to resume download after restart: {:?}", resume_result);
+
+            let resumed_download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+            assert_eq!(
+                Status::from_i32(resumed_download.status),
+                Status::Queued,
+                "Download should be Queued after resume"
+            );
+        }
+    }
 }
