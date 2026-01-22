@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (30/53 tasks complete)
+- Phase 1: 🔄 In Progress (31/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Tasks 5.1-5.5: ✅ Priority queue, automatic download spawning, and pause complete (55 tests passing)
-  - Tasks 5.6-9.8: ⏳ Remaining (Resume, Cancel, Speed Limiting, Retry, Shutdown)
-- Total: 35/253 tasks complete (13.8%)
+  - Tasks 5.1-5.6: ✅ Priority queue, automatic download spawning, pause, and resume complete (62 tests passing)
+  - Tasks 5.7-9.8: ⏳ Remaining (Cancel, Speed Limiting, Retry, Shutdown)
+- Total: 36/253 tasks complete (14.2%)
 
-**Next Task:** Task 5.6 - Implement resume() to restart paused download
+**Next Task:** Task 5.7 - Implement cancel() to remove download and delete files
 
 ## Analysis
 
@@ -177,7 +177,7 @@ The implementation will require these major dependencies:
 - [x] Task 5.3: Implement max_concurrent_downloads limiter (Semaphore)
 - [x] Task 5.4: Create queue processor task that spawns downloads
 - [x] Task 5.5: Implement pause() to stop download without removing from queue
-- [ ] Task 5.6: Implement resume() to restart paused download
+- [x] Task 5.6: Implement resume() to restart paused download
 - [ ] Task 5.7: Implement cancel() to remove download and delete files
 - [ ] Task 5.8: Add pause_all() and resume_all() queue-wide operations
 - [ ] Task 5.9: Persist queue state to SQLite on every change
@@ -435,6 +435,78 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Queue Management - Task 5.6 Complete: Resume Implementation**
+
+- Task 5.6: Implemented resume() to restart paused download ✓
+  - Validates download exists and is in Paused status
+  - Updates database status back to Queued
+  - Re-adds download to priority queue for processing
+  - Queue processor automatically picks up resumed downloads
+  - Resume is article-level aware: only pending articles are downloaded
+  - Idempotent: Can resume already-queued/downloading downloads without error
+  - Prevents resuming completed/failed downloads with error
+  - Priority is preserved when resuming (high priority stays high)
+  - Comprehensive test coverage (7 new tests added)
+  - All 62 tests passing
+
+**Implementation Details:**
+
+resume() Method Behavior:
+```rust
+pub async fn resume(&self, id: DownloadId) -> Result<()> {
+    // Fetch and validate download status
+    // Only Paused downloads can be resumed
+    // Already active (Queued/Downloading/Processing): Returns Ok (idempotent)
+    // Complete/Failed: Returns error (use reprocess() instead)
+
+    // Update status: Paused -> Queued
+    db.update_status(id, Status::Queued.to_i32()).await?;
+
+    // Re-add to priority queue
+    self.add_to_queue(id).await?;
+    // Queue processor will automatically start download
+}
+```
+
+Article-Level Resume:
+- Downloads resume from where they left off
+- Database tracks which articles are pending/downloaded/failed
+- get_pending_articles() returns only articles not yet downloaded
+- No re-downloading of completed articles
+- Efficient and resumable across crashes/restarts
+
+pause() Method Enhancement:
+- Fixed issue where paused downloads remained in queue
+- Now removes download from queue when pausing
+- Ensures paused downloads don't get picked up by queue processor
+- Maintains consistency between database status and queue state
+
+Test Coverage:
+- test_resume_paused_download: Basic resume functionality
+- test_resume_already_queued: Idempotent behavior for active downloads
+- test_resume_completed_download: Error handling for complete downloads
+- test_resume_failed_download: Error handling for failed downloads
+- test_resume_nonexistent_download: Error handling for invalid IDs
+- test_pause_resume_cycle: Full pause -> resume workflow
+- test_resume_preserves_priority: Priority ordering maintained after resume
+
+**Technical Notes:**
+- Resume is instant: Just changes status and re-queues
+- No need to track pause/resume history (status change is sufficient)
+- Queue processor handles all download spawning automatically
+- Article-level tracking in database enables efficient resume
+- Integrates seamlessly with existing priority queue system
+- Ready for cancel() implementation (Task 5.7)
+
+**Architectural Impact:**
+- Complete pause/resume cycle now fully functional
+- Foundation for queue-wide pause_all/resume_all (Task 5.8)
+- Demonstrates robustness of article-level tracking for resume
+- Clean separation: status management vs. download execution
+- Validates design decision to use article-level granularity
+
+## Previous Completed Iterations
 
 **Phase 1 Queue Management - Task 5.5 Complete: Pause Implementation**
 

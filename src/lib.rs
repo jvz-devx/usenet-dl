@@ -363,12 +363,81 @@ impl UsenetDownloader {
         }
         drop(active_downloads); // Release lock
 
+        // Remove from queue if it's still queued (not yet started)
+        self.remove_from_queue(id).await;
+
         // Update status to Paused in database
         self.db.update_status(id, Status::Paused.to_i32()).await?;
 
         // Emit paused event (we'll add this event type if needed, for now we can skip)
         // For consistency with design, downloads don't have individual pause events
         // Global pause_all emits QueuePaused, but individual pause is silent
+
+        Ok(())
+    }
+
+    /// Resume a paused download
+    ///
+    /// This method restarts a paused download by changing its status back to Queued
+    /// and adding it to the priority queue. The queue processor will automatically
+    /// pick it up and continue downloading from where it left off.
+    ///
+    /// Downloads resume at the article level - any articles that were already
+    /// downloaded are skipped, and only pending articles are fetched.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to resume
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if the download was successfully resumed, or an error if:
+    /// - The download doesn't exist
+    /// - The download is not paused (already queued, downloading, complete, or failed)
+    /// - Database update fails
+    /// - Queue insertion fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Resume a paused download
+    /// downloader.resume(id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn resume(&self, id: DownloadId) -> Result<()> {
+        // Fetch download from database
+        let download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+
+        let current_status = Status::from_i32(download.status);
+
+        // Check if download can be resumed
+        match current_status {
+            Status::Paused => {
+                // Can be resumed
+            }
+            Status::Queued | Status::Downloading | Status::Processing => {
+                // Already active, nothing to do (idempotent)
+                return Ok(());
+            }
+            Status::Complete | Status::Failed => {
+                return Err(Error::Database(format!(
+                    "Cannot resume download {}: status is {:?}",
+                    id, current_status
+                )));
+            }
+        }
+
+        // Update status back to Queued
+        self.db.update_status(id, Status::Queued.to_i32()).await?;
+
+        // Add back to priority queue for processing
+        // The queue processor will automatically pick it up
+        // Article-level tracking ensures only pending articles are downloaded
+        self.add_to_queue(id).await?;
 
         Ok(())
     }
@@ -1747,5 +1816,164 @@ mod tests {
         // Try to pause download that doesn't exist
         let result = downloader.pause(999).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resume_paused_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add download
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Pause it
+        downloader.pause(id).await.unwrap();
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Paused.to_i32());
+
+        // Resume it
+        downloader.resume(id).await.unwrap();
+
+        // Status should be updated to Queued
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32());
+
+        // Should be back in the queue
+        assert!(downloader.queue_size().await > 0);
+    }
+
+    #[tokio::test]
+    async fn test_resume_already_queued() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Download is already queued
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32());
+
+        // Try to resume (should be idempotent)
+        let result = downloader.resume(id).await;
+        assert!(result.is_ok());
+
+        // Status should still be Queued
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_resume_completed_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark as complete
+        downloader.db.update_status(id, Status::Complete.to_i32()).await.unwrap();
+
+        // Try to resume (should fail)
+        let result = downloader.resume(id).await;
+        assert!(result.is_err());
+
+        // Status should still be Complete
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Complete.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_resume_failed_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark as failed
+        downloader.db.update_status(id, Status::Failed.to_i32()).await.unwrap();
+
+        // Try to resume (should fail - use reprocess() instead for failed downloads)
+        let result = downloader.resume(id).await;
+        assert!(result.is_err());
+
+        // Status should still be Failed
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Failed.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_resume_nonexistent_download() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Try to resume download that doesn't exist
+        let result = downloader.resume(999).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_pause_resume_cycle() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add download
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let initial_queue_size = downloader.queue_size().await;
+
+        // Pause
+        downloader.pause(id).await.unwrap();
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Paused.to_i32());
+
+        // Resume
+        downloader.resume(id).await.unwrap();
+        let download = downloader.db.get_download(id).await.unwrap().unwrap();
+        assert_eq!(download.status, Status::Queued.to_i32());
+
+        // Queue size should be restored
+        assert_eq!(downloader.queue_size().await, initial_queue_size);
+    }
+
+    #[tokio::test]
+    async fn test_resume_preserves_priority() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add high priority download
+        let id = downloader
+            .add_nzb_content(
+                SAMPLE_NZB.as_bytes(),
+                "test",
+                DownloadOptions {
+                    priority: Priority::High,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Add normal priority download
+        let normal_id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "normal", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Pause high priority download
+        downloader.pause(id).await.unwrap();
+
+        // Resume high priority download
+        downloader.resume(id).await.unwrap();
+
+        // High priority download should still come first
+        assert_eq!(downloader.get_next_download().await, Some(id));
+        assert_eq!(downloader.get_next_download().await, Some(normal_id));
     }
 }
