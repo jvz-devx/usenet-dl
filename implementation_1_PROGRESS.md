@@ -18,13 +18,13 @@ IN_PROGRESS
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
   - Tasks 9.1-9.8: ✅ Graceful shutdown with signal handling complete (137 tests passing)
-- Phase 2: 🔄 In Progress (15/71 tasks) - Post-processing pipeline
+- Phase 2: 🔄 In Progress (16/71 tasks) - Post-processing pipeline
   - Tasks 10.1-10.6: ✅ Post-processing skeleton complete (141 tests passing)
   - Tasks 11.1-11.8: ✅ RAR extraction with password support complete (152 tests passing)
-  - Task 12.1: ✅ 7z extraction with password support complete
-- Total: 81/253 tasks complete (32.0%)
+  - Tasks 12.1-12.2: ✅ 7z and ZIP extraction with password support complete
+- Total: 82/253 tasks complete (32.4%)
 
-**Next Task:** Task 12.2 - Integrate zip crate for ZIP extraction
+**Next Task:** Task 12.3 - Implement detect_archive_type() by extension
 
 ## Analysis
 
@@ -239,7 +239,7 @@ The implementation will require these major dependencies:
 - [x] Task 11.8: Test RAR extraction with no password, single password, multiple attempts
 
 - [x] Task 12.1: Integrate sevenz-rust crate for 7z extraction
-- [ ] Task 12.2: Integrate zip crate for ZIP extraction
+- [x] Task 12.2: Integrate zip crate for ZIP extraction
 - [ ] Task 12.3: Implement detect_archive_type() by extension
 - [ ] Task 12.4: Create unified extract_archive() dispatcher
 - [ ] Task 12.5: Add password support for 7z and ZIP
@@ -2834,6 +2834,51 @@ Task 11.1-11.8 will implement actual RAR extraction with password handling, usin
 ---
 
 ## Completed This Iteration (Ralph)
+
+**Task 12.2: ZIP Extraction with Password Support**
+
+### Implementation Summary
+
+Successfully implemented comprehensive ZIP archive extraction following the same pattern as RAR and 7z extractors:
+
+**Implementation:**
+- Added `ZipExtractor` struct with static methods for ZIP archive detection and extraction
+- Implemented `detect_zip_files()` to scan directories for .zip files
+- Created `try_extract()` for single-password extraction attempts
+  - Handles both unencrypted and password-protected ZIP files
+  - Uses `zip::ZipArchive::by_index()` for unencrypted files
+  - Uses `zip::ZipArchive::by_index_decrypt()` for encrypted files
+  - Properly handles directory entries vs files
+  - Uses `enclosed_name()` for security (prevents path traversal attacks)
+- Implemented `extract_with_passwords()` for multi-password attempts
+  - Iterates through PasswordList in priority order
+  - Caches successful passwords in database
+  - Returns appropriate errors (WrongPassword, NoPasswordsAvailable, AllPasswordsFailed)
+
+**Tests Added:**
+- `test_detect_zip_files_empty_dir` - Verifies empty directory handling
+- `test_detect_zip_files_with_zip` - Tests single ZIP file detection
+- `test_detect_zip_files_ignores_other_extensions` - Ensures only .zip files are detected
+- `test_detect_zip_files_multiple_archives` - Verifies multiple ZIP file handling
+
+**Test Results:**
+- All 19 extraction module tests pass
+- 4 new ZIP-specific tests added
+- Build succeeds with no errors (74 documentation warnings, non-blocking)
+
+**Key Features:**
+- Password support for encrypted ZIP files
+- Safe path handling (prevents directory traversal)
+- Consistent error handling matching RAR/7z extractors
+- Comprehensive logging with tracing
+- Database integration for password caching
+
+**Next Steps:**
+Task 12.3 will implement `detect_archive_type()` to identify archive formats by extension, and Task 12.4 will create a unified `extract_archive()` dispatcher to route to the appropriate extractor.
+
+---
+
+## Completed This Iteration (Ralph) - Previous
 
 **Task 12.1: 7z Extraction with Password Support**
 

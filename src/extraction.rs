@@ -504,6 +504,227 @@ impl SevenZipExtractor {
     }
 }
 
+/// Archive extractor for ZIP files
+pub struct ZipExtractor;
+
+impl ZipExtractor {
+    /// Detect ZIP archive files in a directory
+    pub fn detect_zip_files(download_path: &Path) -> Result<Vec<PathBuf>> {
+        debug!(?download_path, "detecting ZIP archives");
+
+        let mut archives = Vec::new();
+
+        // Read directory
+        let entries = std::fs::read_dir(download_path)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+            let path = entry.path();
+
+            // Skip directories
+            if path.is_dir() {
+                continue;
+            }
+
+            // Check for .zip extension
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if ext_str == "zip" {
+                    archives.push(path);
+                }
+            }
+        }
+
+        debug!("found {} ZIP archive(s)", archives.len());
+        Ok(archives)
+    }
+
+    /// Try to extract a ZIP archive with a single password
+    pub fn try_extract(archive_path: &Path, password: &str, dest_path: &Path) -> Result<Vec<PathBuf>> {
+        debug!(
+            ?archive_path,
+            password_length = password.len(),
+            ?dest_path,
+            "attempting ZIP extraction"
+        );
+
+        // Create destination directory if it doesn't exist
+        std::fs::create_dir_all(dest_path)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create destination: {}", e))))?;
+
+        // Open the archive
+        let file = std::fs::File::open(archive_path)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to open ZIP archive: {}", e))))?;
+
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| Error::ExtractionFailed(format!("failed to read ZIP archive: {}", e)))?;
+
+        let mut extracted_files = Vec::new();
+
+        // Extract each file
+        for i in 0..archive.len() {
+            let mut file = if password.is_empty() {
+                archive.by_index(i)
+                    .map_err(|e| {
+                        let err_str = e.to_string();
+                        if err_str.contains("password") || err_str.contains("encrypted") {
+                            Error::WrongPassword
+                        } else {
+                            Error::ExtractionFailed(format!("failed to read ZIP entry: {}", e))
+                        }
+                    })?
+            } else {
+                archive.by_index_decrypt(i, password.as_bytes())
+                    .map_err(|e| {
+                        let err_str = e.to_string();
+                        if err_str.contains("password") || err_str.contains("encrypted") {
+                            Error::WrongPassword
+                        } else {
+                            Error::ExtractionFailed(format!("failed to read ZIP entry: {}", e))
+                        }
+                    })?
+                    .map_err(|_| Error::WrongPassword)?
+            };
+
+            // Get the file path
+            let file_path = match file.enclosed_name() {
+                Some(path) => dest_path.join(path),
+                None => {
+                    warn!("skipping entry with unsafe path");
+                    continue;
+                }
+            };
+
+            // Check if it's a directory
+            if file.is_dir() {
+                // Create directory
+                std::fs::create_dir_all(&file_path)
+                    .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create directory: {}", e))))?;
+            } else {
+                // Create parent directories if needed
+                if let Some(parent) = file_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create parent directories: {}", e))))?;
+                }
+
+                // Extract file
+                let mut outfile = std::fs::File::create(&file_path)
+                    .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create output file: {}", e))))?;
+
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| {
+                        let err_str = e.to_string();
+                        if err_str.contains("password") || err_str.contains("encrypted") {
+                            Error::WrongPassword
+                        } else {
+                            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to extract file: {}", e)))
+                        }
+                    })?;
+
+                extracted_files.push(file_path);
+            }
+        }
+
+        info!(
+            ?archive_path,
+            extracted_count = extracted_files.len(),
+            "ZIP extraction successful"
+        );
+
+        Ok(extracted_files)
+    }
+
+    /// Extract ZIP archive with password attempts
+    pub async fn extract_with_passwords(
+        download_id: DownloadId,
+        archive_path: &Path,
+        dest_path: &Path,
+        passwords: &PasswordList,
+        db: &Database,
+    ) -> Result<Vec<PathBuf>> {
+        if passwords.is_empty() {
+            warn!(
+                download_id,
+                ?archive_path,
+                "no passwords to try for ZIP extraction"
+            );
+            return Err(Error::NoPasswordsAvailable);
+        }
+
+        info!(
+            download_id,
+            ?archive_path,
+            password_count = passwords.len(),
+            "attempting ZIP extraction with {} password(s)",
+            passwords.len()
+        );
+
+        for (i, password) in passwords.iter().enumerate() {
+            debug!(
+                download_id,
+                attempt = i + 1,
+                total = passwords.len(),
+                password_length = password.len(),
+                "trying password {}/{}",
+                i + 1,
+                passwords.len()
+            );
+
+            match Self::try_extract(archive_path, password, dest_path) {
+                Ok(files) => {
+                    info!(
+                        download_id,
+                        ?archive_path,
+                        attempt = i + 1,
+                        "ZIP extraction successful on attempt {}/{}",
+                        i + 1,
+                        passwords.len()
+                    );
+
+                    // Cache successful password
+                    if let Err(e) = db.set_correct_password(download_id, password).await {
+                        warn!(
+                            download_id,
+                            error = %e,
+                            "failed to cache correct password"
+                        );
+                    }
+
+                    return Ok(files);
+                }
+                Err(Error::WrongPassword) => {
+                    debug!(
+                        download_id,
+                        attempt = i + 1,
+                        "wrong password, trying next"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Other error (corrupt archive, disk full, etc.)
+                    warn!(
+                        download_id,
+                        error = %e,
+                        ?archive_path,
+                        "ZIP extraction failed with non-password error"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+
+        // All passwords failed
+        warn!(
+            download_id,
+            ?archive_path,
+            attempted = passwords.len(),
+            "all passwords failed for ZIP extraction"
+        );
+        Err(Error::AllPasswordsFailed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,6 +903,53 @@ mod tests {
         std::fs::write(temp_dir.path().join("archive3.7z"), b"7z3").unwrap();
 
         let result = SevenZipExtractor::detect_7z_files(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_detect_zip_files_empty_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = ZipExtractor::detect_zip_files(temp_dir.path()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_detect_zip_files_with_zip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a fake .zip file
+        let zip_path = temp_dir.path().join("test.zip");
+        std::fs::write(&zip_path, b"fake zip").unwrap();
+
+        let result = ZipExtractor::detect_zip_files(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], zip_path);
+    }
+
+    #[test]
+    fn test_detect_zip_files_ignores_other_extensions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create various files
+        std::fs::write(temp_dir.path().join("test.zip"), b"zip").unwrap();
+        std::fs::write(temp_dir.path().join("test.txt"), b"txt").unwrap();
+        std::fs::write(temp_dir.path().join("test.rar"), b"rar").unwrap();
+        std::fs::write(temp_dir.path().join("test.7z"), b"7z").unwrap();
+
+        let result = ZipExtractor::detect_zip_files(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1); // Only .zip file
+    }
+
+    #[test]
+    fn test_detect_zip_files_multiple_archives() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create multiple ZIP files
+        std::fs::write(temp_dir.path().join("archive1.zip"), b"zip1").unwrap();
+        std::fs::write(temp_dir.path().join("archive2.zip"), b"zip2").unwrap();
+        std::fs::write(temp_dir.path().join("archive3.zip"), b"zip3").unwrap();
+
+        let result = ZipExtractor::detect_zip_files(temp_dir.path()).unwrap();
         assert_eq!(result.len(), 3);
     }
 }
