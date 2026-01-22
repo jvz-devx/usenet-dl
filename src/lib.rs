@@ -511,6 +511,116 @@ impl UsenetDownloader {
         Ok(())
     }
 
+    /// Pause all active downloads
+    ///
+    /// This method pauses all downloads that are currently queued, downloading, or processing.
+    /// Already paused, completed, or failed downloads are not affected.
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if successful, or an error if database operations fail.
+    /// Individual pause failures are logged but don't stop the operation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader) -> Result<()> {
+    /// // Pause all downloads
+    /// downloader.pause_all().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn pause_all(&self) -> Result<()> {
+        // Get all downloads that can be paused (Queued, Downloading, Processing)
+        let all_downloads = self.db.list_downloads().await?;
+
+        let mut paused_count = 0;
+
+        for download in all_downloads {
+            let status = Status::from_i32(download.status);
+
+            // Only pause active downloads
+            match status {
+                Status::Queued | Status::Downloading | Status::Processing => {
+                    if let Err(e) = self.pause(download.id).await {
+                        tracing::warn!(
+                            download_id = download.id,
+                            error = %e,
+                            "Failed to pause download during pause_all"
+                        );
+                        // Continue with other downloads
+                    } else {
+                        paused_count += 1;
+                    }
+                }
+                Status::Paused | Status::Complete | Status::Failed => {
+                    // Skip already paused/finished downloads
+                }
+            }
+        }
+
+        tracing::info!(
+            paused_count = paused_count,
+            "Paused all active downloads"
+        );
+
+        // Emit global QueuePaused event
+        self.emit_event(crate::types::Event::QueuePaused);
+
+        Ok(())
+    }
+
+    /// Resume all paused downloads
+    ///
+    /// This method resumes all downloads that are currently paused.
+    /// Downloads in other states (queued, downloading, complete, failed) are not affected.
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if successful, or an error if database operations fail.
+    /// Individual resume failures are logged but don't stop the operation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader) -> Result<()> {
+    /// // Resume all paused downloads
+    /// downloader.resume_all().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn resume_all(&self) -> Result<()> {
+        // Get all paused downloads
+        let paused_downloads = self.db.list_downloads_by_status(Status::Paused.to_i32()).await?;
+
+        let mut resumed_count = 0;
+
+        for download in paused_downloads {
+            if let Err(e) = self.resume(download.id).await {
+                tracing::warn!(
+                    download_id = download.id,
+                    error = %e,
+                    "Failed to resume download during resume_all"
+                );
+                // Continue with other downloads
+            } else {
+                resumed_count += 1;
+            }
+        }
+
+        tracing::info!(
+            resumed_count = resumed_count,
+            "Resumed all paused downloads"
+        );
+
+        // Emit global QueueResumed event
+        self.emit_event(crate::types::Event::QueueResumed);
+
+        Ok(())
+    }
+
     /// Add an NZB to the download queue from raw bytes
     ///
     /// This method parses the NZB content, creates a download record in the database,
@@ -2225,5 +2335,224 @@ mod tests {
         }
 
         assert!(received_removed, "Should have received Removed event");
+    }
+
+    // Queue-wide pause/resume tests
+
+    #[tokio::test]
+    async fn test_pause_all_pauses_active_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add multiple downloads with different statuses
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test1", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test2", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id3 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test3", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Mark id2 as already paused
+        downloader.pause(id2).await.unwrap();
+
+        // Mark id3 as complete (should not be paused)
+        downloader.db.update_status(id3, Status::Complete.to_i32()).await.unwrap();
+
+        // Pause all
+        downloader.pause_all().await.unwrap();
+
+        // Check statuses
+        let d1 = downloader.db.get_download(id1).await.unwrap().unwrap();
+        let d2 = downloader.db.get_download(id2).await.unwrap().unwrap();
+        let d3 = downloader.db.get_download(id3).await.unwrap().unwrap();
+
+        assert_eq!(d1.status, Status::Paused.to_i32(), "id1 should be paused");
+        assert_eq!(d2.status, Status::Paused.to_i32(), "id2 should still be paused");
+        assert_eq!(d3.status, Status::Complete.to_i32(), "id3 should still be complete");
+    }
+
+    #[tokio::test]
+    async fn test_pause_all_emits_queue_paused_event() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a download
+        downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Subscribe to events
+        let mut events = downloader.subscribe();
+
+        // Pause all (in background to avoid blocking)
+        let downloader_clone = downloader.clone();
+        tokio::spawn(async move {
+            downloader_clone.pause_all().await.unwrap();
+        });
+
+        // Wait for QueuePaused event
+        let mut received_queue_paused = false;
+        for _ in 0..10 {
+            match tokio::time::timeout(std::time::Duration::from_millis(100), events.recv()).await {
+                Ok(Ok(crate::types::Event::QueuePaused)) => {
+                    received_queue_paused = true;
+                    break;
+                }
+                Ok(Ok(_)) => continue, // Other events, keep checking
+                Ok(Err(_)) => break,   // Channel closed
+                Err(_) => break,       // Timeout
+            }
+        }
+
+        assert!(received_queue_paused, "Should have received QueuePaused event");
+    }
+
+    #[tokio::test]
+    async fn test_pause_all_with_empty_queue() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Pause all with no downloads (should not error)
+        let result = downloader.pause_all().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_resume_all_resumes_paused_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add multiple downloads
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test1", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test2", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id3 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test3", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Pause all downloads
+        downloader.pause(id1).await.unwrap();
+        downloader.pause(id2).await.unwrap();
+
+        // Mark id3 as complete (should not be resumed)
+        downloader.db.update_status(id3, Status::Complete.to_i32()).await.unwrap();
+
+        // Resume all
+        downloader.resume_all().await.unwrap();
+
+        // Check statuses
+        let d1 = downloader.db.get_download(id1).await.unwrap().unwrap();
+        let d2 = downloader.db.get_download(id2).await.unwrap().unwrap();
+        let d3 = downloader.db.get_download(id3).await.unwrap().unwrap();
+
+        assert_eq!(d1.status, Status::Queued.to_i32(), "id1 should be queued");
+        assert_eq!(d2.status, Status::Queued.to_i32(), "id2 should be queued");
+        assert_eq!(d3.status, Status::Complete.to_i32(), "id3 should still be complete");
+    }
+
+    #[tokio::test]
+    async fn test_resume_all_emits_queue_resumed_event() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add and pause a download
+        let id = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        downloader.pause(id).await.unwrap();
+
+        // Subscribe to events
+        let mut events = downloader.subscribe();
+
+        // Resume all (in background to avoid blocking)
+        let downloader_clone = downloader.clone();
+        tokio::spawn(async move {
+            downloader_clone.resume_all().await.unwrap();
+        });
+
+        // Wait for QueueResumed event
+        let mut received_queue_resumed = false;
+        for _ in 0..10 {
+            match tokio::time::timeout(std::time::Duration::from_millis(100), events.recv()).await {
+                Ok(Ok(crate::types::Event::QueueResumed)) => {
+                    received_queue_resumed = true;
+                    break;
+                }
+                Ok(Ok(_)) => continue, // Other events, keep checking
+                Ok(Err(_)) => break,   // Channel closed
+                Err(_) => break,       // Timeout
+            }
+        }
+
+        assert!(received_queue_resumed, "Should have received QueueResumed event");
+    }
+
+    #[tokio::test]
+    async fn test_resume_all_with_no_paused_downloads() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a queued download (not paused)
+        downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Resume all (should not error even though nothing is paused)
+        let result = downloader.resume_all().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_pause_all_resume_all_cycle() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add multiple downloads
+        let id1 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test1", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        let id2 = downloader
+            .add_nzb_content(SAMPLE_NZB.as_bytes(), "test2", DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Initial state: both queued
+        let d1 = downloader.db.get_download(id1).await.unwrap().unwrap();
+        let d2 = downloader.db.get_download(id2).await.unwrap().unwrap();
+        assert_eq!(d1.status, Status::Queued.to_i32());
+        assert_eq!(d2.status, Status::Queued.to_i32());
+
+        // Pause all
+        downloader.pause_all().await.unwrap();
+
+        // After pause: both paused
+        let d1 = downloader.db.get_download(id1).await.unwrap().unwrap();
+        let d2 = downloader.db.get_download(id2).await.unwrap().unwrap();
+        assert_eq!(d1.status, Status::Paused.to_i32());
+        assert_eq!(d2.status, Status::Paused.to_i32());
+
+        // Resume all
+        downloader.resume_all().await.unwrap();
+
+        // After resume: both queued again
+        let d1 = downloader.db.get_download(id1).await.unwrap().unwrap();
+        let d2 = downloader.db.get_download(id2).await.unwrap().unwrap();
+        assert_eq!(d1.status, Status::Queued.to_i32());
+        assert_eq!(d2.status, Status::Queued.to_i32());
     }
 }

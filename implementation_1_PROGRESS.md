@@ -8,16 +8,16 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (32/53 tasks complete)
+- Phase 1: 🔄 In Progress (33/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
-  - Tasks 5.1-5.7: ✅ Priority queue, automatic download spawning, pause, resume, and cancel complete (69 tests passing)
-  - Tasks 5.8-9.8: ⏳ Remaining (Queue-wide operations, Speed Limiting, Retry, Shutdown)
-- Total: 37/253 tasks complete (14.6%)
+  - Tasks 5.1-5.8: ✅ Priority queue, automatic download spawning, pause, resume, cancel, and queue-wide operations complete (76 tests passing)
+  - Tasks 5.9-9.8: ⏳ Remaining (Queue persistence, Resume support, Speed Limiting, Retry, Shutdown)
+- Total: 38/253 tasks complete (15.0%)
 
-**Next Task:** Task 5.8 - Add pause_all() and resume_all() queue-wide operations
+**Next Task:** Task 5.9 - Persist queue state to SQLite on every change
 
 ## Analysis
 
@@ -179,7 +179,7 @@ The implementation will require these major dependencies:
 - [x] Task 5.5: Implement pause() to stop download without removing from queue
 - [x] Task 5.6: Implement resume() to restart paused download
 - [x] Task 5.7: Implement cancel() to remove download and delete files
-- [ ] Task 5.8: Add pause_all() and resume_all() queue-wide operations
+- [x] Task 5.8: Add pause_all() and resume_all() queue-wide operations
 - [ ] Task 5.9: Persist queue state to SQLite on every change
 
 - [ ] Task 6.1: Implement article status tracking in download_articles table
@@ -435,6 +435,90 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Phase 1 Queue Management - Task 5.8 Complete: Queue-Wide Pause/Resume Operations**
+
+- Task 5.8: Implemented pause_all() and resume_all() queue-wide operations ✓
+  - pause_all() pauses all active downloads (Queued, Downloading, Processing)
+  - resume_all() resumes all paused downloads
+  - Both methods respect download status (don't touch Complete/Failed)
+  - Robust error handling: individual failures logged but don't stop operation
+  - Emits global QueuePaused and QueueResumed events
+  - Uses existing pause()/resume() methods internally for consistency
+  - Graceful handling of empty queue or no paused downloads
+  - All 76 tests passing (7 new tests added for queue-wide operations)
+
+**Implementation Details:**
+
+pause_all() Method Behavior:
+```rust
+pub async fn pause_all(&self) -> Result<()> {
+    // Get all downloads from database
+    let all_downloads = self.db.list_downloads().await?;
+
+    // Iterate and pause only active downloads
+    for download in all_downloads {
+        match status {
+            Status::Queued | Status::Downloading | Status::Processing => {
+                self.pause(download.id).await?; // Reuses existing pause logic
+            }
+            _ => {} // Skip Complete, Failed, already Paused
+        }
+    }
+
+    // Emit QueuePaused event
+    self.emit_event(Event::QueuePaused);
+}
+```
+
+resume_all() Method Behavior:
+```rust
+pub async fn resume_all(&self) -> Result<()> {
+    // Get only paused downloads efficiently
+    let paused_downloads = self.db.list_downloads_by_status(Status::Paused.to_i32()).await?;
+
+    // Resume each paused download
+    for download in paused_downloads {
+        self.resume(download.id).await?; // Reuses existing resume logic
+    }
+
+    // Emit QueueResumed event
+    self.emit_event(Event::QueueResumed);
+}
+```
+
+Error Handling:
+- Individual pause/resume failures logged with tracing::warn!
+- Operation continues despite individual failures (robust to partial state)
+- Counts successful operations and logs summary with tracing::info!
+- Returns Ok(()) even if some operations fail (best-effort)
+
+Test Coverage (7 new tests):
+- test_pause_all_pauses_active_downloads: Verifies only active downloads are paused
+- test_pause_all_emits_queue_paused_event: Confirms QueuePaused event emission
+- test_pause_all_with_empty_queue: Edge case with no downloads
+- test_resume_all_resumes_paused_downloads: Verifies only paused downloads are resumed
+- test_resume_all_emits_queue_resumed_event: Confirms QueueResumed event emission
+- test_resume_all_with_no_paused_downloads: Edge case with no paused downloads
+- test_pause_all_resume_all_cycle: Full lifecycle test (queue → pause all → resume all → queue)
+
+**Technical Notes:**
+- Uses db.list_downloads() for pause_all (all downloads)
+- Uses db.list_downloads_by_status() for resume_all (filtered query, more efficient)
+- Best-effort approach: partial failures don't stop the operation
+- Logging provides visibility into operation progress (paused_count, resumed_count)
+- Delegates to existing pause()/resume() for consistency (DRY principle)
+- Event emission happens after operations complete (not per-download)
+
+**Architectural Impact:**
+- Complete queue-wide control now available
+- Foundation for API endpoints: POST /queue/pause and POST /queue/resume
+- Foundation for Scheduler (automatic pause/resume based on time rules)
+- Demonstrates robustness: partial failures don't break the system
+- Clean separation: queue-wide vs individual operations
+- Ready for Task 5.9 (queue persistence)
+
+## Previous Completed Iterations
 
 **Phase 1 Queue Management - Task 5.7 Complete: Cancel Implementation**
 
