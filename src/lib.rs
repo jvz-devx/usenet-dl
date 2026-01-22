@@ -129,6 +129,9 @@ impl UsenetDownloader {
         // Initialize database
         let db = Database::new(&config.database_path).await?;
 
+        // Mark that we're starting up (for unclean shutdown detection)
+        db.set_clean_start().await?;
+
         // Create broadcast channel with buffer size of 1000 events
         // This allows multiple subscribers to receive all events independently
         let (event_tx, _rx) = tokio::sync::broadcast::channel(1000);
@@ -906,10 +909,18 @@ impl UsenetDownloader {
             tracing::info!("Final state persisted to database");
         }
 
-        // 5. Emit shutdown event
+        // 5. Mark clean shutdown in database
+        if let Err(e) = self.db.set_clean_shutdown().await {
+            tracing::error!(error = %e, "Failed to mark clean shutdown in database");
+            // Continue with shutdown even if this fails
+        } else {
+            tracing::info!("Marked clean shutdown in database");
+        }
+
+        // 6. Emit shutdown event
         let _ = self.event_tx.send(Event::Shutdown);
 
-        // 6. Close database connections
+        // 7. Close database connections
         // Note: Database is in an Arc, so we can't consume it directly.
         // The connection pool will be closed when the last Arc reference is dropped.
         // We log this for observability but don't actually close the pool here.

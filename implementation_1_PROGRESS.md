@@ -8,7 +8,7 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (58/61 tasks complete)
+- Phase 1: 🔄 In Progress (59/61 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
@@ -17,10 +17,10 @@ IN_PROGRESS
   - Tasks 6.1-6.6: ✅ Complete resume support with crash recovery (92 tests passing)
   - Tasks 7.1-7.7: ✅ SpeedLimiter with comprehensive multi-download tests complete (111 tests passing)
   - Tasks 8.1-8.6: ✅ Retry logic with exponential backoff complete (121 tests passing)
-  - Tasks 9.1-9.8: 🔄 In Progress (6/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), wait_for_active_downloads(), persist_all_state(), and signal handling)
-- Total: 64/253 tasks complete (25.3%)
+  - Tasks 9.1-9.8: 🔄 In Progress (7/8 complete - shutdown(), accepting_new flag, pause_graceful_all(), wait_for_active_downloads(), persist_all_state(), signal handling, and shutdown flag complete)
+- Total: 65/253 tasks complete (25.7%)
 
-**Next Task:** Task 9.7 - Add shutdown flag to database (was_unclean_shutdown check)
+**Next Task:** Task 9.8 - Test graceful shutdown and recovery on restart
 
 ## Analysis
 
@@ -213,7 +213,7 @@ The implementation will require these major dependencies:
 - [x] Task 9.4: Add wait_for_articles() with timeout (implemented as wait_for_active_downloads())
 - [x] Task 9.5: Implement persist_all_state() to save final state
 - [x] Task 9.6: Set up signal handling (SIGTERM, SIGINT) using tokio::signal
-- [ ] Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)
+- [x] Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)
 - [ ] Task 9.8: Test graceful shutdown and recovery on restart
 
 ### Phase 2: Post-Processing (Steps 10-16)
@@ -2492,68 +2492,111 @@ This is a planning phase - NO timeline estimates as per instructions. Tasks will
 
 ## Completed This Iteration
 
-**Task 9.5: Implement persist_all_state() to save final state**
+**Task 9.7: Add shutdown flag to database (was_unclean_shutdown check)**
 
 ### Implementation Details
 
-Added the `persist_all_state()` method to the `UsenetDownloader` struct that:
+Implemented a complete shutdown state tracking system to detect unclean shutdowns (crashes) and enable state recovery on restart. The implementation includes:
 
-1. **Queries all downloads from the database** using a new `get_all_downloads()` method
-2. **Identifies interrupted downloads** - downloads in Downloading or Processing state that are no longer in the active_downloads map
-3. **Marks interrupted downloads as Paused** so they can be resumed on next startup
-4. **Preserves truly active downloads** - downloads that are still in the active_downloads map are left unchanged
+1. **Database Migration v2**: Added a new `runtime_state` table to track shutdown state
+   - Key-value storage for runtime flags
+   - Initialized with `clean_shutdown = false` on first run
 
-### Database Changes
+2. **Three New Database Methods**:
+   - `was_unclean_shutdown()`: Checks if previous shutdown was unclean (returns true if crashed)
+   - `set_clean_start()`: Called during startup to mark that application is running
+   - `set_clean_shutdown()`: Called during shutdown to mark graceful exit
 
-Added `get_all_downloads()` method to the `Database` struct in `src/db.rs`:
-- Retrieves all downloads from the database (not just incomplete ones)
-- Used by `persist_all_state()` to check all download states during shutdown
+3. **Integration with UsenetDownloader**:
+   - `new()` now calls `set_clean_start()` immediately after database initialization
+   - `shutdown()` now calls `set_clean_shutdown()` after persisting state (step 5)
 
-### Shutdown Integration
+### Database Schema Changes
 
-Updated the `shutdown()` method in `src/lib.rs` to call `persist_all_state()`:
-- Integrated into the graceful shutdown sequence (step 4)
-- Handles errors gracefully - logs error but continues shutdown even if persistence fails
-- Ensures downloads interrupted during shutdown are properly marked for resume
+Added new table via migration v2 in `src/db.rs`:
+
+```sql
+CREATE TABLE runtime_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+)
+```
+
+The table stores a single row: `clean_shutdown` with value `"true"` or `"false"`.
+
+### Lifecycle Flow
+
+**Normal Startup → Clean Shutdown:**
+1. App starts → `set_clean_start()` → `clean_shutdown = "false"`
+2. App runs normally
+3. Shutdown called → `set_clean_shutdown()` → `clean_shutdown = "true"`
+4. Next startup → `was_unclean_shutdown()` returns `false` (clean)
+
+**Crash Scenario:**
+1. App starts → `set_clean_start()` → `clean_shutdown = "false"`
+2. App crashes (no shutdown called)
+3. Next startup → `was_unclean_shutdown()` returns `true` (unclean!)
+4. Recovery logic can be triggered
 
 ### Tests Added
 
-Added 3 comprehensive tests (130 tests total now, up from 127):
+Added 3 comprehensive tests (133 tests total now, was 130):
 
-1. **test_persist_all_state_marks_interrupted_downloads_as_paused**
-   - Verifies that downloads in Downloading/Processing state are marked as Paused
-   - Ensures Complete downloads remain unchanged
-   - Tests the core functionality of state persistence
+1. **test_shutdown_state_initial**
+   - Verifies initial state after migration shows unclean shutdown
+   - Tests the default state of new databases
 
-2. **test_persist_all_state_preserves_active_downloads**
-   - Verifies that truly active downloads (in active_downloads map) are not modified
-   - Ensures the method only affects interrupted downloads
+2. **test_shutdown_state_clean_lifecycle**
+   - Tests the complete clean start → clean shutdown lifecycle
+   - Verifies state transitions work correctly
 
-3. **test_shutdown_calls_persist_all_state**
-   - Integration test verifying shutdown() calls persist_all_state()
-   - Verifies interrupted downloads are properly handled during shutdown
+3. **test_shutdown_state_unclean_detection**
+   - Simulates a crash (start without shutdown)
+   - Verifies next startup detects the unclean shutdown
+   - Tests multi-session state tracking
+
+### Files Modified
+
+- `src/db.rs`:
+  - Added `migrate_v2()` function
+  - Added three new methods: `was_unclean_shutdown()`, `set_clean_start()`, `set_clean_shutdown()`
+  - Updated `run_migrations()` to apply v2 migration
+  - Updated test to check for `runtime_state` table
+  - Added 3 new tests
+
+- `src/lib.rs`:
+  - Updated `UsenetDownloader::new()` to call `db.set_clean_start()`
+  - Updated `UsenetDownloader::shutdown()` to call `db.set_clean_shutdown()`
 
 ### Design Considerations
 
-The implementation follows the design document while accounting for the current implementation phase:
+This implementation follows the design document (lines 2347-2369) exactly:
 
-- **Current Phase 1 State**: Downloads are already persisted throughout their lifecycle via `update_status()` and `update_progress()` calls
-- **SQLite Auto-Commit**: No need for explicit transaction management or buffer flushing
-- **Future Extension**: The method includes comprehensive documentation noting that it will be extended in future phases to persist:
-  - Folder watcher state (Phase 4)
-  - RSS feed state and seen items (Phase 4)
-  - Scheduler state (Phase 4)
-  - Any in-memory caches or buffers
+- **Unclean Shutdown Detection**: The `was_unclean_shutdown()` method enables recovery logic in future implementations
+- **State Tracking**: Using a database table (not a file lock) ensures it works across different platforms and crash scenarios
+- **Graceful Degradation**: If `set_clean_shutdown()` fails during shutdown, the next startup will correctly detect an unclean shutdown
+
+### Future Extension
+
+The `was_unclean_shutdown()` flag is currently checked but not acted upon. In a future task (likely Task 9.8 or later), we'll add:
+
+- Recovery logic in `UsenetDownloader::new()` or `restore_queue()`
+- Re-verification of partially downloaded files
+- Integrity checks for interrupted downloads
+
+This provides the foundation for robust crash recovery.
 
 ### Verification
 
-- ✅ Code compiles without errors
+- ✅ Code compiles without errors or warnings (besides existing documentation warnings)
 - ✅ All 3 new tests pass
-- ✅ Build completes successfully
-- ✅ 130 total tests in the test suite
+- ✅ `cargo check` completes successfully
+- ✅ Database migration v2 runs automatically on existing databases
+- ✅ 133 total tests in the test suite
 
 ## Notes
 
-The `persist_all_state()` implementation is complete and working. The method correctly identifies and marks interrupted downloads as Paused, ensuring they can be resumed on the next startup. This fulfills the requirements of Task 9.5 while maintaining compatibility with the existing architecture.
+Task 9.7 is complete. The shutdown state tracking system is fully implemented and tested. The database now properly tracks clean vs unclean shutdowns, enabling future recovery logic. The implementation is minimal, elegant, and follows the design document specifications exactly.
 
-The next task (9.6) will implement signal handling (SIGTERM, SIGINT) using tokio::signal.
+Next: Task 9.8 will add integration tests for the complete graceful shutdown and recovery flow.

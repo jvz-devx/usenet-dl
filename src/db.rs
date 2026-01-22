@@ -180,6 +180,9 @@ impl Database {
         if current_version < 1 {
             Self::migrate_v1(&mut conn).await?;
         }
+        if current_version < 2 {
+            Self::migrate_v2(&mut conn).await?;
+        }
 
         Ok(())
     }
@@ -329,6 +332,49 @@ impl Database {
             .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
 
         tracing::info!("Database migration v1 complete");
+
+        Ok(())
+    }
+
+    /// Migration v2: Add runtime state table for shutdown tracking
+    async fn migrate_v2(conn: &mut SqliteConnection) -> Result<()> {
+        tracing::info!("Applying database migration v2");
+
+        // Runtime state table for tracking clean/unclean shutdown
+        sqlx::query(
+            r#"
+            CREATE TABLE runtime_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to create runtime_state table: {}", e)))?;
+
+        // Initialize shutdown state as unclean (will be set to clean on proper startup)
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO runtime_state (key, value, updated_at)
+            VALUES ('clean_shutdown', 'false', ?)
+            "#
+        )
+        .bind(now)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to initialize runtime_state: {}", e)))?;
+
+        // Record migration
+        sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (2, ?)")
+            .bind(now)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
+
+        tracing::info!("Database migration v2 complete");
 
         Ok(())
     }
@@ -1059,6 +1105,74 @@ impl Database {
 
         Ok(row.map(HistoryEntry::from))
     }
+
+    // Shutdown state tracking methods
+
+    /// Check if the last shutdown was unclean
+    ///
+    /// Returns true if the previous session did not call set_clean_shutdown(),
+    /// indicating a crash or forced termination.
+    ///
+    /// This method is called on startup to determine if state recovery is needed.
+    pub async fn was_unclean_shutdown(&self) -> Result<bool> {
+        let value: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT value FROM runtime_state WHERE key = 'clean_shutdown'
+            "#
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to check shutdown state: {}", e)))?;
+
+        // If the value is missing or "false", it was an unclean shutdown
+        Ok(value.map_or(true, |v| v != "true"))
+    }
+
+    /// Mark that the application has started cleanly
+    ///
+    /// This should be called during UsenetDownloader::new() to indicate that
+    /// the application is running. If shutdown() is not called before the next
+    /// startup, was_unclean_shutdown() will return true.
+    pub async fn set_clean_start(&self) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO runtime_state (key, value, updated_at)
+            VALUES ('clean_shutdown', 'false', ?)
+            ON CONFLICT(key) DO UPDATE SET value = 'false', updated_at = ?
+            "#
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to set clean start: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Mark that the application is shutting down cleanly
+    ///
+    /// This should be called during UsenetDownloader::shutdown() to indicate
+    /// a graceful shutdown. If this is not called before the process exits,
+    /// the next startup will detect an unclean shutdown.
+    pub async fn set_clean_shutdown(&self) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO runtime_state (key, value, updated_at)
+            VALUES ('clean_shutdown', 'true', ?)
+            ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = ?
+            "#
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to set clean shutdown: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1089,6 +1203,7 @@ mod tests {
         assert!(tables.contains(&"processed_nzbs".to_string()));
         assert!(tables.contains(&"history".to_string()));
         assert!(tables.contains(&"schema_version".to_string()));
+        assert!(tables.contains(&"runtime_state".to_string()));
 
         db.close().await;
     }
@@ -2322,5 +2437,71 @@ mod tests {
         assert_eq!(results[2].name, "Download.0"); // now - 1000 (oldest)
 
         db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_state_initial() {
+        // Task 9.7: Test initial shutdown state after migration
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // After migration, shutdown state should be "false" (unclean)
+        let was_unclean = db.was_unclean_shutdown().await.unwrap();
+        assert!(was_unclean, "Initial state should indicate unclean shutdown");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_state_clean_lifecycle() {
+        // Task 9.7: Test clean start and shutdown sequence
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Mark clean start (application started)
+        db.set_clean_start().await.unwrap();
+        let was_unclean = db.was_unclean_shutdown().await.unwrap();
+        assert!(was_unclean, "After clean start, should still indicate unclean (not yet shut down)");
+
+        // Mark clean shutdown (application shutting down gracefully)
+        db.set_clean_shutdown().await.unwrap();
+        let was_unclean = db.was_unclean_shutdown().await.unwrap();
+        assert!(!was_unclean, "After clean shutdown, should indicate clean");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_state_unclean_detection() {
+        // Task 9.7: Test unclean shutdown detection (crash scenario)
+        let temp_file = NamedTempFile::new().unwrap();
+
+        // First session: start but don't shut down cleanly (simulating crash)
+        {
+            let db = Database::new(temp_file.path()).await.unwrap();
+            db.set_clean_start().await.unwrap();
+            // Intentionally NOT calling set_clean_shutdown() - simulates crash
+            db.close().await;
+        }
+
+        // Second session: detect unclean shutdown
+        {
+            let db = Database::new(temp_file.path()).await.unwrap();
+            let was_unclean = db.was_unclean_shutdown().await.unwrap();
+            assert!(was_unclean, "Should detect unclean shutdown from previous session");
+
+            // Now do a clean shutdown
+            db.set_clean_start().await.unwrap();
+            db.set_clean_shutdown().await.unwrap();
+            db.close().await;
+        }
+
+        // Third session: should be clean now
+        {
+            let db = Database::new(temp_file.path()).await.unwrap();
+            let was_unclean = db.was_unclean_shutdown().await.unwrap();
+            assert!(!was_unclean, "Should detect clean shutdown from previous session");
+            db.close().await;
+        }
     }
 }
