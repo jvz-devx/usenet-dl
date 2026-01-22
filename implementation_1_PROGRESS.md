@@ -8,17 +8,17 @@ IN_PROGRESS
 
 **Progress Summary:**
 - Phase 0: ✅ Complete (5/5 tasks) - Project structure initialized
-- Phase 1: 🔄 In Progress (37/53 tasks complete)
+- Phase 1: 🔄 In Progress (39/53 tasks complete)
   - Tasks 1.1-1.4: ✅ Core types complete
   - Tasks 2.1-2.8: ✅ Database layer complete (33 tests passing)
   - Tasks 3.1-3.5: ✅ Event system complete
   - Tasks 4.1-4.8: ✅ Download manager with speed tracking complete
   - Tasks 5.1-5.9: ✅ Priority queue with complete persistence (79 tests passing)
-  - Tasks 6.1-6.3: ✅ Queue restoration on startup (91 tests passing)
-  - Tasks 6.4-9.8: ⏳ Remaining (Incomplete download handling, Speed Limiting, Retry, Shutdown)
-- Total: 42/253 tasks complete (16.6%)
+  - Tasks 6.1-6.5: ✅ Complete queue restoration with all scenarios (91 tests passing)
+  - Tasks 6.6-9.8: ⏳ Remaining (Crash recovery test, Speed Limiting, Retry, Shutdown)
+- Total: 44/253 tasks complete (17.4%)
 
-**Next Task:** Task 6.4 - Handle incomplete downloads (status=Downloading) on startup
+**Next Task:** Task 6.6 - Test resume after simulated crash (kill process mid-download)
 
 ## Analysis
 
@@ -186,8 +186,8 @@ The implementation will require these major dependencies:
 - [x] Task 6.1: Implement article status tracking in download_articles table
 - [x] Task 6.2: Create resume_download() to query pending articles and continue
 - [x] Task 6.3: Implement restore_queue() called on startup
-- [ ] Task 6.4: Handle incomplete downloads (status=Downloading) on startup
-- [ ] Task 6.5: Handle processing downloads (status=Processing) on startup
+- [x] Task 6.4: Handle incomplete downloads (status=Downloading) on startup
+- [x] Task 6.5: Handle processing downloads (status=Processing) on startup
 - [ ] Task 6.6: Test resume after simulated crash (kill process mid-download)
 
 - [ ] Task 7.1: Implement SpeedLimiter with token bucket algorithm
@@ -541,6 +541,34 @@ Test Coverage Highlights:
 - Status filtering: get_incomplete_downloads() filters in SQL (efficient, no unnecessary data transfer)
 - No duplicate restoration: Downloads already in queue aren't re-added (state machine prevents duplicates)
 - Seamless integration: Queue processor automatically picks up restored downloads
+
+**Task 6.4 and 6.5 Completion:**
+
+Tasks 6.4 (Handle incomplete downloads with status=Downloading) and 6.5 (Handle processing downloads with status=Processing) are ALREADY IMPLEMENTED within Task 6.3's restore_queue() method:
+
+- **Task 6.4**: Lines 573-580 in restore_queue() explicitly handle Status::Downloading by calling resume_download()
+- **Task 6.5**: Same lines handle Status::Processing by calling resume_download()
+- Both scenarios are covered by the match statement:
+  ```rust
+  match status {
+      Status::Downloading | Status::Processing => {
+          // These were actively running - resume them
+          tracing::info!(
+              download_id = download.id,
+              status = ?status,
+              "Resuming interrupted download"
+          );
+          self.resume_download(download.id).await?;
+      }
+      // ... other cases ...
+  }
+  ```
+- Test coverage:
+  - test_restore_queue_with_downloading_status: Verifies Downloading status handling
+  - test_restore_queue_with_processing_status: Verifies Processing status handling
+  - Both tests confirm the downloads are correctly resumed and status is updated
+
+Marking Tasks 6.4 and 6.5 as complete since they're integral parts of restore_queue() implementation.
 
 ## Previous Completed Iterations
 
