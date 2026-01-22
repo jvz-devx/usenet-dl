@@ -49,6 +49,9 @@ sha2 = "0.10"
 # Regular expressions (RSS filters)
 regex = "1"
 
+# Random number generation (retry jitter)
+rand = "0.8"
+
 # REST API
 axum = { version = "0.7", features = ["multipart"] }
 tower = "0.4"

@@ -3105,6 +3105,7 @@ dependencies = [
  "chrono",
  "nntp-rs",
  "notify",
+ "rand",
  "regex",
  "reqwest",
  "serde",
