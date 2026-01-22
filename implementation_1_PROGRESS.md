@@ -26,12 +26,12 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (10/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (11/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
-  - Tasks 18.1-18.2: ✅ OpenAPI dependencies added, 33 types annotated with ToSchema
-- Total: 119/253 tasks complete (47.0%)
+  - Tasks 18.1-18.3: ✅ OpenAPI dependencies added, 33 types annotated with ToSchema, all 37 route handlers annotated
+- Total: 120/253 tasks complete (47.4%)
 
-**Next Task:** Task 18.3 - Annotate all route handlers with #[utoipa::path]
+**Next Task:** Task 18.4 - Create ApiDoc struct with #[derive(OpenApi)]
 
 ## Analysis
 
@@ -292,7 +292,7 @@ The implementation will require these major dependencies:
 
 - [x] Task 18.1: Add utoipa and utoipa-swagger-ui dependencies
 - [x] Task 18.2: Annotate all types with #[derive(ToSchema)]
-- [ ] Task 18.3: Annotate all route handlers with #[utoipa::path]
+- [x] Task 18.3: Annotate all route handlers with #[utoipa::path]
 - [ ] Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]
 - [ ] Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec
 - [ ] Task 18.6: Mount Swagger UI at /swagger-ui
@@ -450,7 +450,61 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 17.6: Add CORS Middleware**
+**Task 18.3: Annotate All Route Handlers with #[utoipa::path]**
+
+Successfully added OpenAPI annotations to all 37 REST API route handlers:
+
+1. **Implementation** (src/api/routes.rs):
+   - Added `use utoipa;` import
+   - Annotated all 37 route handlers with `#[utoipa::path]` macro
+   - Each annotation includes:
+     * HTTP method (get, post, put, patch, delete)
+     * Full path with `/api/v1` prefix
+     * Tag for grouping (downloads, queue, history, servers, config, categories, system, rss, scheduler)
+     * Path parameters with types and descriptions
+     * Query parameters where applicable
+     * Request body schemas (referencing existing ToSchema types)
+     * Response status codes with descriptions
+     * Response body schemas (referencing existing types like DownloadInfo, HistoryEntry, Config, etc.)
+
+2. **Route Handler Coverage** (37 total):
+   - **Downloads (10):** list_downloads, get_download, add_download, add_download_url, pause_download, resume_download, delete_download, set_download_priority, reprocess_download, reextract_download
+   - **Queue (3):** pause_queue, resume_queue, queue_stats
+   - **History (2):** get_history, clear_history
+   - **Servers (2):** test_server, test_all_servers
+   - **Config (4):** get_config, update_config, get_speed_limit, set_speed_limit
+   - **Categories (3):** list_categories, create_or_update_category, delete_category
+   - **System (4):** health_check, openapi_spec, event_stream, shutdown
+   - **RSS (5):** list_rss_feeds, add_rss_feed, update_rss_feed, delete_rss_feed, check_rss_feed
+   - **Scheduler (4):** list_schedule_rules, add_schedule_rule, update_schedule_rule, delete_schedule_rule
+
+3. **Type References** (using existing ToSchema types):
+   - `crate::types::DownloadInfo` - download information response
+   - `crate::types::HistoryEntry` - history entry response
+   - `crate::types::Priority` - priority request body
+   - `crate::config::Config` - configuration schemas
+   - `crate::config::ServerConfig` - server configuration
+   - `crate::config::CategoryConfig` - category configuration
+   - `crate::config::ScheduleRule` - scheduler rule configuration
+
+4. **Design Decisions**:
+   - All paths include full `/api/v1` prefix for clarity
+   - Consistent use of HTTP status codes (200, 201, 204 for success; 400, 404, 409, 422, 500 for errors)
+   - Query parameters documented where needed (pagination, filtering, delete_files flag)
+   - Path parameters properly typed (i64 for IDs, String for names)
+   - Tags organize endpoints by functional area for better Swagger UI grouping
+
+5. **Validation**:
+   - ✅ Build successful: `cargo build` completes with 0 errors
+   - ✅ All 37 handlers annotated (verified with grep count)
+   - ✅ All annotations compile correctly
+   - ✅ Ready for Task 18.4 (ApiDoc struct creation)
+
+**Next:** Task 18.4 - Create ApiDoc struct with #[derive(OpenApi)]
+
+---
+
+**Previous Iteration: Task 17.6: Add CORS Middleware**
 
 Successfully implemented CORS (Cross-Origin Resource Sharing) middleware for the REST API:
 
