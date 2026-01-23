@@ -1242,11 +1242,11 @@ pub async fn set_speed_limit(
     )
 )]
 pub async fn list_categories(State(state): State<AppState>) -> impl IntoResponse {
-    // Get the config from the downloader
-    let config = state.downloader.get_config();
+    // Get the categories from the downloader
+    let categories = state.downloader.get_categories().await;
 
-    // Clone and return the categories HashMap
-    (StatusCode::OK, Json(config.categories.clone()))
+    // Return the categories HashMap
+    (StatusCode::OK, Json(categories))
 }
 
 /// PUT /categories/:name - Create/update category
@@ -1265,10 +1265,15 @@ pub async fn list_categories(State(state): State<AppState>) -> impl IntoResponse
     )
 )]
 pub async fn create_or_update_category(
-    State(_state): State<AppState>,
-    Path(_name): Path<String>,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(category_config): Json<crate::config::CategoryConfig>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // Add or update the category
+    state.downloader.add_or_update_category(name, category_config).await;
+
+    // Return 204 No Content on success
+    StatusCode::NO_CONTENT
 }
 
 /// DELETE /categories/:name - Delete category

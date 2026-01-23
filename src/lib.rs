@@ -96,6 +96,8 @@ pub struct UsenetDownloader {
     accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Post-processing pipeline executor
     post_processor: std::sync::Arc<post_processing::PostProcessor>,
+    /// Runtime-mutable categories (separate from config for dynamic updates)
+    categories: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::config::CategoryConfig>>>,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -174,7 +176,10 @@ impl UsenetDownloader {
         let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
 
         // Create config Arc early so we can share it
-        let config_arc = std::sync::Arc::new(config);
+        let config_arc = std::sync::Arc::new(config.clone());
+
+        // Initialize runtime-mutable categories from config
+        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.categories.clone()));
 
         // Create post-processing pipeline executor
         let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
@@ -193,6 +198,7 @@ impl UsenetDownloader {
             speed_limiter,
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             post_processor,
+            categories,
         };
 
         // Restore any incomplete downloads from database (from previous session)
@@ -1255,6 +1261,97 @@ impl UsenetDownloader {
         }
     }
 
+    /// Create or update a category
+    ///
+    /// This method adds a new category or updates an existing one with the provided configuration.
+    /// The change takes effect immediately for new downloads.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The category name
+    /// * `config` - The category configuration
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # use usenet_dl::config::CategoryConfig;
+    /// # use std::path::PathBuf;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let category_config = CategoryConfig {
+    ///     destination: PathBuf::from("/downloads/movies"),
+    ///     post_process: None,
+    ///     watch_folder: None,
+    ///     scripts: vec![],
+    /// };
+    /// downloader.add_or_update_category("movies".to_string(), category_config).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_or_update_category(&self, name: String, config: crate::config::CategoryConfig) {
+        let mut categories = self.categories.write().await;
+        categories.insert(name, config);
+    }
+
+    /// Remove a category
+    ///
+    /// This method removes a category from the runtime configuration.
+    /// Returns true if the category existed and was removed, false otherwise.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The category name to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the category was removed, `false` if it didn't exist
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let was_removed = downloader.remove_category("movies").await;
+    /// if was_removed {
+    ///     println!("Category removed");
+    /// } else {
+    ///     println!("Category not found");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn remove_category(&self, name: &str) -> bool {
+        let mut categories = self.categories.write().await;
+        categories.remove(name).is_some()
+    }
+
+    /// Get all categories
+    ///
+    /// Returns a clone of the current categories HashMap.
+    ///
+    /// # Returns
+    ///
+    /// A HashMap of category names to CategoryConfig
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let categories = downloader.get_categories().await;
+    /// for (name, config) in categories {
+    ///     println!("Category: {}, Destination: {:?}", name, config.destination);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_categories(&self) -> std::collections::HashMap<String, crate::config::CategoryConfig> {
+        self.categories.read().await.clone()
+    }
+
     /// Gracefully shut down the downloader
     ///
     /// This method performs a graceful shutdown sequence:
@@ -1558,7 +1655,8 @@ impl UsenetDownloader {
             dest
         } else if let Some(category) = &options.category {
             // Check if category has custom destination
-            if let Some(cat_config) = self.config.categories.get(category) {
+            let categories = self.categories.read().await;
+            if let Some(cat_config) = categories.get(category) {
                 cat_config.destination.clone()
             } else {
                 self.config.download_dir.clone()
@@ -1572,7 +1670,8 @@ impl UsenetDownloader {
             pp
         } else if let Some(category) = &options.category {
             // Check if category has custom post-processing
-            if let Some(cat_config) = self.config.categories.get(category) {
+            let categories = self.categories.read().await;
+            if let Some(cat_config) = categories.get(category) {
                 cat_config.post_process.unwrap_or(self.config.default_post_process)
             } else {
                 self.config.default_post_process
@@ -2531,7 +2630,10 @@ mod tests {
         let speed_limiter = speed_limiter::SpeedLimiter::new(config.speed_limit_bps);
 
         // Create config Arc early so we can share it
-        let config_arc = std::sync::Arc::new(config);
+        let config_arc = std::sync::Arc::new(config.clone());
+
+        // Initialize runtime-mutable categories from config
+        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.categories.clone()));
 
         // Create post-processing pipeline executor
         let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
@@ -2550,6 +2652,7 @@ mod tests {
             speed_limiter,
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             post_processor,
+            categories,
         };
 
         (downloader, temp_dir)
