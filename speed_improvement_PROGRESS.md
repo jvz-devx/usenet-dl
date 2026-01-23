@@ -231,9 +231,10 @@ Priority 3 (Future optimization):
 
 ### Phase 2: TCP Socket Buffer Tuning (HIGH IMPACT - Expected +5-10%)
 
-- [ ] Task 2.1: Add socket2 dependency
+- [x] Task 2.1: Add socket2 dependency
   - File: `nntp-rs/Cargo.toml`
   - Add: socket2 = "0.5"
+  - COMPLETED: Added socket2 = "0.5" to dependencies section
 
 - [ ] Task 2.2: Implement socket buffer configuration
   - File: `nntp-rs/src/client.rs:189-200`
@@ -646,3 +647,23 @@ nix-shell --run "TEST_NZB_PATH='./Fallout.S02E06.nzb' NNTP_CONNECTIONS=50 cargo 
 - Phase 1 complete - pipelining infrastructure is implemented and tested
 - Ready to proceed to Phase 2 (TCP Socket Buffer Tuning) for additional performance gains
 - Consider testing with different pipeline depths (5, 15, 20) to find optimal value
+
+---
+
+## Latest Iteration (Task 2.1)
+
+### Task 2.1: Add socket2 dependency ✓
+
+**Location:** `nntp-rs/Cargo.toml`
+
+**Implementation Details:**
+- Added `socket2 = "0.5"` to the dependencies section
+- Placed in new "Socket configuration" comment section after connection pooling
+- This dependency provides low-level socket control needed for TCP buffer tuning
+
+**Build Status:** ✓ Compiles cleanly with `cargo check -p nntp-rs`
+
+**Next Steps:**
+- Task 2.2: Implement socket buffer configuration in client.rs
+- Task 2.3: Add socket tuning tests
+- Task 2.4: Run performance test with socket tuning
