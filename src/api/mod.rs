@@ -13,6 +13,8 @@ use axum::{
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 pub mod auth;
 pub mod openapi;
@@ -65,6 +67,7 @@ pub use state::AppState;
 /// ## System
 /// - `GET /health` - Health check
 /// - `GET /openapi.json` - OpenAPI specification
+/// - `GET /swagger-ui` - Interactive Swagger UI documentation (if enabled)
 /// - `GET /events` - Server-sent events stream
 /// - `POST /shutdown` - Graceful shutdown
 ///
@@ -137,9 +140,21 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         .route("/scheduler", get(routes::list_schedule_rules))
         .route("/scheduler", post(routes::add_schedule_rule))
         .route("/scheduler/:id", put(routes::update_schedule_rule))
-        .route("/scheduler/:id", delete(routes::delete_schedule_rule))
-        // Add state to all routes
-        .with_state(state);
+        .route("/scheduler/:id", delete(routes::delete_schedule_rule));
+
+    // Merge Swagger UI routes if enabled in config (before applying state)
+    // Note: SwaggerUi will use the existing /openapi.json endpoint we already defined
+    let router = if config.api.swagger_ui {
+        router.merge(
+            SwaggerUi::new("/swagger-ui")
+                .url("/api/v1/openapi.json", ApiDoc::openapi())
+        )
+    } else {
+        router
+    };
+
+    // Add state to all routes
+    let router = router.with_state(state);
 
     // Apply authentication middleware if API key is configured
     let router = if config.api.api_key.is_some() {
@@ -666,5 +681,101 @@ mod tests {
 
         // Verify title
         assert_eq!(json["info"]["title"], "usenet-dl REST API");
+    }
+
+    #[tokio::test]
+    async fn test_swagger_ui_enabled() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Config with Swagger UI enabled (default)
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                swagger_ui: true,
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Create the router with Swagger UI enabled
+        let app = create_router(downloader, config);
+
+        // Make a request to /swagger-ui (should redirect or serve HTML)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/swagger-ui/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Swagger UI should return 200 OK (serving HTML)
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "Swagger UI should be accessible when enabled"
+        );
+
+        // Check that the response body contains HTML (Swagger UI page)
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify it's HTML content (Swagger UI page)
+        assert!(
+            body_str.contains("<!DOCTYPE html>") || body_str.contains("<html"),
+            "Response should contain HTML"
+        );
+        assert!(
+            body_str.contains("swagger") || body_str.contains("Swagger"),
+            "Response should contain Swagger-related content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_swagger_ui_disabled() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Config with Swagger UI disabled
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                swagger_ui: false,
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Create the router with Swagger UI disabled
+        let app = create_router(downloader, config);
+
+        // Make a request to /swagger-ui (should return 404)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/swagger-ui/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Should return 404 when Swagger UI is disabled
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "Swagger UI should not be accessible when disabled"
+        );
     }
 }

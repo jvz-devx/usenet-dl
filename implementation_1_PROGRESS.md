@@ -26,12 +26,12 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (13/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (14/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
-  - Tasks 18.1-18.5: ✅ OpenAPI integration with /openapi.json endpoint complete - 33 types annotated, 37 routes annotated, ApiDoc struct created with 9 tests
-- Total: 122/253 tasks complete (48.2%)
+  - Tasks 18.1-18.6: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with 11 tests
+- Total: 123/253 tasks complete (48.6%)
 
-**Next Task:** Task 18.6 - Mount Swagger UI at /swagger-ui
+**Next Task:** Task 18.7 - Test Swagger UI loads and shows all endpoints
 
 ## Analysis
 
@@ -295,7 +295,7 @@ The implementation will require these major dependencies:
 - [x] Task 18.3: Annotate all route handlers with #[utoipa::path]
 - [x] Task 18.4: Create ApiDoc struct with #[derive(OpenApi)]
 - [x] Task 18.5: Implement /openapi.json endpoint serving OpenAPI spec
-- [ ] Task 18.6: Mount Swagger UI at /swagger-ui
+- [x] Task 18.6: Mount Swagger UI at /swagger-ui
 - [ ] Task 18.7: Test Swagger UI loads and shows all endpoints
 
 - [ ] Task 19.1: Implement GET /downloads (list_downloads handler)
@@ -449,6 +449,46 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 18.6: Mount Swagger UI at /swagger-ui**
+
+Successfully integrated Swagger UI for interactive API documentation:
+
+1. **Implementation** (src/api/mod.rs):
+   - Added `use utoipa::OpenApi;` and `use utoipa_swagger_ui::SwaggerUi;` imports
+   - Modified `create_router()` function to conditionally merge Swagger UI routes
+   - Swagger UI is mounted at `/swagger-ui` when `config.api.swagger_ui` is true
+   - SwaggerUi is configured to use `/api/v1/openapi.json` for the OpenAPI spec
+   - Swagger UI routes are merged before applying state (to avoid state mismatch issues)
+   - Updated documentation comment to include Swagger UI route
+
+2. **Configuration-Based Enabling**:
+   - Swagger UI is only mounted when `config.api.swagger_ui` is enabled (default: true)
+   - When disabled, the `/swagger-ui` route returns 404 Not Found
+   - This allows production deployments to disable Swagger UI if desired
+
+3. **Test Coverage** (2 new tests):
+   - `test_swagger_ui_enabled()` - Verifies Swagger UI is accessible when enabled
+     * Makes request to `/swagger-ui/`
+     * Checks response status is 200 OK
+     * Verifies response contains HTML with Swagger-related content
+   - `test_swagger_ui_disabled()` - Verifies Swagger UI is not accessible when disabled
+     * Makes request to `/swagger-ui/`
+     * Checks response status is 404 Not Found
+
+4. **Design Decisions**:
+   - Swagger UI uses the existing `/openapi.json` endpoint (no duplication)
+   - Routes are merged before state application to avoid Axum's state mismatch error
+   - Conditional merge based on config flag allows runtime control
+   - Default is enabled for easy development and self-documenting API
+
+5. **Validation**:
+   - ✅ Build successful: All code compiles without errors
+   - ✅ All API tests pass: 29 tests passing (including 2 new Swagger UI tests)
+   - ✅ Swagger UI properly integrated without route conflicts
+   - ✅ Configuration-based enabling/disabling works correctly
+
+## Previous Iteration
 
 **Task 18.3: Annotate All Route Handlers with #[utoipa::path]**
 
