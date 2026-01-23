@@ -59,15 +59,86 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (18/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (19/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Tasks 26.1-26.3: ✅ RSS feed configuration types complete with comprehensive tests (4 tests passing)
-- Total: 181/253 tasks complete (71.5%)
+  - Tasks 26.1-26.4: ✅ RSS feed database schema with comprehensive tests (7 tests passing)
+- Total: 182/253 tasks complete (72.0%)
 
-**Next Task:** Task 26.4 - Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
+**Next Task:** Task 26.5 - Implement RssManager struct
 
 ## Completed This Iteration
+
+**Task 26.4: RSS Feed Database Schema**
+
+Successfully implemented database migration v3 with comprehensive RSS feed tables:
+
+1. **Migration System Update** (src/db.rs:186-188):
+   - Added `migrate_v3` call to run_migrations function
+   - Executes when current schema version < 3
+   - Follows existing migration pattern
+
+2. **RSS Feeds Table** (src/db.rs:392-406):
+   - Primary key: `id` (auto-increment)
+   - Core fields: `name`, `url`, `check_interval_secs`
+   - Configuration: `category`, `auto_download`, `priority`, `enabled`
+   - Metadata: `last_check`, `last_error`, `created_at`
+   - Default values: check_interval=900, auto_download=1, priority=0, enabled=1
+
+3. **RSS Filters Table** (src/db.rs:409-423):
+   - Primary key: `id` (auto-increment)
+   - Foreign key: `feed_id` REFERENCES rss_feeds(id) ON DELETE CASCADE
+   - Filter fields: `name`, `include_patterns`, `exclude_patterns`
+   - Size constraints: `min_size`, `max_size` (bytes, nullable)
+   - Time constraint: `max_age_secs` (nullable)
+   - Patterns stored as JSON arrays for flexibility
+
+4. **RSS Seen Items Table** (src/db.rs:426-437):
+   - Composite primary key: (feed_id, guid)
+   - Foreign key: `feed_id` REFERENCES rss_feeds(id) ON DELETE CASCADE
+   - Fields: `guid` (unique item identifier), `seen_at` (timestamp)
+   - Prevents duplicate downloads of same RSS item
+   - Index: idx_rss_seen_feed for efficient feed-based queries
+
+5. **Test Updates**:
+   - Updated test_database_schema to verify RSS tables exist
+   - Updated test_migration_idempotency to expect version 3
+   - Added test_rss_tables_schema: Comprehensive CRUD test
+   - Added test_rss_seen_primary_key_constraint: Primary key validation
+   - Added test_rss_feeds_default_values: Default values verification
+
+6. **Comprehensive Test Coverage** (3 new tests, 39 total DB tests):
+   ```
+   test db::tests::test_rss_tables_schema ... ok
+   test db::tests::test_rss_seen_primary_key_constraint ... ok
+   test db::tests::test_rss_feeds_default_values ... ok
+   ```
+   - Tests verify table creation and schema
+   - Tests verify foreign key CASCADE DELETE
+   - Tests verify composite primary key constraint
+   - Tests verify default values match specification
+
+7. **Schema Alignment with Implementation Plan**:
+   - Matches implementation_1.md lines 2113-2148 exactly
+   - All specified columns present with correct types
+   - Foreign key constraints properly defined
+   - Index on rss_seen(feed_id) for performance
+   - Default values match design document
+
+8. **Migration Safety**:
+   - Migration is idempotent (can be run multiple times)
+   - Uses IF NOT EXISTS for table creation (via migration versioning)
+   - Foreign key constraints ensure data integrity
+   - Cascade delete prevents orphaned records
+   - Transaction-based migration (via sqlx)
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 39 database tests pass (3 new tests added)
+- ✅ Migration system working correctly (version 3 detected)
+- ✅ No breaking changes to existing functionality
+
+**Previous Iteration:**
 
 **Tasks 26.2-26.3: RSS Feed Configuration Types**
 
@@ -778,7 +849,7 @@ The implementation will require these major dependencies:
 - [x] Task 26.1: Add rss and atom_syndication dependencies
 - [x] Task 26.2: Create RssFeedConfig with url, check_interval, category, filters, auto_download, priority
 - [x] Task 26.3: Create RssFilter with include/exclude patterns, min/max size, max age
-- [ ] Task 26.4: Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
+- [x] Task 26.4: Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
 - [ ] Task 26.5: Implement RssManager struct
 - [ ] Task 26.6: Implement check_feed() to fetch and parse RSS/Atom
 - [ ] Task 26.7: Implement matches_filters() using regex for include/exclude

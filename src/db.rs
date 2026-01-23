@@ -183,6 +183,9 @@ impl Database {
         if current_version < 2 {
             Self::migrate_v2(&mut conn).await?;
         }
+        if current_version < 3 {
+            Self::migrate_v3(&mut conn).await?;
+        }
 
         Ok(())
     }
@@ -375,6 +378,85 @@ impl Database {
             .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
 
         tracing::info!("Database migration v2 complete");
+
+        Ok(())
+    }
+
+    /// Migration v3: Add RSS feed tables
+    async fn migrate_v3(conn: &mut SqliteConnection) -> Result<()> {
+        tracing::info!("Applying database migration v3");
+
+        // RSS feeds table
+        sqlx::query(
+            r#"
+            CREATE TABLE rss_feeds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                check_interval_secs INTEGER NOT NULL DEFAULT 900,
+                category TEXT,
+                auto_download INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_check INTEGER,
+                last_error TEXT,
+                created_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to create rss_feeds table: {}", e)))?;
+
+        // RSS filters table (per feed)
+        sqlx::query(
+            r#"
+            CREATE TABLE rss_filters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                include_patterns TEXT,
+                exclude_patterns TEXT,
+                min_size INTEGER,
+                max_size INTEGER,
+                max_age_secs INTEGER
+            )
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to create rss_filters table: {}", e)))?;
+
+        // RSS seen items table (prevent re-downloading)
+        sqlx::query(
+            r#"
+            CREATE TABLE rss_seen (
+                feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
+                guid TEXT NOT NULL,
+                seen_at INTEGER NOT NULL,
+                PRIMARY KEY (feed_id, guid)
+            )
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to create rss_seen table: {}", e)))?;
+
+        // Index for rss_seen
+        sqlx::query("CREATE INDEX idx_rss_seen_feed ON rss_seen(feed_id)")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+
+        // Record migration
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (3, ?)")
+            .bind(now)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
+
+        tracing::info!("Database migration v3 complete");
 
         Ok(())
     }
@@ -1302,6 +1384,9 @@ mod tests {
         assert!(tables.contains(&"history".to_string()));
         assert!(tables.contains(&"schema_version".to_string()));
         assert!(tables.contains(&"runtime_state".to_string()));
+        assert!(tables.contains(&"rss_feeds".to_string()));
+        assert!(tables.contains(&"rss_filters".to_string()));
+        assert!(tables.contains(&"rss_seen".to_string()));
 
         db.close().await;
     }
@@ -1317,14 +1402,14 @@ mod tests {
 
         let db2 = Database::new(db_path).await.unwrap();
 
-        // Verify schema version is 1
+        // Verify schema version is 3 (latest)
         let mut conn = db2.pool.acquire().await.unwrap();
         let version: i64 = sqlx::query_scalar("SELECT MAX(version) FROM schema_version")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
 
-        assert_eq!(version, 1);
+        assert_eq!(version, 3);
 
         db2.close().await;
     }
@@ -2601,5 +2686,194 @@ mod tests {
             assert!(!was_unclean, "Should detect clean shutdown from previous session");
             db.close().await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_rss_tables_schema() {
+        // Task 26.4: Test RSS feed tables schema
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Verify rss_feeds table schema
+        let mut conn = db.pool.acquire().await.unwrap();
+
+        // Test inserting into rss_feeds
+        let result = sqlx::query(
+            r#"
+            INSERT INTO rss_feeds (name, url, check_interval_secs, category, auto_download, priority, enabled, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#
+        )
+        .bind("Test Feed")
+        .bind("https://example.com/rss")
+        .bind(900)
+        .bind("movies")
+        .bind(1)
+        .bind(0)
+        .bind(1)
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&mut *conn)
+        .await;
+
+        assert!(result.is_ok(), "Should insert into rss_feeds table");
+        let feed_id = result.unwrap().last_insert_rowid();
+
+        // Test inserting into rss_filters
+        let result = sqlx::query(
+            r#"
+            INSERT INTO rss_filters (feed_id, name, include_patterns, exclude_patterns, min_size, max_size, max_age_secs)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#
+        )
+        .bind(feed_id)
+        .bind("Test Filter")
+        .bind(r#"["pattern1","pattern2"]"#)
+        .bind(r#"["exclude1"]"#)
+        .bind(1000000)
+        .bind(5000000000i64)
+        .bind(86400)
+        .execute(&mut *conn)
+        .await;
+
+        assert!(result.is_ok(), "Should insert into rss_filters table");
+
+        // Test inserting into rss_seen
+        let result = sqlx::query(
+            r#"
+            INSERT INTO rss_seen (feed_id, guid, seen_at)
+            VALUES (?, ?, ?)
+            "#
+        )
+        .bind(feed_id)
+        .bind("https://example.com/item1")
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&mut *conn)
+        .await;
+
+        assert!(result.is_ok(), "Should insert into rss_seen table");
+
+        // Test foreign key constraint: deleting feed should cascade to filters and seen items
+        let result = sqlx::query("DELETE FROM rss_feeds WHERE id = ?")
+            .bind(feed_id)
+            .execute(&mut *conn)
+            .await;
+
+        assert!(result.is_ok(), "Should delete feed");
+
+        // Verify cascade delete worked
+        let filter_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rss_filters WHERE feed_id = ?")
+            .bind(feed_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+
+        assert_eq!(filter_count, 0, "Filters should be deleted by cascade");
+
+        let seen_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rss_seen WHERE feed_id = ?")
+            .bind(feed_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+
+        assert_eq!(seen_count, 0, "Seen items should be deleted by cascade");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_rss_seen_primary_key_constraint() {
+        // Task 26.4: Test rss_seen composite primary key
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        let mut conn = db.pool.acquire().await.unwrap();
+
+        // Insert a feed
+        let feed_id = sqlx::query(
+            r#"
+            INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+            VALUES (?, ?, ?, ?)
+            "#
+        )
+        .bind("Test Feed")
+        .bind("https://example.com/rss")
+        .bind(900)
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&mut *conn)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+
+        // Insert first seen item
+        let result = sqlx::query(
+            r#"
+            INSERT INTO rss_seen (feed_id, guid, seen_at)
+            VALUES (?, ?, ?)
+            "#
+        )
+        .bind(feed_id)
+        .bind("item-guid-123")
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&mut *conn)
+        .await;
+
+        assert!(result.is_ok(), "First insert should succeed");
+
+        // Try to insert duplicate (same feed_id and guid)
+        let result = sqlx::query(
+            r#"
+            INSERT INTO rss_seen (feed_id, guid, seen_at)
+            VALUES (?, ?, ?)
+            "#
+        )
+        .bind(feed_id)
+        .bind("item-guid-123")
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&mut *conn)
+        .await;
+
+        assert!(result.is_err(), "Duplicate insert should fail due to primary key constraint");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_rss_feeds_default_values() {
+        // Task 26.4: Test RSS feed default values
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        let mut conn = db.pool.acquire().await.unwrap();
+
+        // Insert feed with minimal values (testing defaults)
+        let feed_id = sqlx::query(
+            r#"
+            INSERT INTO rss_feeds (name, url, created_at)
+            VALUES (?, ?, ?)
+            "#
+        )
+        .bind("Test Feed")
+        .bind("https://example.com/rss")
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&mut *conn)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+
+        // Fetch the feed and verify defaults
+        let (check_interval, auto_download, priority, enabled): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT check_interval_secs, auto_download, priority, enabled FROM rss_feeds WHERE id = ?"
+        )
+        .bind(feed_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+
+        assert_eq!(check_interval, 900, "Default check_interval should be 900 seconds");
+        assert_eq!(auto_download, 1, "Default auto_download should be 1 (true)");
+        assert_eq!(priority, 0, "Default priority should be 0");
+        assert_eq!(enabled, 1, "Default enabled should be 1 (true)");
+
+        db.close().await;
     }
 }
