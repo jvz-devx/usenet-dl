@@ -1291,10 +1291,27 @@ pub async fn create_or_update_category(
     )
 )]
 pub async fn delete_category(
-    State(_state): State<AppState>,
-    Path(_name): Path<String>,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // Try to remove the category
+    let was_removed = state.downloader.remove_category(&name).await;
+
+    if was_removed {
+        // Return 204 No Content on success
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        // Return 404 if category doesn't exist
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "code": "category_not_found",
+                    "message": format!("Category '{}' not found", name)
+                }
+            }))
+        ).into_response()
+    }
 }
 
 // ============================================================================

@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (33/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (35/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -52,9 +52,10 @@ IN_PROGRESS
   - Task 21.4: ✅ PUT /config/speed-limit endpoint complete with comprehensive test (50 API tests passing)
   - Task 21.5: ✅ GET /categories endpoint complete with comprehensive test (51 API tests passing)
   - Task 21.6: ✅ PUT /categories/:name endpoint complete with runtime category management (52 API tests passing)
-- Total: 151/253 tasks complete (59.7%)
+  - Task 21.7: ✅ DELETE /categories/:name endpoint complete with comprehensive test (53 API tests passing)
+- Total: 153/253 tasks complete (60.5%)
 
-**Next Task:** Task 21.7 - Implement DELETE /categories/:name endpoint
+**Next Task:** Task 21.8 - Test config endpoints
 
 ## Analysis
 
@@ -349,8 +350,8 @@ The implementation will require these major dependencies:
 - [x] Task 21.3: Implement GET /config/speed-limit (get_speed_limit handler)
 - [x] Task 21.4: Implement PUT /config/speed-limit (set_speed_limit handler)
 - [x] Task 21.5: Implement GET /categories (list_categories handler)
-- [ ] Task 21.6: Implement PUT /categories/:name (create_or_update_category handler)
-- [ ] Task 21.7: Implement DELETE /categories/:name (delete_category handler)
+- [x] Task 21.6: Implement PUT /categories/:name (create_or_update_category handler)
+- [x] Task 21.7: Implement DELETE /categories/:name (delete_category handler)
 - [ ] Task 21.8: Test config endpoints
 
 - [ ] Task 22.1: Verify Swagger UI shows all endpoints with schemas
@@ -473,7 +474,35 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 21.6: PUT /categories/:name endpoint implementation**
+**Task 21.7: DELETE /categories/:name endpoint implementation**
+
+Successfully implemented the delete category endpoint, completing the full CRUD operations for runtime category management:
+
+1. **API Endpoint Implementation** (src/api/routes.rs:1293-1316):
+   - Implemented `DELETE /categories/:name` handler
+   - Calls `downloader.remove_category(&name).await` which returns bool
+   - Returns HTTP 204 No Content when category was successfully deleted
+   - Returns HTTP 404 Not Found when category doesn't exist
+   - Error response includes category name in message for clarity
+   - Follows REST best practices for idempotent DELETE operations
+
+2. **Comprehensive Test Coverage** (src/api/mod.rs:3683-3838):
+   - Added `test_delete_category()` with 6 test scenarios:
+     - Returns 404 for non-existent category (with error details)
+     - Creates category successfully first (setup)
+     - Verifies category exists via GET /categories
+     - Deletes category successfully (returns 204)
+     - Verifies category is removed from listing
+     - Returns 404 on second delete attempt (idempotency)
+   - All 53 API tests passing (up from 52)
+
+3. **Complete Category CRUD**:
+   - ✅ POST/PUT /categories/:name - Create or update (Task 21.6)
+   - ✅ GET /categories - List all categories (Task 21.5)
+   - ✅ DELETE /categories/:name - Delete category (Task 21.7)
+   - Full runtime category management without application restart
+
+**Previous Iteration (Task 21.6): PUT /categories/:name endpoint implementation**
 
 Successfully implemented runtime category management with full CRUD operations:
 

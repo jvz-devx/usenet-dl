@@ -3679,4 +3679,154 @@ mod tests {
         println!("   - Updates existing category with 204 No Content");
         println!("   - Updated values are reflected in GET");
     }
+
+    #[tokio::test]
+    async fn test_delete_category() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use serde_json::Value;
+        use tower::ServiceExt;
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+        let config = downloader.get_config();
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Try to delete a non-existent category (should return 404)
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/categories/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["error"]["code"], "category_not_found");
+        assert!(error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonexistent"));
+
+        // Test 2: Create a category first
+        let category_config = CategoryConfig {
+            destination: PathBuf::from("/downloads/movies"),
+            post_process: Some(PostProcess::UnpackAndCleanup),
+            watch_folder: None,
+            scripts: vec![],
+        };
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/categories/movies")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&category_config).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Test 3: Verify the category exists
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/categories")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let categories: std::collections::HashMap<String, CategoryConfig> =
+            serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(categories.len(), 1);
+        assert!(categories.contains_key("movies"));
+
+        // Test 4: Delete the category (should return 204)
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/categories/movies")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Test 5: Verify the category is gone
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/categories")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let categories: std::collections::HashMap<String, CategoryConfig> =
+            serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(categories.len(), 0);
+        assert!(!categories.contains_key("movies"));
+
+        // Test 6: Try to delete the same category again (should return 404)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/categories/movies")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["error"]["code"], "category_not_found");
+
+        println!("✅ DELETE /categories/:name test passed!");
+        println!("   - Returns 404 for non-existent category");
+        println!("   - Error includes category name in message");
+        println!("   - Deletes existing category with 204 No Content");
+        println!("   - Category is no longer in GET /categories");
+        println!("   - Second delete attempt returns 404");
+    }
 }
