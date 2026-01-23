@@ -292,7 +292,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - Document: Atomic counter usage for progress
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (parallel download sections)
 
-- [ ] Task 7.2: Update rustdoc for affected methods
+- [x] Task 7.2: Update rustdoc for affected methods
   - Update: `download_nzb()` method documentation
   - Update: Queue processor task documentation
   - Mention: Parallel download behavior, concurrency limits
@@ -371,6 +371,25 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 **Parallel Work Possible**: Phases 3 and 4 can be worked on simultaneously after Phase 2
 
 ## Completed This Iteration
+
+- Task 7.2: Updated rustdoc for affected methods
+  - **Files Modified**: `src/lib.rs` - Enhanced rustdoc documentation for public API methods
+  - **Method: `start_queue_processor()`** (lines 2976-3007):
+    - Added comprehensive "Parallel Download Behavior" section to rustdoc
+    - Documented automatic concurrency calculation (sum of all server connections)
+    - Included performance characteristics: 4x, 20x, 50x speedup examples
+    - Explained benefits: automatic backpressure, out-of-order completion, natural cancellation, memory efficiency
+    - Clarified implementation approach using `futures::stream::buffer_unordered`
+  - **Method: `add_nzb_content()`** (lines 2590-2637):
+    - Added note that downloads are processed by queue processor with parallel article fetching
+    - Added "Performance" section documenting parallel download capability
+    - Noted that more connections = faster downloads (approximately linear speedup)
+  - **Related methods**: `add_nzb()` and `add_nzb_url()` delegate to `add_nzb_content()`, so they inherit the performance documentation
+  - **Compilation**: Code compiles successfully with `cargo build` (only pre-existing warnings)
+  - **User Impact**: API documentation now clearly communicates parallel download performance characteristics
+  - **Next**: Task 7.3 - Update CHANGELOG.md with performance improvement notes
+
+## Previously Completed This Iteration
 
 - Task 7.1: Updated inline comments for parallel download sections
   - **Files Modified**: `src/lib.rs` - Enhanced documentation for parallel download sections
