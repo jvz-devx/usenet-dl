@@ -26,16 +26,17 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (19/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (20/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
   - Task 19.2: ✅ GET /downloads/:id endpoint complete with comprehensive test
   - Task 19.3: ✅ POST /downloads endpoint complete with multipart/form-data support (26 API tests passing)
   - Task 19.4: ✅ POST /downloads/url endpoint complete with URL fetching (34 API tests passing)
-- Total: 128/253 tasks complete (50.6%)
+  - Task 19.5: ✅ POST /downloads/:id/pause endpoint complete with comprehensive test (35 API tests passing)
+- Total: 129/253 tasks complete (51.0%)
 
-**Next Task:** Task 19.5 - Implement POST /downloads/:id/pause (pause_download handler)
+**Next Task:** Task 19.6 - Implement POST /downloads/:id/resume (resume_download handler)
 
 ## Analysis
 
@@ -4583,3 +4584,65 @@ The endpoint is now fully functional and can be accessed at:
 - **Content includes:** All 37 routes, all 33 types, API info, tags, security schemes
 
 This endpoint provides the machine-readable API specification that will be consumed by Swagger UI in the next task (18.6).
+
+## Completed This Iteration (Ralph)
+
+**Task 19.5:** Implemented POST /downloads/:id/pause endpoint
+
+**Summary:**
+Implemented the `pause_download` handler in `src/api/routes.rs` to pause downloads via the REST API. The handler calls the existing `UsenetDownloader::pause()` method and returns appropriate HTTP status codes based on the result.
+
+**Changes Made:**
+
+1. **Updated `src/api/routes.rs`:**
+   - Replaced NOT_IMPLEMENTED placeholder with full implementation
+   - Calls `state.downloader.pause(id).await`
+   - Returns 204 NO_CONTENT on success
+   - Returns 404 NOT_FOUND if download doesn't exist
+   - Returns 409 CONFLICT if download is in terminal state (Complete/Failed)
+   - Returns 500 INTERNAL_SERVER_ERROR for other errors
+
+2. **Added comprehensive test in `src/api/mod.rs`:**
+   - `test_pause_download_endpoint()` validates all scenarios:
+     - Successfully pauses a downloading item (returns 204)
+     - Returns 404 for non-existent downloads
+     - Returns 409 when trying to pause completed downloads
+   - Verifies database state changes after pause
+
+**Implementation:**
+```rust
+pub async fn pause_download(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    match state.downloader.pause(id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("not found") {
+                (StatusCode::NOT_FOUND, Json(json!({"error": {...}})))
+            } else if error_msg.contains("Cannot pause") {
+                (StatusCode::CONFLICT, Json(json!({"error": {...}})))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {...}})))
+            }
+        }
+    }
+}
+```
+
+**Test Results:**
+```bash
+$ cargo test test_pause_download_endpoint --lib
+test api::tests::test_pause_download_endpoint ... ok
+
+$ cargo test --lib api::
+test result: ok. 35 passed; 0 failed; 0 ignored
+```
+
+**API Endpoint:**
+- **URL:** `POST /api/v1/downloads/{id}/pause`
+- **Response:** 204 NO_CONTENT (success), 404 NOT_FOUND (not found), 409 CONFLICT (invalid state)
+- **OpenAPI documentation:** Already annotated with #[utoipa::path]
+
+The endpoint is fully functional and ready for use.

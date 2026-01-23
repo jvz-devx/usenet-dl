@@ -1365,4 +1365,127 @@ mod tests {
         println!("   - Correctly handles invalid options");
         println!("   - Correctly handles network errors");
     }
+
+    #[tokio::test]
+    async fn test_pause_download_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing POST /downloads/:id/pause endpoint...");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a test download to the database
+        use crate::db::NewDownload;
+
+        let new_download = NewDownload {
+            name: "Test Download".to_string(),
+            nzb_path: "/tmp/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("test_hash".to_string()),
+            job_name: Some("Test Download".to_string()),
+            category: Some("movies".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4, // UnpackAndCleanup
+            priority: 0,     // Normal
+            status: 1,       // Downloading (so it can be paused)
+            size_bytes: 1024 * 1024 * 100, // 100 MB
+        };
+
+        // Insert download and get its ID
+        let download_id = downloader.db.insert_download(&new_download).await.unwrap();
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Pause existing download
+        println!("  📝 Test 1: Pause existing download");
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/pause", download_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Check that response is successful
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "pause_download should return 204 NO_CONTENT for existing download"
+        );
+
+        // Verify download is now paused in database
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            crate::types::Status::from_i32(download.status),
+            crate::types::Status::Paused,
+            "Download status should be Paused after pause"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT");
+        println!("    ✓ Download status is now Paused");
+
+        // Test 2: Pause non-existent download (should return 404)
+        println!("  📝 Test 2: Pause non-existent download");
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/downloads/99999/pause")
+            .body(Body::empty())
+            .unwrap();
+
+        let response2 = app.clone().oneshot(request2).await.unwrap();
+
+        assert_eq!(
+            response2.status(),
+            StatusCode::NOT_FOUND,
+            "pause_download should return 404 for non-existent download"
+        );
+
+        println!("    ✓ Returns 404 NOT_FOUND for non-existent download");
+
+        // Test 3: Try to pause a completed download (should return 409 CONFLICT)
+        println!("  📝 Test 3: Pause completed download");
+
+        // Create a completed download
+        let completed_download = NewDownload {
+            name: "Completed Download".to_string(),
+            nzb_path: "/tmp/completed.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("completed_hash".to_string()),
+            job_name: Some("Completed Download".to_string()),
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 4, // Complete
+            size_bytes: 1024 * 1024,
+        };
+
+        let completed_id = downloader.db.insert_download(&completed_download).await.unwrap();
+
+        let request3 = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/pause", completed_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response3 = app.oneshot(request3).await.unwrap();
+
+        assert_eq!(
+            response3.status(),
+            StatusCode::CONFLICT,
+            "pause_download should return 409 CONFLICT for completed download"
+        );
+
+        println!("    ✓ Returns 409 CONFLICT for completed download");
+
+        println!("✅ pause_download endpoint test passed!");
+        println!("   - Successfully pauses downloading");
+        println!("   - Returns 404 for non-existent downloads");
+        println!("   - Returns 409 for downloads in terminal states");
+    }
 }
