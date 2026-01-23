@@ -1488,4 +1488,164 @@ mod tests {
         println!("   - Returns 404 for non-existent downloads");
         println!("   - Returns 409 for downloads in terminal states");
     }
+
+    #[tokio::test]
+    async fn test_resume_download_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing POST /downloads/:id/resume endpoint...");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a test download to the database in Paused state
+        use crate::db::NewDownload;
+
+        let new_download = NewDownload {
+            name: "Paused Download".to_string(),
+            nzb_path: "/tmp/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("test_hash".to_string()),
+            job_name: Some("Paused Download".to_string()),
+            category: Some("movies".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4, // UnpackAndCleanup
+            priority: 0,     // Normal
+            status: 2,       // Paused (so it can be resumed)
+            size_bytes: 1024 * 1024 * 100, // 100 MB
+        };
+
+        // Insert download and get its ID
+        let download_id = downloader.db.insert_download(&new_download).await.unwrap();
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Resume paused download
+        println!("  📝 Test 1: Resume paused download");
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/resume", download_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Check that response is successful
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "resume_download should return 204 NO_CONTENT for paused download"
+        );
+
+        // Verify download is now queued in database
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            crate::types::Status::from_i32(download.status),
+            crate::types::Status::Queued,
+            "Download status should be Queued after resume"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT");
+        println!("    ✓ Download status is now Queued");
+
+        // Test 2: Resume non-existent download (should return 404)
+        println!("  📝 Test 2: Resume non-existent download");
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/downloads/99999/resume")
+            .body(Body::empty())
+            .unwrap();
+
+        let response2 = app.clone().oneshot(request2).await.unwrap();
+
+        assert_eq!(
+            response2.status(),
+            StatusCode::NOT_FOUND,
+            "resume_download should return 404 for non-existent download"
+        );
+
+        println!("    ✓ Returns 404 NOT_FOUND for non-existent download");
+
+        // Test 3: Try to resume a completed download (should return 409 CONFLICT)
+        println!("  📝 Test 3: Resume completed download");
+
+        // Create a completed download
+        let completed_download = NewDownload {
+            name: "Completed Download".to_string(),
+            nzb_path: "/tmp/completed.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("completed_hash".to_string()),
+            job_name: Some("Completed Download".to_string()),
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 4, // Complete
+            size_bytes: 1024 * 1024,
+        };
+
+        let completed_id = downloader.db.insert_download(&completed_download).await.unwrap();
+
+        let request3 = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/resume", completed_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response3 = app.clone().oneshot(request3).await.unwrap();
+
+        assert_eq!(
+            response3.status(),
+            StatusCode::CONFLICT,
+            "resume_download should return 409 CONFLICT for completed download"
+        );
+
+        println!("    ✓ Returns 409 CONFLICT for completed download");
+
+        // Test 4: Resume already active download (should be idempotent - return 204)
+        println!("  📝 Test 4: Resume already queued download (idempotent)");
+
+        // Create a queued download
+        let queued_download = NewDownload {
+            name: "Queued Download".to_string(),
+            nzb_path: "/tmp/queued.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("queued_hash".to_string()),
+            job_name: Some("Queued Download".to_string()),
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 0, // Queued
+            size_bytes: 1024 * 1024,
+        };
+
+        let queued_id = downloader.db.insert_download(&queued_download).await.unwrap();
+
+        let request4 = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/resume", queued_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response4 = app.oneshot(request4).await.unwrap();
+
+        assert_eq!(
+            response4.status(),
+            StatusCode::NO_CONTENT,
+            "resume_download should return 204 for already-queued download (idempotent)"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT for already-queued download (idempotent)");
+
+        println!("✅ resume_download endpoint test passed!");
+        println!("   - Successfully resumes paused downloads");
+        println!("   - Returns 404 for non-existent downloads");
+        println!("   - Returns 409 for downloads in terminal states");
+        println!("   - Idempotent for already-active downloads");
+    }
 }

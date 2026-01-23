@@ -436,10 +436,46 @@ pub async fn pause_download(
     )
 )]
 pub async fn resume_download(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    match state.downloader.resume(id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("not found") {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "error": {
+                            "code": "not_found",
+                            "message": error_msg
+                        }
+                    }))
+                ).into_response()
+            } else if error_msg.contains("Cannot resume") {
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": {
+                            "code": "invalid_state",
+                            "message": error_msg
+                        }
+                    }))
+                ).into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {
+                            "code": "internal_error",
+                            "message": error_msg
+                        }
+                    }))
+                ).into_response()
+            }
+        }
+    }
 }
 
 /// DELETE /downloads/:id - Cancel/remove download
