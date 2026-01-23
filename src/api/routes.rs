@@ -13,6 +13,7 @@ use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use utoipa;
+use crate::config::ServerConfig;
 
 // ============================================================================
 // Query/Request Types
@@ -1155,13 +1156,20 @@ pub async fn clear_history(
     tag = "servers",
     request_body(content = crate::config::ServerConfig, description = "Server configuration to test"),
     responses(
-        (status = 200, description = "Server test result"),
+        (status = 200, description = "Server test result", body = crate::types::ServerTestResult),
         (status = 400, description = "Invalid server configuration"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn test_server(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn test_server(
+    State(state): State<AppState>,
+    Json(server): Json<ServerConfig>,
+) -> impl IntoResponse {
+    // Test the provided server configuration
+    let result = state.downloader.test_server(&server).await;
+
+    // Return the test result
+    (StatusCode::OK, Json(result))
 }
 
 /// GET /servers/test - Test all configured servers
@@ -1170,12 +1178,16 @@ pub async fn test_server(State(_state): State<AppState>) -> impl IntoResponse {
     path = "/api/v1/servers/test",
     tag = "servers",
     responses(
-        (status = 200, description = "Test results for all servers"),
+        (status = 200, description = "Test results for all servers", body = Vec<(String, crate::types::ServerTestResult)>),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn test_all_servers(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn test_all_servers(State(state): State<AppState>) -> impl IntoResponse {
+    // Test all configured servers
+    let results = state.downloader.test_all_servers().await;
+
+    // Return the test results as JSON
+    (StatusCode::OK, Json(results))
 }
 
 // ============================================================================

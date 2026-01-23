@@ -69,14 +69,24 @@ IN_PROGRESS
 - Phase 5: 🔄 In Progress (18/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
   - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
-  - Tasks 32.1-32.4: ✅ Server health check implementation complete (test_server and test_all_servers methods)
-- Total: 233/253 tasks complete (92.1%)
+  - Tasks 32.1-32.5: ✅ Server health check complete with API endpoints (61 API tests passing, +2 new tests)
+- Total: 234/253 tasks complete (92.5%)
 
-**Next Task:** Task 32.5 - Add API endpoints POST /servers/test and GET /servers/test
+**Next Task:** Task 32.6 - Write comprehensive integration tests for server health check
 
 ## Completed This Iteration
 
-**Tasks 32.1-32.4: Server health check implementation**
+**Task 32.5: Server health check API endpoints**
+
+Successfully implemented and tested API endpoints for server connectivity testing. The REST API now exposes endpoints to test NNTP server configurations before adding them to production.
+
+Implementation includes:
+- POST /servers/test endpoint for testing individual server configurations
+- GET /servers/test endpoint for testing all configured servers
+- Full OpenAPI documentation with proper response types
+- Comprehensive test coverage with 2 new passing tests
+
+**Previous Tasks (32.1-32.4): Server health check implementation**
 
 Successfully implemented server connectivity and authentication testing functionality. The system can now test NNTP server connections, verify authentication, and query server capabilities before adding servers to production.
 
@@ -123,6 +133,46 @@ Successfully implemented server connectivity and authentication testing function
 - ✅ All type exports work correctly
 - ✅ Methods integrate with nntp-rs library properly
 - ✅ Ready for API endpoint integration (next task)
+
+**API Endpoint Implementation (Task 32.5)**:
+
+1. **POST /servers/test Endpoint** (src/api/routes.rs:1151-1169):
+   - Accepts ServerConfig JSON in request body
+   - Calls downloader.test_server(&server) to test the configuration
+   - Returns ServerTestResult JSON with success, latency, error, and capabilities
+   - OpenAPI annotations include response schema (body = crate::types::ServerTestResult)
+   - Handles connection failures gracefully (returns error result, not HTTP error)
+   - Added ServerConfig import to routes.rs for proper deserialization
+
+2. **GET /servers/test Endpoint** (src/api/routes.rs:1167-1181):
+   - Tests all configured servers in the downloader
+   - Calls downloader.test_all_servers() which returns Vec<(String, ServerTestResult)>
+   - Returns JSON array of tuples with hostname and test result
+   - OpenAPI annotations include response schema
+   - Enables batch testing of all NNTP servers via single API call
+
+3. **Comprehensive Test Coverage** (src/api/mod.rs:3197-3329):
+   - test_post_servers_test_endpoint: Tests POST /servers/test
+     - Verifies 200 OK response
+     - Validates ServerTestResult JSON structure
+     - Confirms connection failure handling (non-existent server)
+     - Checks that error, latency, and capabilities fields are properly set
+   - test_get_servers_test_endpoint: Tests GET /servers/test
+     - Verifies 200 OK response
+     - Creates config with 2 test servers
+     - Validates Vec<(String, ServerTestResult)> JSON structure
+     - Confirms both servers are tested
+     - Verifies server names match configuration
+     - Checks that all results have proper error information
+   - Both tests pass with comprehensive output validation
+   - Total API tests now: 61 passing (+2 new)
+
+4. **Design Alignment**:
+   - Matches implementation_1.md:1636-1645 specification exactly
+   - POST /servers/test endpoint (line 1638)
+   - GET /servers/test endpoint (line 1643)
+   - Proper request/response types as specified
+   - OpenAPI documentation complete
 
 **Previous Iteration:**
 
