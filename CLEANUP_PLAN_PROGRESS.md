@@ -18,7 +18,7 @@ IN_PROGRESS
 - [x] Move `CONTRIBUTING.md` to `docs/contributing.md`
 - [x] Move `API_TESTING.md` to `tests/manual/api-testing.md`
 - [x] Move `MANUAL_SERVER_TESTING.md` to `tests/manual/server-testing.md`
-- [ ] Move `RSS_MANUAL_TESTING.md` to `tests/manual/rss-testing.md`
+- [x] Move `RSS_MANUAL_TESTING.md` to `tests/manual/rss-testing.md`
 
 ### 3. Create New Documentation
 - [ ] Create `docs/getting-started.md`
@@ -57,7 +57,7 @@ IN_PROGRESS
 
 ## Completed This Iteration
 
-- Moved `MANUAL_SERVER_TESTING.md` to `tests/manual/server-testing.md` using git mv
+- Moved `RSS_MANUAL_TESTING.md` to `tests/manual/rss-testing.md` using git mv
 
 ## Notes
 
