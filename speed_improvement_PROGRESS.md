@@ -178,11 +178,12 @@ Priority 3 (Future optimization):
   - Handle errors gracefully (abort pipeline on first error)
   - COMPLETED: Added at line 2757-2866 with full documentation and error handling
 
-- [ ] Task 1.2: Add pipelining tests
-  - File: `nntp-rs/tests/` (create new test file)
-  - Test with 2, 5, 10 article pipeline depths
-  - Test error handling (invalid message ID in middle of pipeline)
-  - Verify response ordering matches request ordering
+- [x] Task 1.2: Add pipelining tests
+  - File: `nntp-rs/tests/pipelining_test.rs` (CREATED)
+  - Test with 2, 5, 10 article pipeline depths ✓
+  - Test error handling (invalid message ID in middle of pipeline) ✓
+  - Verify response ordering matches request ordering ✓
+  - COMPLETED: Created comprehensive test suite with 10 test cases
 
 - [ ] Task 1.3: Integrate pipelining into download loop
   - File: `src/lib.rs:3300-3338`
@@ -468,7 +469,39 @@ Test files:
 **Build Status:** ✓ Compiles cleanly with `cargo check -p nntp-rs`
 
 **Next Steps:**
-- Task 1.2: Add pipelining tests
 - Task 1.3: Integrate pipelining into download loop
 - Task 1.4: Add pipelining configuration
 - Task 1.5: Run performance test with pipelining
+
+### Task 1.2: Add pipelining tests ✓
+
+**Location:** `/home/jens/Documents/source/nntp-rs/tests/pipelining_test.rs`
+
+**Implementation Details:**
+- Created comprehensive test suite with 10 test cases for `fetch_articles_pipelined()`
+- All tests gated behind `live-tests` feature flag for real NNTP server testing
+- Test coverage includes:
+  - **Empty input handling**: Validates empty article list returns empty results
+  - **Single article fetch**: Tests pipelining with single article
+  - **Pipeline depths 2, 5, 10**: Tests multiple pipeline depths
+  - **Partial batch handling**: Tests 7 articles with depth 5 (5+2 batches)
+  - **Response ordering**: Verifies responses match request order
+  - **Error handling**: Tests invalid article ID detection and pipeline abort
+  - **Minimum depth validation**: Tests depth 0 clamped to 1
+  - **Performance comparison**: Compares sequential vs pipelined performance
+- All tests follow existing nntp-rs test patterns (use `get_test_config()`, handle empty groups)
+- Tests can be run with: `cargo test --test pipelining_test --features live-tests`
+
+**Build Status:** ✓ Compiles cleanly with and without `live-tests` feature
+
+**Test List:**
+1. `test_pipelining_empty_input`
+2. `test_pipelining_single_article`
+3. `test_pipelining_depth_2`
+4. `test_pipelining_depth_5`
+5. `test_pipelining_depth_10`
+6. `test_pipelining_partial_batch`
+7. `test_pipelining_response_ordering`
+8. `test_pipelining_invalid_article_id`
+9. `test_pipelining_minimum_depth`
+10. `test_pipelining_vs_sequential_performance`
