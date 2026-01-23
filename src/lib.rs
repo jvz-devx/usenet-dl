@@ -68,6 +68,7 @@ pub use error::{Error, Result};
 pub use types::{
     DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, Stage, Status,
 };
+use std::path::PathBuf;
 use utils::extract_filename_from_response;
 
 /// Main entry point for the usenet-dl library
@@ -879,6 +880,139 @@ impl UsenetDownloader {
                     error = %e,
                     "Reprocessing failed"
                 );
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Re-run extraction only (skip verify/repair)
+    ///
+    /// This method re-runs the extraction stage for a download that has already been downloaded.
+    /// Unlike `reprocess()`, this skips PAR2 verification and repair stages and goes straight
+    /// to archive extraction. This is useful when:
+    /// - Extraction failed due to missing password (now added)
+    /// - Extraction settings changed
+    /// - User wants to re-extract without re-downloading
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to re-extract
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if re-extraction was started successfully.
+    /// Returns Err if the download doesn't exist or files are missing.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::UsenetDownloader;
+    /// # async fn example(downloader: &UsenetDownloader) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Re-extract download 123 after adding password
+    /// downloader.reextract(123).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn reextract(&self, id: DownloadId) -> Result<()> {
+        // Get download from database
+        let download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::NotFound(format!("Download {} not found", id)))?;
+
+        // Determine download path (temp directory)
+        let download_path = self.config.temp_dir
+            .join(format!("download_{}", id));
+
+        // Verify download files still exist
+        if !download_path.exists() {
+            return Err(Error::NotFound(format!(
+                "Download files not found at {}. Cannot re-extract.",
+                download_path.display()
+            )));
+        }
+
+        tracing::info!(
+            download_id = id,
+            path = %download_path.display(),
+            "Starting re-extraction (skip verify/repair)"
+        );
+
+        // Reset status to processing
+        self.db.update_status(id, Status::Processing.to_i32()).await?;
+
+        // Clear any previous error message
+        self.db.set_error(id, "").await?;
+
+        // Emit Extracting event to indicate extraction is starting
+        self.emit_event(Event::Extracting {
+            id,
+            archive: String::new(),
+            percent: 0.0,
+        });
+
+        // Run extraction stage only (skip verify/repair)
+        // This will run asynchronously
+        let downloader = self.clone();
+        let destination = PathBuf::from(download.destination);
+        let post_processor = self.post_processor.clone();
+        tokio::spawn(async move {
+            // Run re-extraction (extract + move, skip verify/repair)
+            match post_processor.reextract(id, download_path, destination).await {
+                Ok(final_path) => {
+                    tracing::info!(
+                        download_id = id,
+                        ?final_path,
+                        "Re-extraction complete"
+                    );
+
+                    // Update status to complete
+                    if let Err(e) = downloader.db.update_status(id, Status::Complete.to_i32()).await {
+                        tracing::error!(
+                            download_id = id,
+                            error = %e,
+                            "Failed to update status to complete"
+                        );
+                    }
+
+                    // Emit Complete event
+                    downloader.emit_event(Event::Complete {
+                        id,
+                        path: final_path,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!(
+                        download_id = id,
+                        error = %e,
+                        "Re-extraction failed"
+                    );
+
+                    // Update status to failed
+                    if let Err(db_err) = downloader.db.update_status(id, Status::Failed.to_i32()).await {
+                        tracing::error!(
+                            download_id = id,
+                            error = %db_err,
+                            "Failed to update status to failed"
+                        );
+                    }
+
+                    // Set error message
+                    if let Err(db_err) = downloader.db.set_error(id, &e.to_string()).await {
+                        tracing::error!(
+                            download_id = id,
+                            error = %db_err,
+                            "Failed to set error message"
+                        );
+                    }
+
+                    // Emit Failed event
+                    downloader.emit_event(Event::Failed {
+                        id,
+                        stage: Stage::Extract,
+                        error: e.to_string(),
+                        files_kept: true,
+                    });
+                }
             }
         });
 

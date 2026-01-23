@@ -38,9 +38,10 @@ IN_PROGRESS
   - Task 19.7: ✅ DELETE /downloads/:id endpoint complete with comprehensive test (37 API tests passing)
   - Task 19.8: ✅ PATCH /downloads/:id/priority endpoint complete with comprehensive test (38 API tests passing)
   - Task 19.9: ✅ POST /downloads/:id/reprocess endpoint complete with comprehensive test (39 API tests passing)
-- Total: 133/253 tasks complete (52.6%)
+  - Task 19.10: ✅ POST /downloads/:id/reextract endpoint complete with comprehensive test (40 API tests passing)
+- Total: 134/253 tasks complete (53.0%)
 
-**Next Task:** Task 19.10 - Implement POST /downloads/:id/reextract (reextract handler)
+**Next Task:** Task 19.11 - Implement POST /queue/pause (pause_all handler)
 
 ## Analysis
 
@@ -315,8 +316,8 @@ The implementation will require these major dependencies:
 - [x] Task 19.6: Implement POST /downloads/:id/resume (resume_download handler)
 - [x] Task 19.7: Implement DELETE /downloads/:id (delete_download handler)
 - [x] Task 19.8: Implement PATCH /downloads/:id/priority (set_priority handler)
-- [ ] Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)
-- [ ] Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)
+- [x] Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)
+- [x] Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)
 - [ ] Task 19.11: Implement POST /queue/pause (pause_all handler)
 - [ ] Task 19.12: Implement POST /queue/resume (resume_all handler)
 - [ ] Task 19.13: Implement GET /queue/stats (queue_stats handler)
@@ -459,7 +460,65 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)**
+**Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)**
+
+Successfully implemented the endpoint to re-run extraction only (skip verify/repair):
+
+1. **PostProcessor::reextract() Method** (src/post_processing.rs:110-145):
+   - Added new public async method to run extraction and move stages only
+   - Skips PAR2 verification and repair stages
+   - Accepts download_id, download_path, and destination parameters
+   - Runs extract stage followed by move stage
+   - Returns final_path on success
+   - Useful for: re-extracting after adding password, changing extraction settings
+   - Full documentation with examples
+
+2. **UsenetDownloader::reextract() Method** (src/lib.rs:888-1009):
+   - Added new public async method to re-run extraction for a download
+   - Verifies download exists in database (returns NotFound if not found)
+   - Checks if download files still exist in temp directory (returns NotFound if missing)
+   - Resets download status to Processing
+   - Clears previous error messages
+   - Emits Extracting event to indicate extraction is starting
+   - Spawns async task that calls PostProcessor::reextract()
+   - Handles success: updates status to Complete, emits Complete event
+   - Handles failures: updates status to Failed, sets error message, emits Failed event with appropriate stage
+   - Full documentation with examples and use cases
+
+3. **Route Handler Implementation** (src/api/routes.rs:701-739):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Accepts POST request to `/downloads/:id/reextract`
+   - Calls UsenetDownloader::reextract() to start re-extraction
+   - Returns proper status codes:
+     * 204 NO_CONTENT: Success, re-extraction started
+     * 404 NOT_FOUND with "files_not_found": Download files missing from temp directory
+     * 404 NOT_FOUND with "not_found": Download doesn't exist in database
+     * 500 INTERNAL_SERVER_ERROR: Other errors
+   - Differentiates between download not found vs files not found using error code
+   - All error responses follow standard format with descriptive error codes
+
+4. **Test Implementation** (src/api/mod.rs:2112-2232):
+   - Created comprehensive test `test_reextract_download_endpoint()`
+   - Tests three scenarios:
+     * **Re-extract existing download**: Creates download with files, verifies 204 response
+     * **Missing files**: Removes download directory, verifies 404 with "files_not_found" error code
+     * **Non-existent download**: Uses invalid ID, verifies 404 with "not_found" error code
+   - Validates response structure and status codes
+   - Tests both error conditions (files missing vs download missing)
+   - Properly creates test download directory structure
+
+5. **Test Results**:
+   - ✅ All 40 API tests pass (previous 39 + new test with 3 scenarios)
+   - ✅ Three test scenarios all pass
+   - ✅ Correct differentiation between "not_found" and "files_not_found" error codes
+   - ✅ 204 NO_CONTENT returned for successful re-extraction
+   - ✅ Full end-to-end integration validated
+
+6. **Additional Changes**:
+   - Added `use std::path::PathBuf;` import to src/lib.rs (line 71)
+   - Converted destination from String to PathBuf using `PathBuf::from()` before passing to PostProcessor::reextract()
+
+**Previous Completion: Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)**
 
 Successfully implemented the endpoint to re-run post-processing on completed or failed downloads:
 

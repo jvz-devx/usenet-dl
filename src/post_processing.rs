@@ -107,6 +107,46 @@ impl PostProcessor {
         }
     }
 
+    /// Re-run extraction only (skip verify/repair)
+    ///
+    /// This method runs only the extraction and move stages, skipping
+    /// PAR2 verification and repair. Useful for re-extracting archives
+    /// after adding passwords or changing extraction settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `download_id` - The download to re-extract
+    /// * `download_path` - Path to the downloaded files
+    /// * `destination` - Final destination for extracted files
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(final_path) on success, Err on failure
+    pub async fn reextract(
+        &self,
+        download_id: DownloadId,
+        download_path: PathBuf,
+        destination: PathBuf,
+    ) -> Result<PathBuf> {
+        info!(
+            download_id,
+            ?download_path,
+            ?destination,
+            "starting re-extraction (skip verify/repair)"
+        );
+
+        // Run only extract and move stages
+        let extracted_path = self
+            .run_extract_stage(download_id, &download_path)
+            .await?;
+
+        let final_path = self
+            .run_move_stage(download_id, &extracted_path, &destination)
+            .await?;
+
+        Ok(final_path)
+    }
+
     /// Execute the verify stage
     async fn run_verify_stage(
         &self,
