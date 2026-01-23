@@ -15,7 +15,7 @@ IN_PROGRESS
 ### 2. Move Documentation Files
 - [x] Move `CONFIGURATION.md` to `docs/configuration.md`
 - [x] Move `API_USAGE.md` to `docs/api-reference.md`
-- [ ] Move `CONTRIBUTING.md` to `docs/contributing.md`
+- [x] Move `CONTRIBUTING.md` to `docs/contributing.md`
 - [ ] Move `API_TESTING.md` to `tests/manual/api-testing.md`
 - [ ] Move `MANUAL_SERVER_TESTING.md` to `tests/manual/server-testing.md`
 - [ ] Move `RSS_MANUAL_TESTING.md` to `tests/manual/rss-testing.md`
@@ -57,7 +57,7 @@ IN_PROGRESS
 
 ## Completed This Iteration
 
-- Moved `API_USAGE.md` to `docs/api-reference.md` using git mv
+- Moved `CONTRIBUTING.md` to `docs/contributing.md` using git mv
 
 ## Notes
 
