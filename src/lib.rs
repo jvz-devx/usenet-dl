@@ -647,14 +647,18 @@ impl UsenetDownloader {
                 "No pending articles - proceeding to post-processing"
             );
 
-            // TODO: Task 10.3 - Implement start_post_processing()
-            // For now, just update status to Processing
-            self.db.update_status(id, Status::Processing.to_i32()).await?;
+            // Start post-processing pipeline asynchronously
+            let downloader = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = downloader.start_post_processing(id).await {
+                    tracing::error!(
+                        download_id = id,
+                        error = %e,
+                        "Post-processing failed"
+                    );
+                }
+            });
 
-            // Emit event to indicate post-processing stage
-            self.emit_event(Event::Verifying { id });
-
-            // TODO: Will call self.start_post_processing(id).await in Phase 2
             Ok(())
         } else {
             // Resume downloading remaining articles
@@ -3038,6 +3042,7 @@ impl UsenetDownloader {
         let config = self.config.clone();
         let active_downloads = self.active_downloads.clone();
         let speed_limiter = self.speed_limiter.clone();
+        let downloader = self.clone();
 
         tokio::spawn(async move {
             loop {
@@ -3068,6 +3073,7 @@ impl UsenetDownloader {
                     let config_clone = config.clone();
                     let active_downloads_clone = active_downloads.clone();
                     let speed_limiter_clone = speed_limiter.clone();
+                    let downloader_clone = downloader.clone();
 
                     // Create cancellation token for this download
                     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -3147,6 +3153,18 @@ impl UsenetDownloader {
                             // Clean up active downloads
                             let mut active = active_downloads_clone.lock().await;
                             active.remove(&id);
+
+                            // Start post-processing pipeline asynchronously
+                            tokio::spawn(async move {
+                                if let Err(e) = downloader_clone.start_post_processing(id).await {
+                                    tracing::error!(
+                                        download_id = id,
+                                        error = %e,
+                                        "Post-processing failed"
+                                    );
+                                }
+                            });
+
                             return;
                         }
 
@@ -3596,6 +3614,18 @@ impl UsenetDownloader {
                         // Clean up: remove from active downloads
                         let mut active = active_downloads_clone.lock().await;
                         active.remove(&id);
+
+                        // Start post-processing pipeline asynchronously
+                        let downloader_clone = downloader_clone.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = downloader_clone.start_post_processing(id).await {
+                                tracing::error!(
+                                    download_id = id,
+                                    error = %e,
+                                    "Post-processing failed"
+                                );
+                            }
+                        });
                     });
                 } else {
                     // Queue is empty, wait a bit before checking again
@@ -3900,6 +3930,7 @@ impl UsenetDownloader {
         let event_tx = self.event_tx.clone();
         let nntp_pools = self.nntp_pools.clone();
         let config = self.config.clone();
+        let downloader = self.clone();
 
         tokio::spawn(async move {
             // Fetch download record
@@ -3934,6 +3965,18 @@ impl UsenetDownloader {
                 event_tx
                     .send(Event::DownloadComplete { id: download_id })
                     .ok();
+
+                // Start post-processing pipeline asynchronously
+                tokio::spawn(async move {
+                    if let Err(e) = downloader.start_post_processing(download_id).await {
+                        tracing::error!(
+                            download_id,
+                            error = %e,
+                            "Post-processing failed"
+                        );
+                    }
+                });
+
                 return Ok(());
             }
 
@@ -4169,6 +4212,17 @@ impl UsenetDownloader {
             event_tx
                 .send(Event::DownloadComplete { id: download_id })
                 .ok();
+
+            // Start post-processing pipeline asynchronously
+            tokio::spawn(async move {
+                if let Err(e) = downloader.start_post_processing(download_id).await {
+                    tracing::error!(
+                        download_id,
+                        error = %e,
+                        "Post-processing failed"
+                    );
+                }
+            });
 
             Ok(())
         })
