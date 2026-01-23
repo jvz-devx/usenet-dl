@@ -459,3 +459,36 @@ pub struct WebhookPayload {
     /// Timestamp of the event (Unix timestamp in seconds)
     pub timestamp: i64,
 }
+
+/// Result of a server connectivity test
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ServerTestResult {
+    /// Whether the test was successful
+    pub success: bool,
+
+    /// Latency to connect and authenticate (if successful)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency: Option<Duration>,
+
+    /// Error message (if failed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+
+    /// Server capabilities (if successful)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ServerCapabilities>,
+}
+
+/// NNTP server capabilities discovered during testing
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ServerCapabilities {
+    /// Whether posting is allowed
+    pub posting_allowed: bool,
+
+    /// Maximum number of connections (if advertised by server)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_connections: Option<u32>,
+
+    /// Whether compression is supported (e.g., XZVER)
+    pub compression: bool,
+}

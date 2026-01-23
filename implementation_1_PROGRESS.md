@@ -66,14 +66,65 @@ IN_PROGRESS
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
   - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
-- Phase 5: 🔄 In Progress (14/38 tasks) - Notifications & Polish
+- Phase 5: 🔄 In Progress (18/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
   - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
-- Total: 229/253 tasks complete (90.5%)
+  - Tasks 32.1-32.4: ✅ Server health check implementation complete (test_server and test_all_servers methods)
+- Total: 233/253 tasks complete (92.1%)
 
-**Next Task:** Task 32.1 - Implement test_server() to verify connectivity and authentication
+**Next Task:** Task 32.5 - Add API endpoints POST /servers/test and GET /servers/test
 
 ## Completed This Iteration
+
+**Tasks 32.1-32.4: Server health check implementation**
+
+Successfully implemented server connectivity and authentication testing functionality. The system can now test NNTP server connections, verify authentication, and query server capabilities before adding servers to production.
+
+1. **ServerTestResult and ServerCapabilities Types** (Tasks 32.2-32.3, src/types.rs:464-497):
+   - Created `ServerTestResult` struct with success, latency, error, and capabilities fields
+   - Created `ServerCapabilities` struct with posting_allowed, max_connections, and compression fields
+   - Both types derive Debug, Clone, Serialize, Deserialize, and ToSchema for API integration
+   - Optional fields use `#[serde(skip_serializing_if = "Option::is_none")]` for clean JSON
+   - Duration latency field for measuring connection time
+
+2. **test_server() Method** (Task 32.1, src/lib.rs:1778-1855):
+   - Public async method that tests a single server configuration
+   - Creates temporary NNTP client connection to test connectivity
+   - Measures latency from start to finish using `std::time::Instant`
+   - Authenticates if credentials are provided in ServerConfig
+   - Queries server capabilities using nntp-rs capabilities() method
+   - Converts nntp-rs Capabilities to our ServerCapabilities type
+   - Checks for POST/IHAVE (posting allowed) and COMPRESS/XZVER (compression)
+   - Returns ServerTestResult with detailed success/failure information
+   - Comprehensive rustdoc with example usage
+
+3. **test_all_servers() Method** (Task 32.4, src/lib.rs:1857-1889):
+   - Public async method that tests all configured servers
+   - Iterates through config.servers and calls test_server() for each
+   - Returns Vec<(String, ServerTestResult)> with hostname and results
+   - Enables batch testing of all NNTP servers
+   - Comprehensive rustdoc with example usage
+
+4. **Public Exports** (src/lib.rs:74-77):
+   - Added ServerTestResult to public exports
+   - Added ServerCapabilities to public exports
+   - Both types now available to library consumers
+
+5. **Design Alignment**:
+   - Matches implementation_1.md:797-870 specification exactly
+   - ServerTestResult structure (lines 857-862)
+   - ServerCapabilities structure (lines 865-869)
+   - test_server() method implementation pattern (lines 808-843)
+   - test_all_servers() method (lines 846-853)
+   - Provides foundation for API endpoints (Task 32.5)
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All type exports work correctly
+- ✅ Methods integrate with nntp-rs library properly
+- ✅ Ready for API endpoint integration (next task)
+
+**Previous Iteration:**
 
 **Tasks 31.3-31.5: Disk space checking integration and error handling**
 
@@ -2676,10 +2727,10 @@ The implementation will require these major dependencies:
 - [x] Task 31.4: Create DiskSpaceError enum (InsufficientSpace, CheckFailed)
 - [x] Task 31.5: Test disk space check with low space scenario
 
-- [ ] Task 32.1: Implement test_server() to verify connectivity and authentication
-- [ ] Task 32.2: Create ServerTestResult with success, latency, error, capabilities
-- [ ] Task 32.3: Create ServerCapabilities struct (posting_allowed, max_connections, compression)
-- [ ] Task 32.4: Implement test_all_servers() to check all configured servers
+- [x] Task 32.1: Implement test_server() to verify connectivity and authentication
+- [x] Task 32.2: Create ServerTestResult with success, latency, error, capabilities
+- [x] Task 32.3: Create ServerCapabilities struct (posting_allowed, max_connections, compression)
+- [x] Task 32.4: Implement test_all_servers() to check all configured servers
 - [ ] Task 32.5: Add API endpoints POST /servers/test and GET /servers/test
 - [ ] Task 32.6: Test server health check with real NNTP server
 
