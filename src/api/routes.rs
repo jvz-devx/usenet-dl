@@ -2,7 +2,7 @@
 
 use super::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -163,8 +163,120 @@ pub async fn get_download(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn add_download(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn add_download(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Response {
+    // Parse multipart form data
+    let mut nzb_content: Option<Vec<u8>> = None;
+    let mut nzb_filename: Option<String> = None;
+    let mut options_json: Option<String> = None;
+
+    // Extract all multipart fields
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+
+        match name.as_str() {
+            "file" => {
+                // Get filename if present
+                if let Some(filename) = field.file_name() {
+                    nzb_filename = Some(filename.to_string());
+                }
+                // Read file content
+                match field.bytes().await {
+                    Ok(bytes) => nzb_content = Some(bytes.to_vec()),
+                    Err(e) => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({
+                                "error": {
+                                    "code": "invalid_file",
+                                    "message": format!("Failed to read file: {}", e)
+                                }
+                            }))
+                        ).into_response();
+                    }
+                }
+            }
+            "options" => {
+                // Read options JSON
+                match field.bytes().await {
+                    Ok(bytes) => {
+                        if let Ok(s) = String::from_utf8(bytes.to_vec()) {
+                            options_json = Some(s);
+                        }
+                    }
+                    Err(_) => {} // Optional field, ignore errors
+                }
+            }
+            _ => {
+                // Ignore unknown fields
+            }
+        }
+    }
+
+    // Validate that we have NZB content
+    let nzb_bytes = match nzb_content {
+        Some(bytes) => bytes,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "missing_file",
+                        "message": "No NZB file provided in 'file' field"
+                    }
+                }))
+            ).into_response();
+        }
+    };
+
+    // Parse options or use defaults
+    let options: crate::types::DownloadOptions = match options_json {
+        Some(json_str) => {
+            match serde_json::from_str(&json_str) {
+                Ok(opts) => opts,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": {
+                                "code": "invalid_options",
+                                "message": format!("Invalid options JSON: {}", e)
+                            }
+                        }))
+                    ).into_response();
+                }
+            }
+        }
+        None => crate::types::DownloadOptions::default(),
+    };
+
+    // Use filename or generate default
+    let name = nzb_filename.unwrap_or_else(|| "upload.nzb".to_string());
+
+    // Add NZB to download queue
+    match state.downloader.add_nzb_content(&nzb_bytes, &name, options).await {
+        Ok(download_id) => {
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "id": download_id
+                }))
+            ).into_response()
+        }
+        Err(e) => {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({
+                    "error": {
+                        "code": "nzb_processing_failed",
+                        "message": format!("Failed to process NZB: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// POST /downloads/url - Add NZB from URL

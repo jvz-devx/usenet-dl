@@ -1101,4 +1101,177 @@ mod tests {
         println!("✅ get_download endpoint test (non-existent download) passed!");
         println!("   - Correctly returns 404 for missing download");
     }
+
+    #[tokio::test]
+    async fn test_add_download_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode, header};
+        use tower::ServiceExt; // for oneshot()
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create a minimal valid NZB file content
+        let nzb_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file poster="test@example.com" date="1234567890" subject="Test File">
+    <groups>
+      <group>alt.binaries.test</group>
+    </groups>
+    <segments>
+      <segment bytes="100000" number="1">test-message-id@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+        // Create multipart form data manually
+        let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+        let body = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"test.nzb\"\r\n\
+             Content-Type: application/x-nzb\r\n\
+             \r\n\
+             {nzb_content}\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"options\"\r\n\
+             \r\n\
+             {{\"category\":\"movies\",\"priority\":\"high\"}}\r\n\
+             --{boundary}--\r\n",
+            boundary = boundary,
+            nzb_content = nzb_content
+        );
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test: Upload NZB file with options
+        let request = Request::builder()
+            .method("POST")
+            .uri("/downloads")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={}", boundary)
+            )
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Check that response is 201 CREATED
+        assert_eq!(
+            response.status(),
+            StatusCode::CREATED,
+            "add_download should return 201 CREATED for valid NZB"
+        );
+
+        // Parse response body to get download ID
+        use axum::body::to_bytes;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response_json: serde_json::Value =
+            serde_json::from_slice(&body).expect("Response should be valid JSON");
+
+        let download_id = response_json["id"]
+            .as_i64()
+            .expect("Response should contain download ID");
+
+        println!("✅ add_download endpoint test passed!");
+        println!("   - Download ID created: {}", download_id);
+
+        // Verify download was actually added to database
+        let download = downloader
+            .db
+            .get_download(download_id)
+            .await
+            .unwrap()
+            .expect("Download should exist in database");
+
+        assert_eq!(download.name, "test.nzb");
+        assert_eq!(download.category, Some("movies".to_string()));
+        assert_eq!(download.priority, 1); // High priority
+
+        println!("   - Download verified in database");
+        println!("   - Name: {}", download.name);
+        println!("   - Category: {:?}", download.category);
+        println!("   - Priority: {} (High)", download.priority);
+
+        // Test 2: Upload NZB without options (should use defaults)
+        let nzb_content2 = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file poster="test@example.com" date="1234567890" subject="Test File 2">
+    <groups>
+      <group>alt.binaries.test</group>
+    </groups>
+    <segments>
+      <segment bytes="200000" number="1">test-message-id-2@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+        let body2 = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"test2.nzb\"\r\n\
+             Content-Type: application/x-nzb\r\n\
+             \r\n\
+             {nzb_content}\r\n\
+             --{boundary}--\r\n",
+            boundary = boundary,
+            nzb_content = nzb_content2
+        );
+
+        let app2 = create_router(downloader.clone(), config.clone());
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/downloads")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={}", boundary)
+            )
+            .body(Body::from(body2))
+            .unwrap();
+
+        let response2 = app2.oneshot(request2).await.unwrap();
+
+        assert_eq!(
+            response2.status(),
+            StatusCode::CREATED,
+            "add_download should work without options field"
+        );
+
+        println!("✅ add_download endpoint test (no options) passed!");
+
+        // Test 3: Missing file should return 400 BAD_REQUEST
+        let body3 = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"other\"\r\n\
+             \r\n\
+             not a file\r\n\
+             --{boundary}--\r\n",
+            boundary = boundary
+        );
+
+        let app3 = create_router(downloader, config);
+        let request3 = Request::builder()
+            .method("POST")
+            .uri("/downloads")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={}", boundary)
+            )
+            .body(Body::from(body3))
+            .unwrap();
+
+        let response3 = app3.oneshot(request3).await.unwrap();
+
+        assert_eq!(
+            response3.status(),
+            StatusCode::BAD_REQUEST,
+            "add_download should return 400 when file field is missing"
+        );
+
+        println!("✅ add_download endpoint test (missing file) passed!");
+        println!("   - Correctly returns 400 for missing file field");
+    }
 }

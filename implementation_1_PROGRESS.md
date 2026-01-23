@@ -26,14 +26,15 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (17/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (18/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
-  - Task 19.2: ✅ GET /downloads/:id endpoint complete with comprehensive test (25 API tests passing)
-- Total: 126/253 tasks complete (49.8%)
+  - Task 19.2: ✅ GET /downloads/:id endpoint complete with comprehensive test
+  - Task 19.3: ✅ POST /downloads endpoint complete with multipart/form-data support (26 API tests passing)
+- Total: 127/253 tasks complete (50.2%)
 
-**Next Task:** Task 19.3 - Implement POST /downloads with multipart/form-data (add_download handler)
+**Next Task:** Task 19.4 - Implement POST /downloads/url (add_download_url handler)
 
 ## Analysis
 
@@ -302,7 +303,7 @@ The implementation will require these major dependencies:
 
 - [x] Task 19.1: Implement GET /downloads (list_downloads handler)
 - [x] Task 19.2: Implement GET /downloads/:id (get_download handler)
-- [ ] Task 19.3: Implement POST /downloads with multipart/form-data (add_download handler)
+- [x] Task 19.3: Implement POST /downloads with multipart/form-data (add_download handler)
 - [ ] Task 19.4: Implement POST /downloads/url (add_download_url handler)
 - [ ] Task 19.5: Implement POST /downloads/:id/pause (pause_download handler)
 - [ ] Task 19.6: Implement POST /downloads/:id/resume (resume_download handler)
@@ -452,7 +453,49 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.2: Implement GET /downloads/:id (get_download handler)**
+**Task 19.3: Implement POST /downloads with multipart/form-data (add_download handler)**
+
+Successfully implemented the endpoint to upload NZB files via multipart/form-data:
+
+1. **Import Updates** (src/api/routes.rs:4):
+   - Added Multipart to axum extract imports
+   - Enables parsing of multipart/form-data requests
+
+2. **Handler Implementation** (src/api/routes.rs:153-275):
+   - Replaced NOT_IMPLEMENTED stub with full multipart handling
+   - Parses two multipart fields:
+     * `file`: Required NZB file upload (with optional filename)
+     * `options`: Optional JSON DownloadOptions (category, priority, password, etc.)
+   - Validates file field presence (returns 400 BAD_REQUEST if missing)
+   - Parses options JSON or uses defaults if not provided
+   - Extracts filename from multipart field or uses "upload.nzb" as fallback
+   - Calls `add_nzb_content()` to add to download queue
+   - Returns proper status codes:
+     * 201 CREATED: Success, returns `{"id": download_id}`
+     * 400 BAD_REQUEST: Missing file, invalid file read, invalid options JSON
+     * 422 UNPROCESSABLE_ENTITY: NZB processing failed
+   - All responses follow error format: `{"error": {"code": "...", "message": "..."}}`
+
+3. **Test Implementation** (src/api/mod.rs:1107-1283):
+   - Created comprehensive test `test_add_download_endpoint()`
+   - Tests three scenarios:
+     * **Valid upload with options**: Creates multipart request with NZB file and options JSON, validates 201 response, checks database record matches expected values (category, priority)
+     * **Valid upload without options**: Creates multipart request with only file field, validates defaults are used
+     * **Missing file field**: Creates multipart request without file field, expects 400 BAD_REQUEST
+   - Validates response structure and status codes
+   - Verifies database persistence (downloads actually added)
+   - Tests correct handling of multipart boundaries and content-disposition headers
+   - Uses manually crafted multipart/form-data format (no external dependencies)
+
+4. **Test Results**:
+   - ✅ All 26 API tests pass (previous 25 + new test)
+   - ✅ Three test scenarios all pass
+   - ✅ Multipart parsing works correctly
+   - ✅ Options parsing (JSON in multipart field) works
+   - ✅ Database verification confirms downloads are persisted
+   - ✅ Error handling returns proper status codes
+
+**Previous Completion: Task 19.2: Implement GET /downloads/:id (get_download handler)**
 
 Successfully implemented the endpoint to retrieve a single download by ID:
 
