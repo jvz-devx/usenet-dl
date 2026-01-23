@@ -2765,17 +2765,21 @@ impl UsenetDownloader {
         // Insert download into database
         let download_id = self.db.insert_download(&new_download).await?;
 
-        // Insert all articles (segments) for resume support
-        for file in &nzb.files {
-            for segment in &file.segments {
-                let article = db::NewArticle {
+        // Insert all articles (segments) for resume support (batch insert for performance)
+        // SQLite has a limit of ~999 variables per query, so we chunk (5 columns per article = 199 max)
+        let articles: Vec<db::NewArticle> = nzb.files
+            .iter()
+            .flat_map(|file| {
+                file.segments.iter().map(|segment| db::NewArticle {
                     download_id,
                     message_id: segment.message_id.clone(),
                     segment_number: segment.number as i32,
                     size_bytes: segment.bytes as i64,
-                };
-                self.db.insert_article(&article).await?;
-            }
+                })
+            })
+            .collect();
+        for chunk in articles.chunks(199) {
+            self.db.insert_articles_batch(chunk).await?;
         }
 
         // Cache password if provided
