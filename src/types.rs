@@ -366,3 +366,40 @@ pub struct HistoryEntry {
     /// When the download completed (successfully or failed)
     pub completed_at: DateTime<Utc>,
 }
+
+/// Queue statistics
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct QueueStats {
+    /// Total number of downloads in queue
+    pub total: usize,
+
+    /// Number of queued downloads (waiting to start)
+    pub queued: usize,
+
+    /// Number of actively downloading
+    pub downloading: usize,
+
+    /// Number of paused downloads
+    pub paused: usize,
+
+    /// Number of downloads in post-processing
+    pub processing: usize,
+
+    /// Total download speed across all active downloads (bytes per second)
+    pub total_speed_bps: u64,
+
+    /// Total size of all downloads in queue (bytes)
+    pub total_size_bytes: u64,
+
+    /// Total downloaded bytes across all downloads
+    pub downloaded_bytes: u64,
+
+    /// Overall queue progress (0.0 to 100.0)
+    pub overall_progress: f32,
+
+    /// Current speed limit (None = unlimited)
+    pub speed_limit_bps: Option<u64>,
+
+    /// Whether queue is accepting new downloads
+    pub accepting_new: bool,
+}

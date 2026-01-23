@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (25/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (26/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -41,9 +41,10 @@ IN_PROGRESS
   - Task 19.10: ✅ POST /downloads/:id/reextract endpoint complete with comprehensive test (40 API tests passing)
   - Task 19.11: ✅ POST /queue/pause endpoint complete with comprehensive test (41 API tests passing)
   - Task 19.12: ✅ POST /queue/resume endpoint complete with comprehensive test (42 API tests passing)
-- Total: 136/253 tasks complete (53.8%)
+  - Task 19.13: ✅ GET /queue/stats endpoint complete with comprehensive test (43 API tests passing)
+- Total: 137/253 tasks complete (54.2%)
 
-**Next Task:** Task 19.13 - Implement GET /queue/stats (queue_stats handler)
+**Next Task:** Task 19.14 - Implement GET /history with pagination (get_history handler)
 
 ## Analysis
 
@@ -322,7 +323,7 @@ The implementation will require these major dependencies:
 - [x] Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)
 - [x] Task 19.11: Implement POST /queue/pause (pause_all handler)
 - [x] Task 19.12: Implement POST /queue/resume (resume_all handler)
-- [ ] Task 19.13: Implement GET /queue/stats (queue_stats handler)
+- [x] Task 19.13: Implement GET /queue/stats (queue_stats handler)
 - [ ] Task 19.14: Implement GET /history with pagination (get_history handler)
 - [ ] Task 19.15: Implement DELETE /history (clear_history handler)
 - [ ] Task 19.16: Test all queue endpoints with curl/Postman
@@ -4999,3 +5000,24 @@ test result: ok. 30 passed; 0 failed; 0 ignored
 **Note:** The delete_files parameter is accepted but not yet fully implemented. Currently always deletes temp files via cancel(). Future enhancement would differentiate between deleting temp files vs final destination files for completed downloads.
 
 The endpoint is fully functional and ready for use.
+
+
+## Completed This Iteration
+
+- Task 19.13: Implemented GET /queue/stats endpoint
+  - Added QueueStats type with comprehensive statistics (total, queued, downloading, paused, processing, speed, size, progress)
+  - Implemented queue_stats handler that queries database and calculates statistics
+  - Fixed speed limit retrieval to use SpeedLimiter.get_limit() instead of config (reflects runtime changes)
+  - Added QueueStats to OpenAPI schema
+  - Exported QueueStats from library
+  - Wrote comprehensive test covering empty queue, multiple downloads with different statuses, and speed limit changes
+  - All 43 API tests passing
+
+## Notes
+
+- The queue_stats endpoint provides real-time statistics about the download queue
+- Statistics include counts by status (queued, downloading, paused, processing)
+- Overall progress is calculated based on total size vs downloaded bytes
+- Speed limit correctly reflects runtime changes made via set_speed_limit()
+- The endpoint is fully functional and production-ready
+

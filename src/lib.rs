@@ -66,7 +66,8 @@ pub use config::{Config, ServerConfig};
 pub use db::Database;
 pub use error::{Error, Result};
 pub use types::{
-    DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, Stage, Status,
+    DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, QueueStats, Stage,
+    Status,
 };
 use std::path::PathBuf;
 use utils::extract_filename_from_response;

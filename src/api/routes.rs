@@ -808,12 +808,90 @@ pub async fn resume_queue(State(state): State<AppState>) -> impl IntoResponse {
     path = "/api/v1/queue/stats",
     tag = "queue",
     responses(
-        (status = 200, description = "Queue statistics"),
+        (status = 200, description = "Queue statistics", body = crate::types::QueueStats),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn queue_stats(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn queue_stats(State(state): State<AppState>) -> Response {
+    // Query all downloads from database
+    match state.downloader.db.get_all_downloads().await {
+        Ok(downloads) => {
+            // Initialize counters
+            let mut queued = 0;
+            let mut downloading = 0;
+            let mut paused = 0;
+            let mut processing = 0;
+            let mut total_speed_bps = 0u64;
+            let mut total_size_bytes = 0u64;
+            let mut downloaded_bytes = 0u64;
+
+            // Calculate statistics
+            for download in &downloads {
+                let status = crate::types::Status::from_i32(download.status);
+
+                // Count by status
+                match status {
+                    crate::types::Status::Queued => queued += 1,
+                    crate::types::Status::Downloading => downloading += 1,
+                    crate::types::Status::Paused => paused += 1,
+                    crate::types::Status::Processing => processing += 1,
+                    _ => {} // Complete and Failed are not in "active" queue
+                }
+
+                // Sum up speeds (only for downloading items)
+                if status == crate::types::Status::Downloading {
+                    total_speed_bps += download.speed_bps as u64;
+                }
+
+                // Sum up sizes
+                total_size_bytes += download.size_bytes as u64;
+                downloaded_bytes += download.downloaded_bytes as u64;
+            }
+
+            let total = downloads.len();
+
+            // Calculate overall progress
+            let overall_progress = if total_size_bytes > 0 {
+                (downloaded_bytes as f32 / total_size_bytes as f32) * 100.0
+            } else {
+                0.0
+            };
+
+            // Get speed limit from speed limiter (this reflects runtime changes via set_speed_limit)
+            let speed_limit_bps = state.downloader.speed_limiter.get_limit();
+
+            // Get accepting_new flag
+            let accepting_new = state.downloader.accepting_new.load(std::sync::atomic::Ordering::SeqCst);
+
+            let stats = crate::types::QueueStats {
+                total,
+                queued,
+                downloading,
+                paused,
+                processing,
+                total_speed_bps,
+                total_size_bytes,
+                downloaded_bytes,
+                overall_progress,
+                speed_limit_bps,
+                accepting_new,
+            };
+
+            (StatusCode::OK, Json(stats)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get queue statistics");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "stats_failed",
+                        "message": format!("Failed to get queue statistics: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 // ============================================================================

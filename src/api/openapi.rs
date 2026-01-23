@@ -95,6 +95,7 @@ use utoipa::OpenApi;
         crate::types::DownloadInfo,
         crate::types::DownloadOptions,
         crate::types::HistoryEntry,
+        crate::types::QueueStats,
 
         // Config types from config.rs
         crate::config::Config,
