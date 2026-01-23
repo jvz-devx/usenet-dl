@@ -26,12 +26,13 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (15/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (16/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
-- Total: 124/253 tasks complete (49.0%)
+  - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test (24 API tests passing)
+- Total: 125/253 tasks complete (49.4%)
 
-**Next Task:** Task 19.1 - Implement GET /downloads (list_downloads handler)
+**Next Task:** Task 19.2 - Implement GET /downloads/:id (get_download handler)
 
 ## Analysis
 
@@ -298,7 +299,7 @@ The implementation will require these major dependencies:
 - [x] Task 18.6: Mount Swagger UI at /swagger-ui
 - [x] Task 18.7: Test Swagger UI loads and shows all endpoints
 
-- [ ] Task 19.1: Implement GET /downloads (list_downloads handler)
+- [x] Task 19.1: Implement GET /downloads (list_downloads handler)
 - [ ] Task 19.2: Implement GET /downloads/:id (get_download handler)
 - [ ] Task 19.3: Implement POST /downloads with multipart/form-data (add_download handler)
 - [ ] Task 19.4: Implement POST /downloads/url (add_download_url handler)
@@ -450,7 +451,58 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 18.7: Test Swagger UI loads and shows all endpoints**
+**Task 19.1: Implement GET /downloads (list_downloads handler)**
+
+Successfully implemented the first functional API endpoint to list all downloads:
+
+1. **Handler Implementation** (src/api/routes.rs:27-81):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Queries all downloads from database using `state.downloader.db.list_downloads()`
+   - Converts database `Download` records to API `DownloadInfo` objects
+   - Handles type conversions:
+     * `Status::from_i32()` - Converts integer status codes to enum
+     * `Priority::from_i32()` - Converts integer priority codes to enum
+     * `chrono::DateTime::from_timestamp()` - Converts Unix timestamps to DateTime<Utc>
+   - Calculates ETA dynamically:
+     * Only for downloads in Downloading status (status == 1)
+     * Only when speed_bps > 0
+     * Formula: remaining_bytes / speed_bps
+   - Returns proper HTTP responses:
+     * 200 OK with JSON array of DownloadInfo on success
+     * 500 Internal Server Error with empty array on database errors
+   - Logs errors using tracing for debugging
+
+2. **Test Implementation** (src/api/mod.rs:923-1019):
+   - Created comprehensive integration test `test_list_downloads_endpoint()`
+   - Sets up test database with 2 sample downloads:
+     * Download 1: Movies category, Queued status, Normal priority, 100MB
+     * Download 2: TV category, Downloading status, High priority, 500MB
+   - Makes HTTP GET request to `/downloads` endpoint
+   - Validates response:
+     * HTTP 200 OK status code
+     * Valid JSON array response
+     * Correct number of downloads (2)
+     * Accurate field mappings for all properties
+     * Proper enum conversions (Status, Priority)
+     * Correct size_bytes values
+   - Uses Axum test utilities (oneshot, Body, to_bytes)
+
+3. **Test Results**:
+   - ✅ All 24 API tests pass
+   - ✅ New test validates end-to-end functionality
+   - ✅ Code compiles with no errors (only documentation warnings)
+   - ✅ Handler properly integrates with existing database layer
+   - ✅ Type conversions work correctly
+   - ✅ Error handling logs failures appropriately
+
+4. **Implementation Details**:
+   - Uses Axum's State extractor to access AppState
+   - Leverages existing database methods (no new DB code needed)
+   - Follows same pattern as other route handlers
+   - Returns consistent JSON structure as defined in OpenAPI spec
+   - Maintains existing utoipa annotations for OpenAPI documentation
+
+**Previous Completion: Task 18.7: Test Swagger UI loads and shows all endpoints**
 
 Successfully created comprehensive test to verify Swagger UI integration and OpenAPI spec completeness:
 

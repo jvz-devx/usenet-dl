@@ -24,8 +24,57 @@ use utoipa;
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn list_downloads(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn list_downloads(State(state): State<AppState>) -> impl IntoResponse {
+    // Query all downloads from database
+    match state.downloader.db.list_downloads().await {
+        Ok(downloads) => {
+            // Convert Download records to DownloadInfo
+            let download_infos: Vec<crate::types::DownloadInfo> = downloads
+                .into_iter()
+                .map(|d| {
+                    // Calculate ETA if download is in progress and speed > 0
+                    let eta_seconds = if d.speed_bps > 0 && d.status == 1 {
+                        // Status 1 = Downloading
+                        let remaining = d.size_bytes.saturating_sub(d.downloaded_bytes);
+                        if remaining > 0 {
+                            Some((remaining as u64) / (d.speed_bps as u64))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    crate::types::DownloadInfo {
+                        id: d.id,
+                        name: d.name,
+                        category: d.category,
+                        status: crate::types::Status::from_i32(d.status),
+                        progress: d.progress,
+                        speed_bps: d.speed_bps as u64,
+                        size_bytes: d.size_bytes as u64,
+                        downloaded_bytes: d.downloaded_bytes as u64,
+                        eta_seconds,
+                        priority: crate::types::Priority::from_i32(d.priority),
+                        created_at: chrono::DateTime::from_timestamp(d.created_at, 0)
+                            .unwrap_or_else(|| chrono::Utc::now()),
+                        started_at: d
+                            .started_at
+                            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
+                    }
+                })
+                .collect();
+
+            (StatusCode::OK, Json(download_infos))
+        }
+        Err(e) => {
+            tracing::error!("Failed to list downloads: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(vec![]), // Return empty array on error
+            )
+        }
+    }
 }
 
 /// GET /downloads/:id - Get single download

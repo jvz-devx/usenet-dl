@@ -921,4 +921,99 @@ mod tests {
         println!("   - {} schemas defined", schemas.len());
         println!("   - {} tags defined", tags.len());
     }
+
+    #[tokio::test]
+    async fn test_list_downloads_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add some test downloads to the database
+        use crate::types::{DownloadOptions, Priority};
+        use crate::db::NewDownload;
+
+        let new_download1 = NewDownload {
+            name: "Test Download 1".to_string(),
+            nzb_path: "/tmp/test1.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("hash1".to_string()),
+            job_name: Some("Test Download 1".to_string()),
+            category: Some("movies".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4, // UnpackAndCleanup
+            priority: 0,     // Normal
+            status: 0,       // Queued
+            size_bytes: 1024 * 1024 * 100, // 100 MB
+        };
+
+        let new_download2 = NewDownload {
+            name: "Test Download 2".to_string(),
+            nzb_path: "/tmp/test2.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("hash2".to_string()),
+            job_name: Some("Test Download 2".to_string()),
+            category: Some("tv".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 1, // High
+            status: 1,   // Downloading
+            size_bytes: 1024 * 1024 * 500, // 500 MB
+        };
+
+        // Insert downloads into database
+        downloader.db.insert_download(&new_download1).await.unwrap();
+        downloader.db.insert_download(&new_download2).await.unwrap();
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader, config);
+
+        // Make a request to list downloads
+        let request = Request::builder()
+            .uri("/downloads")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Check that response is successful
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "list_downloads should return 200 OK"
+        );
+
+        // Parse response body
+        use axum::body::to_bytes;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let downloads: Vec<crate::types::DownloadInfo> =
+            serde_json::from_slice(&body).expect("Response should be valid JSON");
+
+        // Verify we got both downloads
+        assert_eq!(
+            downloads.len(),
+            2,
+            "Should return both downloads that were created"
+        );
+
+        // Verify download details
+        let download1 = downloads.iter().find(|d| d.name == "Test Download 1").unwrap();
+        assert_eq!(download1.category, Some("movies".to_string()));
+        assert_eq!(download1.status, crate::types::Status::Queued);
+        assert_eq!(download1.priority, crate::types::Priority::Normal);
+        assert_eq!(download1.size_bytes, 1024 * 1024 * 100);
+
+        let download2 = downloads.iter().find(|d| d.name == "Test Download 2").unwrap();
+        assert_eq!(download2.category, Some("tv".to_string()));
+        assert_eq!(download2.status, crate::types::Status::Downloading);
+        assert_eq!(download2.priority, crate::types::Priority::High);
+        assert_eq!(download2.size_bytes, 1024 * 1024 * 500);
+
+        println!("✅ list_downloads endpoint test passed!");
+        println!("   - Returned {} downloads", downloads.len());
+        println!("   - Status codes and data structure validated");
+    }
 }
