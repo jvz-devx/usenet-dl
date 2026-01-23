@@ -3710,8 +3710,8 @@ impl UsenetDownloader {
 
             let total_articles = pending_articles.len();
             let total_size_bytes = download.size_bytes as u64;
-            let mut downloaded_articles = 0;
-            let mut downloaded_bytes: u64 = 0;
+            let downloaded_articles = Arc::new(AtomicU64::new(0));
+            let downloaded_bytes = Arc::new(AtomicU64::new(0));
 
             // Track download start time for speed calculation
             let download_start = std::time::Instant::now();
@@ -3773,20 +3773,22 @@ impl UsenetDownloader {
                         )
                         .await?;
 
-                        downloaded_articles += 1;
-                        downloaded_bytes += article.size_bytes as u64;
+                        downloaded_articles.fetch_add(1, Ordering::Relaxed);
+                        downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
 
                         // Calculate progress percentage
+                        let current_bytes = downloaded_bytes.load(Ordering::Relaxed);
+                        let current_articles = downloaded_articles.load(Ordering::Relaxed);
                         let progress_percent = if total_size_bytes > 0 {
-                            (downloaded_bytes as f32 / total_size_bytes as f32) * 100.0
+                            (current_bytes as f32 / total_size_bytes as f32) * 100.0
                         } else {
-                            (downloaded_articles as f32 / total_articles as f32) * 100.0
+                            (current_articles as f32 / total_articles as f32) * 100.0
                         };
 
                         // Calculate download speed (bytes per second)
                         let elapsed_secs = download_start.elapsed().as_secs_f64();
                         let speed_bps = if elapsed_secs > 0.0 {
-                            (downloaded_bytes as f64 / elapsed_secs) as u64
+                            (current_bytes as f64 / elapsed_secs) as u64
                         } else {
                             0
                         };
@@ -3796,7 +3798,7 @@ impl UsenetDownloader {
                             download_id,
                             progress_percent,
                             speed_bps,
-                            downloaded_bytes,
+                            current_bytes,
                         )
                         .await?;
 

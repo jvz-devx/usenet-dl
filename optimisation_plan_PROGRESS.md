@@ -190,7 +190,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
 
 ### Phase 4: Parallelize Direct Download Loop
 
-- [ ] Task 4.1: Add atomic counters for direct download method
+- [x] Task 4.1: Add atomic counters for direct download method
   - In `download_nzb()` method, replace counters at lines 3674-3675 with `Arc<AtomicU64>`
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3674-3675`
 
@@ -367,6 +367,21 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
+- Task 4.1: Add atomic counters for direct download method
+  - Replaced `let mut downloaded_articles = 0;` with `Arc::new(AtomicU64::new(0))` at line 3713
+  - Replaced `let mut downloaded_bytes: u64 = 0;` with `Arc::new(AtomicU64::new(0))` at line 3714
+  - Updated all counter increments from `+=` to `.fetch_add(value, Ordering::Relaxed)`
+  - Updated all counter reads to use `.load(Ordering::Relaxed)` for progress calculation
+  - Changed line 3776-3777: Now using atomic operations instead of mutable variables
+  - Added local variables `current_bytes` and `current_articles` to load atomic values (lines 3780-3781)
+  - Updated progress calculations to use the loaded values
+  - This prepares the direct download method for parallel stream implementation in next tasks
+  - Location: src/lib.rs:3713-3714 (declaration), 3776-3781 (usage in loop)
+  - Validated with `cargo build` - compiles successfully with only expected warnings
+  - Atomic counters are now in place and ready for parallel downloads
+
+## Previously Completed
+
 - Tasks 3.2-3.7: Converted queue processor sequential loop to parallel stream
   - Replaced the sequential `for article in pending_articles` loop (lines 3221-3353) with parallel stream
   - Created stream using `stream::iter(pending_articles)` with `.map()` and `.buffer_unordered(concurrency)`
@@ -381,8 +396,6 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
   - Location: src/lib.rs:3220-3340 (entire parallel download implementation)
   - Validated with `cargo check` - compiles successfully with only expected warnings
   - Downloads will now use all configured connections concurrently instead of sequentially
-
-## Previously Completed
 
 - Task 2.2: Create progress reporting task for queue processor
   - Created dedicated tokio task that runs every 500ms to emit progress events
