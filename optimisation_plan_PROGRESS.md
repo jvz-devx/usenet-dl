@@ -303,7 +303,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - Mention: Expected speedup (N× with N connections)
   - File: `/home/jens/Documents/source/usenet-dl/CHANGELOG.md`
 
-- [ ] Task 7.4: Consider updating README with performance notes
+- [x] Task 7.4: Consider updating README with performance notes
   - If README exists, mention parallel download capability
   - Document: How connection count affects performance
   - File: `/home/jens/Documents/source/usenet-dl/README.md` (if exists)
@@ -371,6 +371,27 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 **Parallel Work Possible**: Phases 3 and 4 can be worked on simultaneously after Phase 2
 
 ## Completed This Iteration
+
+- Task 7.4: Updated README.md with performance notes
+  - **File Modified**: `README.md` - Added parallel download documentation
+  - **Changes Made**:
+    1. **Features Section** (line 26):
+       - Added "Parallel Downloads" bullet point to Core Capabilities
+       - Description: "Concurrent article fetching using all configured connections (~N× speedup with N connections)"
+       - Positioned between Resume Support and Speed Limiting (both performance-related features)
+    2. **Configuration Example** (line 317):
+       - Added inline comment explaining connection count impact
+       - Comment: "// More connections = faster downloads (10 connections ≈ 10× speed)"
+       - Helps users understand how to optimize download performance
+  - **User Impact**:
+    - Users reading README will understand parallel download capability
+    - Clear guidance on how connection count affects download speed
+    - Concrete examples (10 connections ≈ 10× speedup)
+  - **Validation**: Verified with grep commands - formatting looks good
+  - **Phase 7 Complete**: All documentation tasks (7.1-7.4) are now finished
+  - **Next**: All core optimization tasks complete, only optional Phase 8 enhancements remain
+
+## Previously Completed This Iteration
 
 - Task 7.3: Updated CHANGELOG.md with performance improvement
   - **File Modified**: `CHANGELOG.md` - Added Phase 6: Performance Optimizations section

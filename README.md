@@ -23,6 +23,7 @@ This library is production-ready with comprehensive test coverage (300+ tests pa
 
 - **Queue Management**: Priority-based download queue with pause/resume/cancel
 - **Resume Support**: Article-level download tracking, survives crashes and restarts
+- **Parallel Downloads**: Concurrent article fetching using all configured connections (~N× speedup with N connections)
 - **Speed Limiting**: Global bandwidth control with token bucket algorithm
 - **Retry Logic**: Exponential backoff with jitter for transient failures
 - **Event System**: Real-time events via `tokio::broadcast` channels
@@ -313,7 +314,7 @@ let config = Config {
             tls: true,
             username: Some("user".to_string()),
             password: Some("pass".to_string()),
-            connections: 10,
+            connections: 10,  // More connections = faster downloads (10 connections ≈ 10× speed)
             priority: 0, // Lower = tried first
         }
     ],
