@@ -1,3 +1,40 @@
+//! Folder watching for automatic NZB import
+//!
+//! This module provides filesystem watching capabilities to automatically import NZB files
+//! from monitored directories. It supports:
+//! - Automatic detection of new `.nzb` files
+//! - Configurable post-import actions (delete, move to processed folder, or keep)
+//! - Per-folder category assignment
+//! - Non-recursive watching (only monitors the specified directory, not subdirectories)
+//!
+//! # Example
+//!
+//! ```no_run
+//! use usenet_dl::{UsenetDownloader, config::{Config, WatchFolderConfig, WatchFolderAction}};
+//! use usenet_dl::folder_watcher::FolderWatcher;
+//! use std::sync::Arc;
+//! use std::time::Duration;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::default();
+//! let downloader = Arc::new(UsenetDownloader::new(config).await?);
+//!
+//! let watch_config = WatchFolderConfig {
+//!     path: "/path/to/watch/folder".into(),
+//!     after_import: WatchFolderAction::MoveToProcessed,
+//!     category: Some("movies".to_string()),
+//!     scan_interval: Duration::from_secs(5),
+//! };
+//!
+//! let mut watcher = FolderWatcher::new(downloader, vec![watch_config])?;
+//! watcher.start()?;
+//!
+//! // Run the watcher (blocks until stopped)
+//! watcher.run().await;
+//! # Ok(())
+//! # }
+//! ```
+
 use crate::config::{WatchFolderAction, WatchFolderConfig};
 use crate::error::{Error, Result};
 use crate::types::DownloadOptions;
@@ -117,6 +154,9 @@ impl FolderWatcher {
     }
 
     /// Handle a filesystem event
+    ///
+    /// Processes filesystem events from the watcher and triggers NZB processing for creation/modification events.
+    /// Only `.nzb` files are processed; other file types are ignored.
     async fn handle_event(&self, event: Event) -> Result<()> {
         // We only care about file creation events
         match event.kind {
@@ -136,6 +176,8 @@ impl FolderWatcher {
     }
 
     /// Check if a file is an NZB file
+    ///
+    /// Determines if a file path has the `.nzb` extension (case-insensitive).
     fn is_nzb_file(&self, path: &Path) -> bool {
         path.extension()
             .and_then(|ext| ext.to_str())
@@ -144,6 +186,12 @@ impl FolderWatcher {
     }
 
     /// Process a newly detected NZB file
+    ///
+    /// This method:
+    /// 1. Identifies the watch folder configuration for the file
+    /// 2. Waits briefly to ensure the file is fully written
+    /// 3. Adds the NZB to the download queue with the configured category
+    /// 4. Executes the after_import action (delete, move, or keep)
     async fn process_nzb_file(&self, path: &Path) -> Result<()> {
         debug!("Processing NZB file: {}", path.display());
 
@@ -184,6 +232,9 @@ impl FolderWatcher {
     }
 
     /// Find the watch folder config that matches this path
+    ///
+    /// Searches through configured watch folders to find the one containing this file.
+    /// Returns the first matching configuration or an error if no match is found.
     fn find_config_for_path(&self, path: &Path) -> Result<&WatchFolderConfig> {
         let parent = path.parent().ok_or_else(|| {
             Error::FolderWatch("File has no parent directory".to_string())
@@ -201,6 +252,11 @@ impl FolderWatcher {
     }
 
     /// Handle the after_import action for a processed NZB
+    ///
+    /// Executes the configured action after successfully adding an NZB to the queue:
+    /// - `Delete`: Removes the NZB file
+    /// - `MoveToProcessed`: Moves the file to a `processed` subdirectory
+    /// - `Keep`: Leaves the file in place and marks it as processed in the database
     async fn handle_after_import(&self, path: &Path, config: &WatchFolderConfig) -> Result<()> {
         match config.after_import {
             WatchFolderAction::Delete => {

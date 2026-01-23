@@ -1,3 +1,43 @@
+//! RSS feed scheduling and periodic checking
+//!
+//! This module provides background scheduling for RSS feed checks. The scheduler
+//! manages multiple feeds with independent check intervals, automatically fetching
+//! and processing new items.
+//!
+//! # Features
+//!
+//! - Independent per-feed check intervals
+//! - Respects feed enable/disable state
+//! - Graceful shutdown handling
+//! - Last-check time tracking
+//!
+//! # Example
+//!
+//! ```no_run
+//! use usenet_dl::{UsenetDownloader, config::Config};
+//! use usenet_dl::rss_scheduler::RssScheduler;
+//! use usenet_dl::rss_manager::RssManager;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::default();
+//! let downloader = Arc::new(UsenetDownloader::new(config).await?);
+//! let rss_manager = Arc::new(RssManager::new(
+//!     downloader.db.clone(),
+//!     downloader.clone(),
+//!     downloader.config.rss_feeds.clone(),
+//! )?);
+//!
+//! let scheduler = RssScheduler::new(downloader.clone(), rss_manager);
+//!
+//! // Run scheduler (blocks until shutdown)
+//! tokio::spawn(async move {
+//!     scheduler.run().await;
+//! });
+//! # Ok(())
+//! # }
+//! ```
+
 use crate::{config::RssFeedConfig, rss_manager::RssManager, UsenetDownloader};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

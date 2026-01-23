@@ -565,12 +565,19 @@ pub struct ScheduleRule {
 /// Day of week for schedule rules
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum Weekday {
+    /// Monday
     Monday,
+    /// Tuesday
     Tuesday,
+    /// Wednesday
     Wednesday,
+    /// Thursday
     Thursday,
+    /// Friday
     Friday,
+    /// Saturday
     Saturday,
+    /// Sunday
     Sunday,
 }
 
@@ -579,7 +586,10 @@ pub enum Weekday {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ScheduleAction {
     /// Set speed limit (bytes per second)
-    SpeedLimit { limit_bps: u64 },
+    SpeedLimit {
+        /// Speed limit in bytes per second
+        limit_bps: u64
+    },
     /// Unlimited speed
     Unlimited,
     /// Pause all downloads
@@ -644,8 +654,11 @@ pub struct WebhookConfig {
 /// Webhook trigger event
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum WebhookEvent {
+    /// Triggered when a download completes successfully
     OnComplete,
+    /// Triggered when a download fails
     OnFailed,
+    /// Triggered when a download is queued
     OnQueued,
 }
 
@@ -666,8 +679,11 @@ pub struct ScriptConfig {
 /// Script trigger event
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum ScriptEvent {
+    /// Triggered when a download completes successfully
     OnComplete,
+    /// Triggered when a download fails
     OnFailed,
+    /// Triggered when post-processing completes
     OnPostProcessComplete,
 }
 

@@ -1,3 +1,38 @@
+//! Scheduler task execution for time-based automation
+//!
+//! This module provides the background task that evaluates schedule rules and applies
+//! actions (speed limits, pauses) based on the current time and day of week.
+//!
+//! # Features
+//!
+//! - Minute-level rule evaluation
+//! - Action change tracking to avoid redundant operations
+//! - Graceful shutdown handling
+//! - Automatic revert to defaults when no rules match
+//!
+//! # Example
+//!
+//! ```no_run
+//! use usenet_dl::{UsenetDownloader, config::Config};
+//! use usenet_dl::scheduler::Scheduler;
+//! use usenet_dl::scheduler_task::SchedulerTask;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::default();
+//! let downloader = Arc::new(UsenetDownloader::new(config).await?);
+//! let scheduler = Arc::new(Scheduler::new(downloader.config.schedule_rules.clone()));
+//!
+//! let task = SchedulerTask::new(downloader.clone(), scheduler);
+//!
+//! // Run scheduler task (blocks until shutdown)
+//! tokio::spawn(async move {
+//!     task.run().await;
+//! });
+//! # Ok(())
+//! # }
+//! ```
+
 use crate::{scheduler::{Scheduler, ScheduleAction}, UsenetDownloader};
 use chrono::Local;
 use std::sync::Arc;

@@ -49,21 +49,37 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+/// REST API module
 pub mod api;
+/// Configuration types
 pub mod config;
+/// Database persistence layer
 pub mod db;
+/// Filename deobfuscation
 pub mod deobfuscation;
+/// Error types
 pub mod error;
+/// Archive extraction
 pub mod extraction;
+/// Folder watching for automatic NZB import
 pub mod folder_watcher;
+/// Post-processing pipeline
 pub mod post_processing;
+/// Retry logic with exponential backoff
 pub mod retry;
+/// RSS feed management
 pub mod rss_manager;
+/// RSS feed scheduler
 pub mod rss_scheduler;
+/// Time-based scheduling
 pub mod scheduler;
+/// Scheduler task execution
 pub mod scheduler_task;
+/// Speed limiting with token bucket
 pub mod speed_limiter;
+/// Core types and events
 pub mod types;
+/// Utility functions
 pub mod utils;
 
 // Re-export commonly used types
@@ -3598,6 +3614,9 @@ impl UsenetDownloader {
         handle
     }
 
+    /// Spawn an asynchronous download task for a queued download
+    ///
+    /// This internal method creates a background task that handles the entire download lifecycle.
     pub fn spawn_download_task(
         &self,
         download_id: DownloadId,
