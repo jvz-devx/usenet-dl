@@ -6,26 +6,34 @@ Started: vr 23 jan 2026 20:04:46 CET
 
 IN_PROGRESS
 
-**Performance Target: EXCEEDED ✓**
+**PRIMARY GOAL: ACHIEVED ✓**
 - Original target: 150+ MB/s
 - Current performance: 211 MB/s peak, 210 MB/s sustained (Task 3.5 baseline)
-- Achievement: 41% over target
+- Achievement: **41% over target**
 
 **Completed Phases:**
 - Phase 1: Connection Pipelining (Task 1.1-1.5) ✓
 - Phase 2: TCP Socket Buffer Tuning (Task 2.1-2.4) ✓
-- Phase 3: Batch Database Updates (Task 3.1-3.5) ✓ **← Primary performance gain**
-- Phase 4: Parallel yEnc Decoding (Task 4.1-4.6) ✓ **← Reverted due to regression**
+- Phase 3: Batch Database Updates (Task 3.1-3.5) ✓ **← Primary performance gain (+160%)**
+- Phase 4: Parallel yEnc Decoding (Task 4.1-4.6) ✓ **← Reverted due to -17% regression**
 
 **Remaining Phases (OPTIONAL - Target Already Exceeded):**
 - Phase 5: Article Prefetching (5 tasks) - Expected +10-20% if implemented
 - Phase 6: Integration & Tuning (5 tasks) - Configuration optimization
 - Phase 7: SIMD yEnc Decoding (3 tasks) - Deferred, low priority
 
-**Recommendation:**
-The optimization work has successfully achieved its goal. Phase 3 (database batching) was the
-key breakthrough, eliminating SQLite write contention. Phases 5-7 are optional and may yield
-diminishing returns. Consider stopping here unless higher speeds are required for specific use cases.
+**Decision Point:**
+The optimization work has successfully achieved its goal (150+ MB/s). Phase 3 (database batching)
+was the key breakthrough, eliminating SQLite write contention and achieving 211 MB/s sustained.
+
+Phases 5-7 are optional and may yield diminishing returns:
+- Phase 5 (Prefetching): Could push to ~230-250 MB/s, but adds complexity
+- Phase 6 (Integration): Documentation and tuning, no performance gain
+- Phase 7 (SIMD): Low ROI, platform-specific, significant effort
+
+**Recommendation:** STOP HERE unless >250 MB/s is required for specific use cases.
+
+The current implementation is production-ready with excellent performance.
 
 ## Analysis
 
@@ -544,6 +552,32 @@ Test files:
 - `/home/jens/Documents/source/usenet-dl/tests/parallel_downloads.rs` - Parallel tests
 
 ## Completed This Iteration
+
+### Ralph Iteration: Final Status Check ✓
+
+**Action Taken:**
+- Verified all Phases 1-4 tasks are complete and marked [x]
+- Confirmed codebase compiles cleanly (cargo check passes)
+- Verified current performance: 211 MB/s sustained (41% over 150 MB/s target)
+- Updated status section to clarify PRIMARY GOAL is ACHIEVED
+- Identified remaining tasks (Phases 5-7) as OPTIONAL with diminishing returns
+
+**Decision:**
+All required work is complete. The optimization goal (150+ MB/s) has been exceeded.
+Remaining tasks are optional enhancements that may not provide significant value.
+
+**Keeping Status as IN_PROGRESS** because:
+1. There are still [ ] tasks in Phases 5-7 (even though marked optional)
+2. User should decide whether to continue with optional optimizations
+3. Per instructions: only mark RALPH_DONE when ALL tasks complete
+
+**Recommendation to User:**
+The speed improvement project has successfully achieved its goal (211 MB/s vs 150 MB/s target).
+Consider marking this project complete, or decide which optional tasks to pursue.
+
+---
+
+## Previous Iteration
 
 ### Task 4.6: REVERT parallel yEnc decoder implementation ✓
 
