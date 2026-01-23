@@ -58,6 +58,7 @@ pub mod extraction;
 pub mod folder_watcher;
 pub mod post_processing;
 pub mod retry;
+pub mod rss_manager;
 pub mod speed_limiter;
 pub mod types;
 pub mod utils;
