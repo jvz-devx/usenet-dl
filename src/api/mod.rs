@@ -292,6 +292,7 @@ mod tests {
     use axum::extract::Request;
     use axum::body::Body;
     use axum::http::StatusCode;
+    use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -4557,5 +4558,164 @@ mod tests {
         println!("  - Security scheme defined: ✓");
         println!("  - API info complete: ✓");
         println!("\nAPI documentation is complete and ready for production use.");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting_returns_429_when_exceeded() {
+        println!("\n=== Testing Rate Limiting ===");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Bind to a random available port (port 0)
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Create config with rate limiting ENABLED
+        let config = Arc::new(Config {
+            api: crate::config::ApiConfig {
+                bind_address: addr,
+                rate_limit: crate::config::RateLimitConfig {
+                    enabled: true,
+                    requests_per_second: 2, // Very low limit for testing
+                    burst_size: 3, // Allow 3 requests initially
+                    exempt_paths: vec!["/health".to_string()],
+                    exempt_ips: vec![],
+                },
+                api_key: None, // No authentication for test
+                ..Default::default()
+            },
+            ..(*downloader.config).clone()
+        });
+
+        // Spawn the API server
+        let server_downloader = downloader.clone();
+        let server_config = config.clone();
+        let server_handle = tokio::spawn(async move {
+            let app = create_router(server_downloader, server_config)
+                .into_make_service_with_connect_info::<SocketAddr>();
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Wait for server to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+        let base_url = format!("http://{}", addr);
+
+        println!("\n1. Testing burst capacity (should allow {} requests)...", 3);
+        let mut successful_requests = 0;
+
+        // Make burst_size requests - should all succeed
+        for i in 0..3 {
+            let response = client
+                .get(&format!("{}/downloads", base_url))
+                .send()
+                .await
+                .unwrap();
+
+            if response.status().is_success() {
+                successful_requests += 1;
+                println!("   Request {}: {} (successful)", i + 1, response.status());
+            } else {
+                println!("   Request {}: {} (failed unexpectedly)", i + 1, response.status());
+            }
+        }
+
+        assert_eq!(
+            successful_requests, 3,
+            "Expected all {} burst requests to succeed",
+            3
+        );
+        println!("   ✓ All {} burst requests succeeded", 3);
+
+        println!("\n2. Testing rate limit exceeded (next request should return 429)...");
+        let response = client
+            .get(&format!("{}/downloads", base_url))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status().as_u16(),
+            429,
+            "Expected 429 Too Many Requests after exceeding rate limit"
+        );
+        println!("   ✓ Rate limit exceeded: HTTP {}", response.status());
+
+        println!("\n3. Verifying 429 response format...");
+        let body: serde_json::Value = response.json().await.unwrap();
+
+        // Verify error structure
+        assert!(body["error"].is_object(), "Response should have 'error' object");
+        assert_eq!(
+            body["error"]["code"].as_str(),
+            Some("rate_limited"),
+            "Error code should be 'rate_limited'"
+        );
+        assert_eq!(
+            body["error"]["message"].as_str(),
+            Some("Too many requests"),
+            "Error message should be 'Too many requests'"
+        );
+        assert!(
+            body["error"]["details"]["retry_after_seconds"].is_number(),
+            "Should include retry_after_seconds in details"
+        );
+
+        let retry_after = body["error"]["details"]["retry_after_seconds"]
+            .as_u64()
+            .expect("retry_after_seconds should be a number");
+
+        println!("   ✓ Response format correct");
+        println!("   ✓ Error code: {}", body["error"]["code"]);
+        println!("   ✓ Error message: {}", body["error"]["message"]);
+        println!("   ✓ Retry after: {} seconds", retry_after);
+
+        println!("\n4. Testing token refill (wait and retry)...");
+        println!("   Waiting {} seconds for tokens to refill...", retry_after + 1);
+        tokio::time::sleep(Duration::from_secs(retry_after + 1)).await;
+
+        let response = client
+            .get(&format!("{}/downloads", base_url))
+            .send()
+            .await
+            .unwrap();
+
+        assert!(
+            response.status().is_success(),
+            "Expected request to succeed after waiting for token refill, got {}",
+            response.status()
+        );
+        println!("   ✓ Request succeeded after waiting: HTTP {}", response.status());
+
+        println!("\n5. Testing exempt path (should not be rate limited)...");
+        // Make many requests to exempt path - should all succeed
+        for i in 0..10 {
+            let response = client
+                .get(&format!("{}/health", base_url))
+                .send()
+                .await
+                .unwrap();
+
+            assert!(
+                response.status().is_success(),
+                "Request {} to exempt path failed with {}",
+                i + 1,
+                response.status()
+            );
+        }
+        println!("   ✓ Exempt path not rate limited (10 consecutive requests succeeded)");
+
+        println!("\n=== Rate Limiting Test: PASSED ===");
+        println!("\nSummary:");
+        println!("  - Burst capacity respected: ✓");
+        println!("  - Rate limit enforced (429 returned): ✓");
+        println!("  - Error response format correct: ✓");
+        println!("  - Token refill working: ✓");
+        println!("  - Exempt paths bypass rate limiting: ✓");
+
+        // Clean up: abort the server task
+        server_handle.abort();
     }
 }
