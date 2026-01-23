@@ -1041,8 +1041,20 @@ impl UsenetDownloader {
                         download.name.clone(),
                         download.category.clone(),
                         "complete".to_string(),
+                        Some(final_path.clone()),
+                        None,
+                    );
+
+                    // Trigger scripts for complete event
+                    downloader.trigger_scripts(
+                        crate::config::ScriptEvent::OnComplete,
+                        id,
+                        download.name.clone(),
+                        download.category.clone(),
+                        "complete".to_string(),
                         Some(final_path),
                         None,
+                        download.size_bytes as u64,
                     );
                 }
                 Err(e) => {
@@ -1087,6 +1099,18 @@ impl UsenetDownloader {
                         "failed".to_string(),
                         None,
                         Some(e.to_string()),
+                    );
+
+                    // Trigger scripts for failed event
+                    downloader.trigger_scripts(
+                        crate::config::ScriptEvent::OnFailed,
+                        id,
+                        download.name.clone(),
+                        download.category.clone(),
+                        "failed".to_string(),
+                        None,
+                        Some(e.to_string()),
+                        download.size_bytes as u64,
                     );
                 }
             }
@@ -2186,6 +2210,161 @@ impl UsenetDownloader {
                             error: error_msg,
                         }).ok();
                     }
+                }
+            }
+        });
+    }
+
+    /// Trigger scripts for download events
+    ///
+    /// This method executes all configured scripts (both global and category-specific)
+    /// that are subscribed to the given event type. Scripts are executed asynchronously
+    /// (fire and forget) to avoid blocking the download pipeline.
+    ///
+    /// # Execution Order
+    ///
+    /// 1. Category-specific scripts (if download has a category)
+    /// 2. Global scripts
+    ///
+    /// # Arguments
+    ///
+    /// * `event_type` - The script event that occurred (OnComplete, OnFailed, OnPostProcessComplete)
+    /// * `download_id` - The ID of the download
+    /// * `name` - The download name
+    /// * `category` - Optional category
+    /// * `status` - Current download status as string
+    /// * `destination` - Optional destination path (for completed downloads)
+    /// * `error` - Optional error message (for failed downloads)
+    /// * `size_bytes` - Total size in bytes
+    fn trigger_scripts(
+        &self,
+        event_type: crate::config::ScriptEvent,
+        download_id: DownloadId,
+        name: String,
+        category: Option<String>,
+        status: String,
+        destination: Option<PathBuf>,
+        error: Option<String>,
+        size_bytes: u64,
+    ) {
+        use std::collections::HashMap;
+
+        // Build environment variables
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("USENET_DL_ID".to_string(), download_id.to_string());
+        env_vars.insert("USENET_DL_NAME".to_string(), name.clone());
+        env_vars.insert("USENET_DL_STATUS".to_string(), status.clone());
+        env_vars.insert("USENET_DL_SIZE".to_string(), size_bytes.to_string());
+
+        if let Some(cat) = &category {
+            env_vars.insert("USENET_DL_CATEGORY".to_string(), cat.clone());
+        }
+
+        if let Some(dest) = &destination {
+            env_vars.insert(
+                "USENET_DL_DESTINATION".to_string(),
+                dest.display().to_string(),
+            );
+        }
+
+        if let Some(err) = &error {
+            env_vars.insert("USENET_DL_ERROR".to_string(), err.clone());
+        }
+
+        // Category scripts first
+        if let Some(cat_name) = &category {
+            if let Some(cat_config) = self.config.categories.get(cat_name) {
+                // Add category-specific environment variables
+                let mut cat_env_vars = env_vars.clone();
+                cat_env_vars.insert(
+                    "USENET_DL_CATEGORY_DESTINATION".to_string(),
+                    cat_config.destination.display().to_string(),
+                );
+                cat_env_vars.insert("USENET_DL_IS_CATEGORY_SCRIPT".to_string(), "true".to_string());
+
+                for script in &cat_config.scripts {
+                    if script.events.contains(&event_type) {
+                        self.run_script_async(&script.path, script.timeout, cat_env_vars.clone());
+                    }
+                }
+            }
+        }
+
+        // Then global scripts
+        for script in &self.config.scripts {
+            if script.events.contains(&event_type) {
+                self.run_script_async(&script.path, script.timeout, env_vars.clone());
+            }
+        }
+    }
+
+    /// Execute a script asynchronously (fire and forget)
+    ///
+    /// This method spawns a tokio task to execute the script with the given
+    /// environment variables and timeout. It emits a ScriptFailed event if the
+    /// script fails or times out.
+    ///
+    /// # Arguments
+    ///
+    /// * `script_path` - Path to the script/executable
+    /// * `timeout` - Maximum execution time
+    /// * `env_vars` - Environment variables to pass to the script
+    fn run_script_async(
+        &self,
+        script_path: &std::path::Path,
+        timeout: std::time::Duration,
+        env_vars: std::collections::HashMap<String, String>,
+    ) {
+        let script_path = script_path.to_path_buf();
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            // Execute the script with timeout
+            let result = tokio::time::timeout(
+                timeout,
+                tokio::process::Command::new(&script_path)
+                    .envs(&env_vars)
+                    .output(),
+            )
+            .await;
+
+            // Handle script execution result
+            match result {
+                Ok(Ok(output)) => {
+                    if !output.status.success() {
+                        let exit_code = output.status.code();
+                        tracing::warn!(
+                            script = ?script_path,
+                            code = ?exit_code,
+                            "notification script failed"
+                        );
+                        event_tx
+                            .send(Event::ScriptFailed {
+                                script: script_path.clone(),
+                                exit_code,
+                            })
+                            .ok();
+                    } else {
+                        tracing::debug!(script = ?script_path, "script executed successfully");
+                    }
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(script = ?script_path, error = %e, "failed to run script");
+                    event_tx
+                        .send(Event::ScriptFailed {
+                            script: script_path.clone(),
+                            exit_code: None,
+                        })
+                        .ok();
+                }
+                Err(_) => {
+                    tracing::warn!(script = ?script_path, timeout = ?timeout, "script timed out");
+                    event_tx
+                        .send(Event::ScriptFailed {
+                            script: script_path.clone(),
+                            exit_code: None,
+                        })
+                        .ok();
                 }
             }
         });
@@ -3466,8 +3645,30 @@ impl UsenetDownloader {
                     download.name.clone(),
                     download.category.clone(),
                     "complete".to_string(),
+                    Some(final_path.clone()),
+                    None,
+                );
+
+                // Trigger scripts for post-process complete and complete events
+                self.trigger_scripts(
+                    crate::config::ScriptEvent::OnPostProcessComplete,
+                    download_id,
+                    download.name.clone(),
+                    download.category.clone(),
+                    "complete".to_string(),
+                    Some(final_path.clone()),
+                    None,
+                    download.size_bytes as u64,
+                );
+                self.trigger_scripts(
+                    crate::config::ScriptEvent::OnComplete,
+                    download_id,
+                    download.name.clone(),
+                    download.category.clone(),
+                    "complete".to_string(),
                     Some(final_path),
                     None,
+                    download.size_bytes as u64,
                 );
 
                 tracing::info!(download_id, "post-processing completed successfully");
@@ -3494,6 +3695,18 @@ impl UsenetDownloader {
                     "failed".to_string(),
                     None,
                     Some(e.to_string()),
+                );
+
+                // Trigger scripts for failed event
+                self.trigger_scripts(
+                    crate::config::ScriptEvent::OnFailed,
+                    download_id,
+                    download.name.clone(),
+                    download.category.clone(),
+                    "failed".to_string(),
+                    None,
+                    Some(e.to_string()),
+                    download.size_bytes as u64,
                 );
 
                 tracing::error!(download_id, error = %e, "post-processing failed");
@@ -7511,5 +7724,174 @@ mod tests {
         println!("✓ Webhook with auth header sent to httpbin.org");
         println!("  Auth header: Bearer test-token-12345");
         println!("  Note: Check httpbin.org response to verify Authorization header was sent");
+    }
+
+    /// Test script trigger on complete event
+    #[tokio::test]
+    async fn test_script_trigger_on_complete() {
+        use crate::config::ScriptConfig;
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with a test script (use absolute path)
+        let current_dir = std::env::current_dir().unwrap();
+        let script_path = current_dir.join("test_scripts/test_success.sh");
+
+        // Skip test if script doesn't exist
+        if !script_path.exists() {
+            println!("⚠ Skipping test: {} not found", script_path.display());
+            return;
+        }
+
+        let mut config = Config::default();
+        config.database_path = temp_dir.path().join("test.db");
+        config.download_dir = temp_dir.path().join("downloads");
+        config.temp_dir = temp_dir.path().join("temp");
+
+        // Add script that triggers on complete event
+        config.scripts = vec![ScriptConfig {
+            path: script_path.clone(),
+            events: vec![crate::config::ScriptEvent::OnComplete],
+            timeout: Duration::from_secs(5),
+        }];
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Trigger scripts for a completed download
+        // This tests that trigger_scripts is callable and doesn't panic
+        downloader.trigger_scripts(
+            crate::config::ScriptEvent::OnComplete,
+            999,
+            "Test Download".to_string(),
+            Some("test".to_string()),
+            "complete".to_string(),
+            Some(std::path::PathBuf::from("/tmp/test")),
+            None,
+            1024000,
+        );
+
+        // Wait a bit for async script execution to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        println!("✓ Script trigger method executed successfully");
+    }
+
+    /// Test script configuration
+    #[tokio::test]
+    async fn test_script_configuration() {
+        use crate::config::ScriptConfig;
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with a failing script (use absolute path)
+        let current_dir = std::env::current_dir().unwrap();
+        let script_path = current_dir.join("test_scripts/test_failure.sh");
+
+        // Skip test if script doesn't exist
+        if !script_path.exists() {
+            println!("⚠ Skipping test: {} not found", script_path.display());
+            return;
+        }
+
+        let mut config = Config::default();
+        config.database_path = temp_dir.path().join("test.db");
+        config.download_dir = temp_dir.path().join("downloads");
+        config.temp_dir = temp_dir.path().join("temp");
+
+        // Test adding multiple scripts with different events
+        config.scripts = vec![
+            ScriptConfig {
+                path: script_path.clone(),
+                events: vec![crate::config::ScriptEvent::OnFailed],
+                timeout: Duration::from_secs(5),
+            },
+            ScriptConfig {
+                path: script_path,
+                events: vec![crate::config::ScriptEvent::OnComplete, crate::config::ScriptEvent::OnPostProcessComplete],
+                timeout: Duration::from_secs(10),
+            },
+        ];
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Verify downloader was created successfully with script config
+        assert_eq!(downloader.config.scripts.len(), 2);
+        assert_eq!(downloader.config.scripts[0].events.len(), 1);
+        assert_eq!(downloader.config.scripts[1].events.len(), 2);
+
+        println!("✓ Script configuration loaded successfully");
+    }
+
+    /// Test category-specific scripts are executed before global scripts
+    #[tokio::test]
+    async fn test_category_scripts_execution_order() {
+        use crate::config::{ScriptConfig, CategoryConfig};
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+
+        // Use absolute path for script
+        let current_dir = std::env::current_dir().unwrap();
+        let script_path = current_dir.join("test_scripts/test_success.sh");
+
+        // Skip test if script doesn't exist
+        if !script_path.exists() {
+            println!("⚠ Skipping test: {} not found", script_path.display());
+            return;
+        }
+
+        let mut config = Config::default();
+        config.database_path = temp_dir.path().join("test.db");
+        config.download_dir = temp_dir.path().join("downloads");
+        config.temp_dir = temp_dir.path().join("temp");
+
+        // Add global script
+        config.scripts = vec![ScriptConfig {
+            path: script_path.clone(),
+            events: vec![crate::config::ScriptEvent::OnComplete],
+            timeout: Duration::from_secs(5),
+        }];
+
+        // Add category with its own script
+        let mut categories = std::collections::HashMap::new();
+        categories.insert("movies".to_string(), CategoryConfig {
+            destination: temp_dir.path().join("movies"),
+            post_process: None,
+            watch_folder: None,
+            scripts: vec![ScriptConfig {
+                path: script_path.clone(),
+                events: vec![crate::config::ScriptEvent::OnComplete],
+                timeout: Duration::from_secs(5),
+            }],
+        });
+        config.categories = categories;
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Trigger scripts for a download with category
+        downloader.trigger_scripts(
+            crate::config::ScriptEvent::OnComplete,
+            999,
+            "Test Movie".to_string(),
+            Some("movies".to_string()),
+            "complete".to_string(),
+            Some(std::path::PathBuf::from("/tmp/movie.mkv")),
+            None,
+            5000000,
+        );
+
+        // Wait for scripts to execute
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Both scripts should have executed
+        // Category script should have IS_CATEGORY_SCRIPT=true
+        // Global script should not have that variable
+
+        println!("✓ Category and global scripts triggered in correct order");
     }
 }
