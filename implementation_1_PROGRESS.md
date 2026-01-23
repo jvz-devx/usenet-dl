@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (27/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (28/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -43,9 +43,10 @@ IN_PROGRESS
   - Task 19.12: ✅ POST /queue/resume endpoint complete with comprehensive test (42 API tests passing)
   - Task 19.13: ✅ GET /queue/stats endpoint complete with comprehensive test (43 API tests passing)
   - Task 19.14: ✅ GET /history endpoint complete with comprehensive test (44 API tests passing)
-- Total: 138/253 tasks complete (54.5%)
+  - Task 19.15: ✅ DELETE /history endpoint complete with comprehensive test (45 API tests passing)
+- Total: 139/253 tasks complete (54.9%)
 
-**Next Task:** Task 19.15 - Implement DELETE /history (clear_history handler)
+**Next Task:** Task 19.16 - Test all queue endpoints with curl/Postman
 
 ## Analysis
 
@@ -326,7 +327,7 @@ The implementation will require these major dependencies:
 - [x] Task 19.12: Implement POST /queue/resume (resume_all handler)
 - [x] Task 19.13: Implement GET /queue/stats (queue_stats handler)
 - [x] Task 19.14: Implement GET /history with pagination (get_history handler)
-- [ ] Task 19.15: Implement DELETE /history (clear_history handler)
+- [x] Task 19.15: Implement DELETE /history (clear_history handler)
 - [ ] Task 19.16: Test all queue endpoints with curl/Postman
 
 - [ ] Task 20.1: Add tokio-stream dependency
@@ -464,7 +465,60 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.12: Implement POST /queue/resume (resume_all handler)**
+**Task 19.15: Implement DELETE /history (clear_history handler)**
+
+Successfully implemented the endpoint to clear/delete history entries with optional filters:
+
+1. **Database Method Implementation** (src/db.rs:1092-1126):
+   - Added `delete_history_filtered(before_timestamp, status)` method to Database
+   - Supports optional filtering by timestamp (before) and status (complete/failed)
+   - Leverages existing methods: `clear_history()`, `delete_history_before()`, `delete_history_by_status()`
+   - Implements combined filter logic when both parameters are provided
+   - Returns count of deleted records (u64)
+   - Properly handles all four cases: no filters, timestamp only, status only, both filters
+
+2. **Query Parameter Struct** (src/api/routes.rs:36-43):
+   - Created `ClearHistoryQuery` struct with proper serde and utoipa annotations
+   - Fields: `before: Option<i64>` and `status: Option<String>`
+   - Follows same pattern as `HistoryQuery` struct
+   - Full OpenAPI documentation support
+
+3. **Route Handler Implementation** (src/api/routes.rs:1003-1067):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Accepts DELETE request to `/history` with optional query parameters
+   - Parses status filter ("complete" → 4, "failed" → 5)
+   - Returns proper status codes:
+     * 200 OK: Success, returns `{"deleted": count}`
+     * 400 BAD_REQUEST: Invalid status filter
+     * 500 INTERNAL_SERVER_ERROR: Delete operation failed
+   - Error responses follow standard format with descriptive error codes
+   - Logs errors with tracing for debugging
+
+4. **Comprehensive Test Implementation** (src/api/mod.rs:2787-3145):
+   - Created comprehensive test `test_clear_history_endpoint()` with 6 test scenarios
+   - **Test 1**: Clear all history (no filters) - verifies all entries deleted
+   - **Test 2**: Clear by status=complete - verifies only complete entries deleted
+   - **Test 3**: Clear by status=failed - verifies only failed entries deleted
+   - **Test 4**: Clear by timestamp (before filter) - verifies only old entries deleted
+   - **Test 5**: Clear with both filters (before + status) - verifies combined filtering works
+   - **Test 6**: Invalid status filter - verifies 400 error response
+   - Full end-to-end validation with database verification after each delete
+   - Tests use actual timestamps to verify timestamp filtering
+   - Validates response JSON structure and deletion counts
+
+5. **Test Results**:
+   - ✅ All 45 API tests pass (previous 44 + new test)
+   - ✅ All 6 test scenarios validate correct behavior
+   - ✅ Database operations verified with count queries
+   - ✅ Error handling tested (invalid status filter returns 400)
+   - ✅ Full filter combinations tested (none, before only, status only, both)
+   - ✅ Integration with existing database methods validated
+
+**Previous Completion: Task 19.14: Implement GET /history (get_history handler)**
+
+**Previous Completion: Task 19.13: Implement GET /queue/stats (queue_stats handler)**
+
+**Previous Completion: Task 19.12: Implement POST /queue/resume (resume_all handler)**
 
 Successfully implemented the endpoint to resume all paused downloads in the queue:
 

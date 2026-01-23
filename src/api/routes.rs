@@ -34,6 +34,15 @@ pub struct HistoryQuery {
     pub status: Option<String>,
 }
 
+/// Query parameters for DELETE /history
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct ClearHistoryQuery {
+    /// Clear entries before this timestamp
+    pub before: Option<i64>,
+    /// Clear only entries with this status: "complete" or "failed"
+    pub status: Option<String>,
+}
+
 // ============================================================================
 // Queue Management - Downloads
 // ============================================================================
@@ -1007,15 +1016,68 @@ pub async fn get_history(
     tag = "history",
     params(
         ("before" = Option<i64>, Query, description = "Clear entries before this timestamp"),
-        ("status" = Option<String>, Query, description = "Clear only entries with this status")
+        ("status" = Option<String>, Query, description = "Clear only entries with this status (complete/failed)")
     ),
     responses(
         (status = 200, description = "Number of deleted entries"),
+        (status = 400, description = "Invalid status filter"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn clear_history(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn clear_history(
+    State(state): State<AppState>,
+    Query(query): Query<ClearHistoryQuery>,
+) -> impl IntoResponse {
+    // Parse status filter if provided
+    let status_filter = if let Some(status_str) = query.status {
+        match status_str.to_lowercase().as_str() {
+            "complete" => Some(4), // Status::Complete = 4
+            "failed" => Some(5),   // Status::Failed = 5
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": {
+                            "code": "invalid_status",
+                            "message": "Invalid status filter. Must be 'complete' or 'failed'"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    // Delete history entries with filters
+    match state
+        .downloader
+        .db
+        .delete_history_filtered(query.before, status_filter)
+        .await
+    {
+        Ok(deleted_count) => (
+            StatusCode::OK,
+            Json(json!({
+                "deleted": deleted_count
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to clear history");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "clear_failed",
+                        "message": format!("Failed to clear history: {}", e)
+                    }
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 // ============================================================================

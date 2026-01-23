@@ -1088,6 +1088,46 @@ impl Database {
         Ok(result.rows_affected())
     }
 
+    /// Delete history entries with optional filters
+    ///
+    /// Returns the number of records deleted.
+    /// Supports filtering by:
+    /// - before_timestamp: Delete entries completed before this timestamp
+    /// - status: Delete only entries with this status
+    ///
+    /// If both filters are None, deletes all history (same as clear_history).
+    pub async fn delete_history_filtered(
+        &self,
+        before_timestamp: Option<i64>,
+        status: Option<i32>,
+    ) -> Result<u64> {
+        match (before_timestamp, status) {
+            (None, None) => {
+                // No filters - delete all
+                self.clear_history().await
+            }
+            (Some(before), None) => {
+                // Only timestamp filter
+                self.delete_history_before(before).await
+            }
+            (None, Some(status_val)) => {
+                // Only status filter
+                self.delete_history_by_status(status_val).await
+            }
+            (Some(before), Some(status_val)) => {
+                // Both filters
+                let result = sqlx::query("DELETE FROM history WHERE completed_at < ? AND status = ?")
+                    .bind(before)
+                    .bind(status_val)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| Error::Sqlx(e))?;
+
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
     /// Get a single history entry by ID
     pub async fn get_history_entry(&self, id: i64) -> Result<Option<HistoryEntry>> {
         let row = sqlx::query_as::<_, HistoryRow>(
