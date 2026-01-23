@@ -751,6 +751,61 @@ impl UsenetDownloader {
         Ok(())
     }
 
+    /// Set the priority of a download
+    ///
+    /// This method changes the priority of a download. If the download is queued,
+    /// it will be re-queued with the new priority. Active downloads keep running
+    /// but the priority is saved for when they're queued again.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to update
+    /// * `priority` - The new priority level (Low, Normal, High, or Force)
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if the priority was successfully updated, or an error if:
+    /// - The download doesn't exist
+    /// - Database update fails
+    /// - Queue reordering fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Set download to high priority
+    /// downloader.set_priority(id, Priority::High).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_priority(&self, id: DownloadId, priority: Priority) -> Result<()> {
+        // Verify download exists
+        let download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+
+        let current_status = Status::from_i32(download.status);
+
+        // Update priority in database
+        self.db.update_priority(id, priority as i32).await?;
+
+        // If download is queued (not actively downloading), reorder the queue
+        // by removing and re-adding with new priority
+        if current_status == Status::Queued {
+            // Remove from queue
+            self.remove_from_queue(id).await;
+
+            // Re-add with new priority
+            // We need to fetch the download again to get updated priority
+            self.add_to_queue(id).await?;
+        }
+
+        // For active downloads, priority change takes effect when they finish
+        // and get re-queued (e.g., for post-processing or if paused/resumed)
+
+        Ok(())
+    }
+
     /// Pause all active downloads
     ///
     /// This method pauses all downloads that are currently queued, downloading, or processing.

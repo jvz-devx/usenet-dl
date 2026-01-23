@@ -558,10 +558,70 @@ pub async fn delete_download(
     )
 )]
 pub async fn set_download_priority(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // Extract priority from JSON payload
+    // Expected format: {"priority": "low"|"normal"|"high"|"force"}
+    let priority = match payload.get("priority") {
+        Some(priority_value) => {
+            match serde_json::from_value::<crate::types::Priority>(priority_value.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": {
+                                "code": "invalid_priority",
+                                "message": format!("Invalid priority value: {}", e)
+                            }
+                        }))
+                    ).into_response();
+                }
+            }
+        }
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "missing_priority",
+                        "message": "Request body must include 'priority' field"
+                    }
+                }))
+            ).into_response();
+        }
+    };
+
+    // Call UsenetDownloader::set_priority()
+    match state.downloader.set_priority(id, priority).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("not found") {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "error": {
+                            "code": "not_found",
+                            "message": error_msg
+                        }
+                    }))
+                ).into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {
+                            "code": "internal_error",
+                            "message": error_msg
+                        }
+                    }))
+                ).into_response()
+            }
+        }
+    }
 }
 
 /// POST /downloads/:id/reprocess - Re-run post-processing

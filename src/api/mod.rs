@@ -1782,4 +1782,205 @@ mod tests {
         println!("   - Returns 404 for non-existent downloads");
         println!("   - Accepts delete_files query parameter");
     }
+
+    #[tokio::test]
+    async fn test_set_download_priority_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing PATCH /downloads/:id/priority endpoint...");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a test download to the database in Queued state
+        use crate::db::NewDownload;
+
+        let new_download = NewDownload {
+            name: "Test Download".to_string(),
+            nzb_path: "/tmp/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("test_hash".to_string()),
+            job_name: Some("Test Download".to_string()),
+            category: Some("movies".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0, // Normal
+            status: 0,   // Queued
+            size_bytes: 1024 * 1024 * 100,
+        };
+
+        // Insert download and get its ID
+        let download_id = downloader.db.insert_download(&new_download).await.unwrap();
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Set priority to High
+        println!("  📝 Test 1: Set priority to High");
+        let request = Request::builder()
+            .method("PATCH")
+            .uri(format!("/downloads/{}/priority", download_id))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"priority": "high"}"#))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "set_download_priority should return 204 NO_CONTENT for valid priority"
+        );
+
+        // Verify priority was updated in database
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            crate::types::Priority::from_i32(download.priority),
+            crate::types::Priority::High,
+            "Download priority should be High after update"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT");
+        println!("    ✓ Priority updated to High in database");
+
+        // Test 2: Set priority to Low
+        println!("  📝 Test 2: Set priority to Low");
+        let request2 = Request::builder()
+            .method("PATCH")
+            .uri(format!("/downloads/{}/priority", download_id))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"priority": "low"}"#))
+            .unwrap();
+
+        let response2 = app.clone().oneshot(request2).await.unwrap();
+
+        assert_eq!(
+            response2.status(),
+            StatusCode::NO_CONTENT,
+            "set_download_priority should return 204 NO_CONTENT for Low priority"
+        );
+
+        // Verify priority was updated
+        let download2 = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            crate::types::Priority::from_i32(download2.priority),
+            crate::types::Priority::Low,
+            "Download priority should be Low after update"
+        );
+
+        println!("    ✓ Priority updated to Low");
+
+        // Test 3: Set priority to Force
+        println!("  📝 Test 3: Set priority to Force");
+        let request3 = Request::builder()
+            .method("PATCH")
+            .uri(format!("/downloads/{}/priority", download_id))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"priority": "force"}"#))
+            .unwrap();
+
+        let response3 = app.clone().oneshot(request3).await.unwrap();
+
+        assert_eq!(
+            response3.status(),
+            StatusCode::NO_CONTENT,
+            "set_download_priority should return 204 NO_CONTENT for Force priority"
+        );
+
+        // Verify priority was updated
+        let download3 = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            crate::types::Priority::from_i32(download3.priority),
+            crate::types::Priority::Force,
+            "Download priority should be Force after update"
+        );
+
+        println!("    ✓ Priority updated to Force");
+
+        // Test 4: Missing priority field (should return 400)
+        println!("  📝 Test 4: Missing priority field");
+        let request4 = Request::builder()
+            .method("PATCH")
+            .uri(format!("/downloads/{}/priority", download_id))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .unwrap();
+
+        let response4 = app.clone().oneshot(request4).await.unwrap();
+
+        assert_eq!(
+            response4.status(),
+            StatusCode::BAD_REQUEST,
+            "set_download_priority should return 400 BAD_REQUEST for missing priority field"
+        );
+
+        // Parse response body
+        use axum::body::to_bytes;
+        let body_bytes = to_bytes(response4.into_body(), usize::MAX).await.unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(
+            body_json["error"]["code"].as_str().unwrap(),
+            "missing_priority",
+            "Error code should be 'missing_priority'"
+        );
+
+        println!("    ✓ Returns 400 BAD_REQUEST for missing priority");
+
+        // Test 5: Invalid priority value (should return 400)
+        println!("  📝 Test 5: Invalid priority value");
+        let request5 = Request::builder()
+            .method("PATCH")
+            .uri(format!("/downloads/{}/priority", download_id))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"priority": "invalid_priority"}"#))
+            .unwrap();
+
+        let response5 = app.clone().oneshot(request5).await.unwrap();
+
+        assert_eq!(
+            response5.status(),
+            StatusCode::BAD_REQUEST,
+            "set_download_priority should return 400 BAD_REQUEST for invalid priority value"
+        );
+
+        let body_bytes5 = to_bytes(response5.into_body(), usize::MAX).await.unwrap();
+        let body_json5: serde_json::Value = serde_json::from_slice(&body_bytes5).unwrap();
+
+        assert_eq!(
+            body_json5["error"]["code"].as_str().unwrap(),
+            "invalid_priority",
+            "Error code should be 'invalid_priority'"
+        );
+
+        println!("    ✓ Returns 400 BAD_REQUEST for invalid priority");
+
+        // Test 6: Non-existent download (should return 404)
+        println!("  📝 Test 6: Non-existent download");
+        let request6 = Request::builder()
+            .method("PATCH")
+            .uri("/downloads/99999/priority")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"priority": "high"}"#))
+            .unwrap();
+
+        let response6 = app.oneshot(request6).await.unwrap();
+
+        assert_eq!(
+            response6.status(),
+            StatusCode::NOT_FOUND,
+            "set_download_priority should return 404 NOT_FOUND for non-existent download"
+        );
+
+        println!("    ✓ Returns 404 NOT_FOUND for non-existent download");
+
+        println!("✅ set_download_priority endpoint test passed!");
+        println!("   - Successfully updates priority to High, Low, and Force");
+        println!("   - Returns 400 for missing priority field");
+        println!("   - Returns 400 for invalid priority value");
+        println!("   - Returns 404 for non-existent downloads");
+    }
 }
