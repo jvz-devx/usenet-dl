@@ -835,6 +835,17 @@ impl From<ServerConfig> for nntp_rs::ServerConfig {
     }
 }
 
+/// Configuration update for runtime-changeable settings
+///
+/// This struct contains only fields that can be safely updated while the downloader is running.
+/// Fields requiring restart (like database_path, download_dir, servers) are not included.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct ConfigUpdate {
+    /// Speed limit in bytes per second (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_limit_bps: Option<Option<u64>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

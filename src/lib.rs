@@ -1193,6 +1193,39 @@ impl UsenetDownloader {
         );
     }
 
+    /// Update runtime-changeable configuration settings
+    ///
+    /// This method updates configuration settings that can be safely changed while the
+    /// downloader is running. Fields requiring restart (like database_path, download_dir,
+    /// servers) cannot be updated via this method.
+    ///
+    /// # Arguments
+    ///
+    /// * `updates` - Configuration updates to apply
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # use usenet_dl::config::ConfigUpdate;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// # let downloader = UsenetDownloader::new(config).await?;
+    /// // Update speed limit
+    /// let updates = ConfigUpdate {
+    ///     speed_limit_bps: Some(Some(10_000_000)), // 10 MB/s
+    /// };
+    /// downloader.update_config(updates).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update_config(&self, updates: crate::config::ConfigUpdate) {
+        // Update speed limit if provided
+        if let Some(speed_limit) = updates.speed_limit_bps {
+            self.set_speed_limit(speed_limit).await;
+        }
+    }
+
     /// Gracefully shut down the downloader
     ///
     /// This method performs a graceful shutdown sequence:

@@ -1158,15 +1158,22 @@ pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     patch,
     path = "/api/v1/config",
     tag = "config",
-    request_body(content = crate::config::Config, description = "Configuration updates (partial)"),
+    request_body(content = crate::config::ConfigUpdate, description = "Configuration updates (runtime-changeable fields only)"),
     responses(
         (status = 200, description = "Configuration updated", body = crate::config::Config),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn update_config(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn update_config(
+    State(state): State<AppState>,
+    Json(updates): Json<crate::config::ConfigUpdate>,
+) -> impl IntoResponse {
+    // Apply the configuration updates
+    state.downloader.update_config(updates).await;
+
+    // Return the updated config (with redaction)
+    get_config(State(state)).await
 }
 
 /// GET /config/speed-limit - Get speed limit

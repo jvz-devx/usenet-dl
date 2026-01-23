@@ -99,6 +99,7 @@ use utoipa::OpenApi;
 
         // Config types from config.rs
         crate::config::Config,
+        crate::config::ConfigUpdate,
         crate::config::ServerConfig,
         crate::config::RetryConfig,
         crate::config::PostProcess,
