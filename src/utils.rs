@@ -228,6 +228,93 @@ pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -
     "download".to_string()
 }
 
+/// Get available disk space for a given path
+///
+/// Uses platform-specific APIs to query filesystem statistics:
+/// - Linux: statvfs
+/// - macOS: statvfs
+/// - Windows: GetDiskFreeSpaceExW
+///
+/// # Arguments
+///
+/// * `path` - The path to check (typically the download directory)
+///
+/// # Returns
+///
+/// Returns the available disk space in bytes, or an IO error if the check fails.
+///
+/// # Examples
+///
+/// ```ignore
+/// let available = get_available_space(Path::new("/downloads"))?;
+/// println!("Available space: {} GB", available / (1024 * 1024 * 1024));
+/// ```
+pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        // Convert path to C string for statvfs call
+        let c_path = CString::new(path.as_os_str().as_bytes())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
+        // Call statvfs to get filesystem statistics
+        unsafe {
+            let mut stat: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(c_path.as_ptr(), &mut stat) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            // Available space = available blocks * block size
+            // f_bavail is available blocks for unprivileged users
+            // f_frsize is the fragment size (preferred over f_bsize)
+            let available_bytes = stat.f_bavail.saturating_mul(stat.f_frsize);
+            Ok(available_bytes)
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use winapi::um::fileapi::GetDiskFreeSpaceExW;
+
+        // Convert path to wide string for Windows API
+        let wide_path: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0)) // null terminator
+            .collect();
+
+        unsafe {
+            let mut free_bytes_available: u64 = 0;
+            let mut _total_bytes: u64 = 0;
+            let mut _total_free_bytes: u64 = 0;
+
+            if GetDiskFreeSpaceExW(
+                wide_path.as_ptr(),
+                &mut free_bytes_available as *mut u64 as *mut _,
+                &mut _total_bytes as *mut u64 as *mut _,
+                &mut _total_free_bytes as *mut u64 as *mut _,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            Ok(free_bytes_available)
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Unsupported platform - return an error
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Disk space checking is not supported on this platform",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,5 +482,42 @@ mod tests {
 
         // Just extension
         assert!(!is_sample(Path::new(".mkv")));
+    }
+
+    #[test]
+    fn test_get_available_space_valid_path() {
+        // Test with a valid path (temp directory should always exist)
+        let temp_dir = TempDir::new().unwrap();
+        let available = get_available_space(temp_dir.path()).unwrap();
+
+        // Available space should be greater than 0
+        assert!(available > 0, "Available space should be greater than 0");
+
+        // Available space should be reasonable (less than 1 PB = 10^15 bytes)
+        assert!(
+            available < 1_000_000_000_000_000,
+            "Available space seems unreasonably large"
+        );
+    }
+
+    #[test]
+    fn test_get_available_space_nonexistent_path() {
+        // Test with a path that doesn't exist
+        let result = get_available_space(Path::new("/nonexistent/path/that/should/not/exist"));
+
+        // Should return an error
+        assert!(
+            result.is_err(),
+            "Should return error for nonexistent path"
+        );
+    }
+
+    #[test]
+    fn test_get_available_space_current_dir() {
+        // Test with current directory
+        let available = get_available_space(Path::new(".")).unwrap();
+
+        // Should succeed and return reasonable value
+        assert!(available > 0, "Current directory should have available space");
     }
 }

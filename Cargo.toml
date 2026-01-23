@@ -77,6 +77,13 @@ tempfile = "3"
 tokio-test = "0.4"
 wiremock = "0.6"
 
+# Platform-specific dependencies for disk space checking
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["fileapi"] }
+
 [profile.release]
 opt-level = 3
 lto = true

@@ -3250,6 +3250,7 @@ dependencies = [
  "atom_syndication",
  "axum",
  "chrono",
+ "libc",
  "nntp-rs",
  "notify",
  "rand",
@@ -3276,6 +3277,7 @@ dependencies = [
  "urlencoding",
  "utoipa",
  "utoipa-swagger-ui",
+ "winapi",
  "wiremock",
  "zip",
 ]
