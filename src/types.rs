@@ -428,3 +428,34 @@ pub struct DuplicateInfo {
     /// Name of the existing download
     pub existing_name: String,
 }
+
+/// Payload sent to webhooks
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct WebhookPayload {
+    /// Event type (complete, failed, queued)
+    pub event: String,
+
+    /// Download ID
+    pub download_id: DownloadId,
+
+    /// Download name
+    pub name: String,
+
+    /// Category (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+
+    /// Download status
+    pub status: String,
+
+    /// Final destination path (for complete downloads)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<PathBuf>,
+
+    /// Error message (for failed downloads)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+
+    /// Timestamp of the event (Unix timestamp in seconds)
+    pub timestamp: i64,
+}

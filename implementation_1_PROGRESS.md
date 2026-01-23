@@ -59,17 +59,107 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (40/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (47/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
-- Total: 208/253 tasks complete (82.2%)
+  - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
+- Total: 215/253 tasks complete (85.0%)
 
-**Next Task:** Task 29.1 - Create WebhookConfig with url, events, auth_header, timeout
+**Next Task:** Task 30.1 - Create ScriptConfig with path, events, timeout
 
 ## Completed This Iteration
+
+**Tasks 29.1-29.7: Complete webhook notification system with httpbin.org integration**
+
+Successfully implemented the complete webhook notification system that sends HTTP POST requests to configured endpoints when download events occur. All tasks (29.1-29.7) are now complete with comprehensive testing.
+
+1. **WebhookPayload Struct** (Task 29.3, src/types.rs:432-458):
+   - Created serializable payload structure with all required fields
+   - Fields: event, download_id, name, category, status, destination, error, timestamp
+   - Optional fields properly handled with `#[serde(skip_serializing_if = "Option::is_none")]`
+   - Derives Serialize, Deserialize, ToSchema for API documentation
+   - Timestamp uses Unix epoch (i64) for easy consumption
+
+2. **trigger_webhooks() Method** (Task 29.4, src/lib.rs:2059-2161):
+   - Private async method that sends webhooks for download events
+   - Takes event type (OnComplete, OnFailed, OnQueued) and download details
+   - Spawns async task for fire-and-forget execution (doesn't block download pipeline)
+   - Filters webhooks by configured event subscriptions
+   - Creates WebhookPayload with all event context
+   - Uses reqwest HTTP client for POST requests
+
+3. **Timeout and Error Handling** (Task 29.5, integrated in trigger_webhooks):
+   - Respects configured timeout per webhook (default: 30 seconds)
+   - Uses tokio::time::timeout to enforce webhook timeouts
+   - Comprehensive error handling for all failure modes:
+     - HTTP errors (non-2xx status codes)
+     - Network errors (connection refused, DNS failure, etc.)
+     - Timeout errors (webhook takes too long to respond)
+   - All errors logged with tracing::warn for debugging
+   - Emits WebhookFailed event on any error (Task 29.6)
+
+4. **WebhookFailed Event Emission** (Task 29.6, integrated):
+   - Emits Event::WebhookFailed on any webhook failure
+   - Includes webhook URL and descriptive error message
+   - Enables UI/logging to track webhook delivery issues
+   - Non-blocking: webhook failures don't affect download processing
+
+5. **Authentication Header Support** (integrated in trigger_webhooks):
+   - Optional auth_header field in WebhookConfig
+   - Adds "Authorization" header if configured
+   - Supports Bearer tokens and other auth schemes
+   - Header value stored securely in config (not exposed in logs)
+
+6. **Event Integration** (integrated in lib.rs):
+   - Webhooks triggered at 4 key points in download lifecycle:
+     - **OnQueued**: After download is added to queue (line 2369)
+     - **OnComplete**: After successful post-processing (lines 3473, 1045)
+     - **OnFailed**: After post-processing or extraction failure (lines 3487, 1087)
+   - Webhooks include full download context (name, category, destination, error)
+   - Fire-and-forget execution prevents blocking
+
+7. **Comprehensive Test Suite** (Task 29.7, src/lib.rs:7311-7507):
+   - **test_webhook_triggers_on_queued**: Tests OnQueued webhook
+     - Uses httpbin.org/post as real HTTP endpoint
+     - Verifies webhook is sent when NZB is queued
+     - Validates Queued event is emitted
+     - 10 second timeout for network requests
+
+   - **test_webhook_failed_event_on_invalid_url**: Tests error handling
+     - Uses invalid URL that doesn't exist
+     - Verifies WebhookFailed event is emitted
+     - Validates error message is descriptive
+     - 2 second timeout to fail quickly
+     - Confirms webhook failures don't block downloads
+
+   - **test_webhook_auth_header**: Tests authentication
+     - Uses httpbin.org/post to verify auth header delivery
+     - Configures Bearer token authentication
+     - Verifies webhook is sent with Authorization header
+     - Note: httpbin.org echoes headers for verification
+
+8. **Design Alignment**:
+   - Matches implementation_1.md:600-724 specification exactly
+   - WebhookConfig structure (lines 626-642 of design)
+   - WebhookEvent enum with 3 variants (lines 644-650)
+   - WebhookPayload with all specified fields (lines 634-645)
+   - Async execution pattern (lines 686-723)
+   - SABnzbd-compatible webhook payload format
+
+**Build Verification**:
+- ✅ Library compiles successfully with 103 warnings (no errors)
+- ✅ All 3 webhook tests pass in 0.90s:
+  - test_webhook_triggers_on_queued ... ok
+  - test_webhook_failed_event_on_invalid_url ... ok
+  - test_webhook_auth_header ... ok
+- ✅ Webhooks tested with real HTTP endpoint (httpbin.org)
+- ✅ No regressions in existing 411 tests
+- ✅ Total test count: 414 tests (411 existing + 3 webhook tests)
+
+**Previous Iteration:**
 
 **Task 28.8: Test duplicate detection with same NZB added twice via API**
 
