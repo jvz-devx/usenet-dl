@@ -51,9 +51,10 @@ IN_PROGRESS
   - Task 21.3: ✅ GET /config/speed-limit endpoint complete with comprehensive test (49 API tests passing)
   - Task 21.4: ✅ PUT /config/speed-limit endpoint complete with comprehensive test (50 API tests passing)
   - Task 21.5: ✅ GET /categories endpoint complete with comprehensive test (51 API tests passing)
-- Total: 150/253 tasks complete (59.3%)
+  - Task 21.6: ✅ PUT /categories/:name endpoint complete with runtime category management (52 API tests passing)
+- Total: 151/253 tasks complete (59.7%)
 
-**Next Task:** Task 21.6 - Implement PUT /categories/:name endpoint
+**Next Task:** Task 21.7 - Implement DELETE /categories/:name endpoint
 
 ## Analysis
 
@@ -472,7 +473,64 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 21.5: GET /categories endpoint implementation**
+**Task 21.6: PUT /categories/:name endpoint implementation**
+
+Successfully implemented runtime category management with full CRUD operations:
+
+1. **Runtime Category Storage** (src/lib.rs:101):
+   - Added `categories: Arc<RwLock<HashMap<String, CategoryConfig>>>` field to UsenetDownloader
+   - Enables runtime updates without restarting the application
+   - Initialized from config.categories in constructor (line 182)
+   - Thread-safe read/write access via RwLock
+
+2. **Category Management Methods** (src/lib.rs:1265-1350):
+   - `add_or_update_category(name, config)`: Create or update a category
+   - `remove_category(name) -> bool`: Delete a category, returns true if existed
+   - `get_categories() -> HashMap`: Get all categories
+   - All methods are async and properly documented with examples
+   - Used by API endpoints and internally for category lookups
+
+3. **Updated Category Usage** (src/lib.rs:1658-1678):
+   - Modified `add_nzb_content_internal` to use `self.categories.read().await` instead of `self.config.categories`
+   - Ensures downloads respect runtime category changes
+   - Maintains backwards compatibility with static config
+
+4. **API Endpoint Implementation** (src/api/routes.rs:1267-1276):
+   - Implemented `PUT /categories/:name` handler
+   - Accepts JSON body with CategoryConfig structure
+   - Calls `downloader.add_or_update_category(name, category_config).await`
+   - Returns HTTP 204 No Content on success
+   - Updated `list_categories` to use new `get_categories()` method
+
+5. **Comprehensive Testing** (src/api/mod.rs:3562-3680):
+   - Created `test_create_or_update_category()` with 4 test scenarios:
+     - Test 1: Create new category, verify 204 No Content
+     - Test 2: Verify category is retrievable via GET /categories
+     - Test 3: Update existing category, verify 204 No Content
+     - Test 4: Verify updated values are reflected in GET
+   - Tests confirm categories persist across requests
+   - Validates both destination and post_process fields
+   - All 52 API tests passing (51 previous + 1 new)
+
+6. **Test Helper Updates** (src/lib.rs:2635):
+   - Updated `create_test_downloader_with_download` helper to initialize categories field
+   - Ensures all tests have proper UsenetDownloader instances
+
+**Technical Details**:
+- Used `Arc<RwLock<>>` for interior mutability pattern
+- Separate from main config to avoid complex refactoring
+- Categories now support true runtime updates
+- Backward compatible with existing code that reads categories
+- No database persistence yet (in-memory only, resets on restart)
+- Future enhancement: persist category changes to config file or database
+
+**Architecture Decision**:
+- Chose to add separate `categories` field rather than wrap entire Config in RwLock
+- Minimizes refactoring impact on existing code that accesses config fields
+- Config remains immutable for most fields (servers, directories, etc.)
+- Categories specifically need runtime updates for proper REST API behavior
+
+**Previous Iteration: Task 21.5: GET /categories endpoint implementation**
 
 Successfully implemented the endpoint to retrieve all configured categories:
 
