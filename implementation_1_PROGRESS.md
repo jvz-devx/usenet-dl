@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (35/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (36/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -54,9 +54,10 @@ IN_PROGRESS
   - Task 21.6: ✅ PUT /categories/:name endpoint complete with runtime category management (52 API tests passing)
   - Task 21.7: ✅ DELETE /categories/:name endpoint complete with comprehensive test (53 API tests passing)
   - Task 21.8: ✅ Config endpoint tests verified complete (46 API tests passing)
-- Total: 154/253 tasks complete (60.9%)
+  - Task 22.1: ✅ Swagger UI verification complete - 26 paths, 34 schemas, 9 tags documented and validated
+- Total: 155/253 tasks complete (61.3%)
 
-**Next Task:** Task 22.1 - Verify Swagger UI shows all endpoints with schemas
+**Next Task:** Task 22.2 - Test Swagger UI "Try it out" functionality for each endpoint
 
 ## Analysis
 
@@ -5488,4 +5489,48 @@ Verified that all config endpoint tests are already complete and passing:
 **Conclusion:** Task 21.8 was already complete from previous iterations. The config endpoints have comprehensive test coverage and all tests pass successfully. Marked task as complete and updated progress tracking.
 
 **Updated Count:** 154/253 tasks complete (60.9%)
+
+## Completed This Iteration (Ralph)
+
+**Task 22.1: Swagger UI Verification - All Endpoints and Schemas**
+
+Successfully verified that Swagger UI implementation is complete and properly configured:
+
+1. **Verification Method**:
+   - Ran comprehensive test: `cargo test --lib test_swagger_ui_shows_all_endpoints`
+   - Test validates OpenAPI spec generation and content
+   - Automated validation of all endpoints and schemas
+
+2. **Verification Results**:
+   - ✅ **26 API paths** documented (all main endpoints across 9 categories)
+   - ✅ **34 schemas** defined (all request/response types)
+   - ✅ **9 tags** for endpoint organization (downloads, queue, history, servers, config, categories, system, rss, scheduler)
+   - ✅ All endpoints properly annotated with `#[utoipa::path]`
+   - ✅ All types properly annotated with `#[derive(ToSchema)]`
+
+3. **Documented Endpoints by Category**:
+   - **Downloads (10)**: list, get, add, add_url, pause, resume, delete, set_priority, reprocess, reextract
+   - **Queue (3)**: pause, resume, stats
+   - **History (2)**: get, clear
+   - **Servers (2)**: test, test_all
+   - **Config (4)**: get, update, get_speed_limit, set_speed_limit
+   - **Categories (3)**: list, create_or_update, delete
+   - **System (4)**: health, openapi_spec, event_stream, shutdown
+   - **RSS (5)**: list, add, update, delete, check
+   - **Scheduler (4)**: list, add, update, delete
+
+4. **Swagger UI Configuration**:
+   - Mounted at: `/swagger-ui/`
+   - OpenAPI spec: `/api/v1/openapi.json`
+   - Configurable via `ApiConfig.swagger_ui` (default: enabled)
+   - Custom SecurityAddon adds API key authentication scheme
+
+5. **Test Coverage**:
+   - 8 unit tests in `src/api/openapi.rs`
+   - 4 integration tests in `src/api/mod.rs` including `test_swagger_ui_shows_all_endpoints`
+   - All tests passing successfully
+
+**Conclusion:** Task 22.1 complete. Swagger UI is fully functional with comprehensive documentation for all 26 API endpoints and 34 schemas. The implementation meets OpenAPI 3.1 standards and provides interactive documentation for the entire API surface.
+
+**Updated Count:** 155/253 tasks complete (61.3%)
 
