@@ -61,6 +61,7 @@ pub mod retry;
 pub mod rss_manager;
 pub mod rss_scheduler;
 pub mod scheduler;
+pub mod scheduler_task;
 pub mod speed_limiter;
 pub mod types;
 pub mod utils;
@@ -2652,6 +2653,114 @@ impl UsenetDownloader {
         });
 
         tracing::info!("RSS scheduler background task started");
+
+        handle
+    }
+
+    /// Start the scheduler task that checks schedule rules every minute
+    ///
+    /// The scheduler task evaluates time-based schedule rules and automatically
+    /// applies actions like speed limits or pauses based on the current time
+    /// and day of week.
+    ///
+    /// # Returns
+    ///
+    /// A `JoinHandle` that can be used to await or cancel the scheduler task.
+    /// If no schedule rules are configured, returns a completed task handle.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = Config {
+    ///     // ... configure with schedule_rules
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let downloader = UsenetDownloader::new(config).await?;
+    /// let scheduler_handle = downloader.start_scheduler();
+    ///
+    /// // Scheduler will now automatically apply schedule rules every minute
+    /// // Optionally await the handle if you want to wait for completion
+    /// // scheduler_handle.await.ok();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn start_scheduler(&self) -> tokio::task::JoinHandle<()> {
+        // Get schedule rules from config
+        let schedule_rules = self.config.schedule_rules.clone();
+
+        // If no schedule rules configured, return early
+        if schedule_rules.is_empty() {
+            tracing::info!("No schedule rules configured, skipping scheduler task");
+            // Return a completed task handle
+            return tokio::spawn(async {});
+        }
+
+        // Convert config::ScheduleRule to scheduler::ScheduleRule
+        let scheduler_rules: Vec<scheduler::ScheduleRule> = schedule_rules
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, rule)| {
+                // Parse start_time and end_time from HH:MM format
+                let start_time = chrono::NaiveTime::parse_from_str(&rule.start_time, "%H:%M")
+                    .ok()?;
+                let end_time = chrono::NaiveTime::parse_from_str(&rule.end_time, "%H:%M")
+                    .ok()?;
+
+                // Convert config::Weekday to scheduler::Weekday
+                let days: Vec<scheduler::Weekday> = rule.days.into_iter()
+                    .map(|d| match d {
+                        config::Weekday::Monday => scheduler::Weekday::Monday,
+                        config::Weekday::Tuesday => scheduler::Weekday::Tuesday,
+                        config::Weekday::Wednesday => scheduler::Weekday::Wednesday,
+                        config::Weekday::Thursday => scheduler::Weekday::Thursday,
+                        config::Weekday::Friday => scheduler::Weekday::Friday,
+                        config::Weekday::Saturday => scheduler::Weekday::Saturday,
+                        config::Weekday::Sunday => scheduler::Weekday::Sunday,
+                    })
+                    .collect();
+
+                // Convert config::ScheduleAction to scheduler::ScheduleAction
+                let action = match rule.action {
+                    config::ScheduleAction::SpeedLimit { limit_bps } =>
+                        scheduler::ScheduleAction::SpeedLimit(limit_bps),
+                    config::ScheduleAction::Unlimited =>
+                        scheduler::ScheduleAction::Unlimited,
+                    config::ScheduleAction::Pause =>
+                        scheduler::ScheduleAction::Pause,
+                };
+
+                Some(scheduler::ScheduleRule {
+                    id: idx as i64,
+                    name: rule.name,
+                    days,
+                    start_time,
+                    end_time,
+                    action,
+                    enabled: rule.enabled,
+                })
+            })
+            .collect();
+
+        // Create Scheduler instance
+        let scheduler = std::sync::Arc::new(
+            scheduler::Scheduler::new(scheduler_rules)
+        );
+
+        // Create scheduler task instance
+        let scheduler_task = scheduler_task::SchedulerTask::new(
+            std::sync::Arc::new(self.clone()),
+            scheduler,
+        );
+
+        // Spawn the scheduler task
+        let handle = tokio::spawn(async move {
+            scheduler_task.run().await;
+        });
+
+        tracing::info!("Scheduler task started, checking rules every minute");
 
         handle
     }
@@ -6152,5 +6261,94 @@ mod tests {
 
         // Abort the task
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_start_scheduler_no_rules() {
+        // Create downloader with no schedule rules configured
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Should succeed but return a completed task
+        let handle = downloader.start_scheduler();
+
+        // The task should complete immediately with no rules
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            handle
+        ).await;
+        assert!(result.is_ok(), "Task should complete immediately with no schedule rules");
+    }
+
+    #[tokio::test]
+    async fn test_start_scheduler_with_rules() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with schedule rules
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            schedule_rules: vec![
+                config::ScheduleRule {
+                    name: "Test Rule".to_string(),
+                    days: vec![],  // All days
+                    start_time: "09:00".to_string(),
+                    end_time: "17:00".to_string(),
+                    action: config::ScheduleAction::SpeedLimit { limit_bps: 1_000_000 },
+                    enabled: true,
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start scheduler
+        let handle = downloader.start_scheduler();
+
+        // Let the scheduler task start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Verify the task is still running (it shouldn't complete immediately)
+        assert!(!handle.is_finished(), "Scheduler should be running with configured rules");
+
+        // Abort the task
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_start_scheduler_respects_shutdown() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with schedule rules
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            schedule_rules: vec![
+                config::ScheduleRule {
+                    name: "Test Rule".to_string(),
+                    days: vec![],
+                    start_time: "09:00".to_string(),
+                    end_time: "17:00".to_string(),
+                    action: config::ScheduleAction::Unlimited,
+                    enabled: true,
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Trigger shutdown before starting the task
+        downloader.accepting_new.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Start scheduler
+        let handle = downloader.start_scheduler();
+
+        // Task should exit gracefully immediately without waiting the full minute
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            handle
+        ).await;
+        assert!(result.is_ok(), "Scheduler should exit on shutdown signal");
     }
 }
