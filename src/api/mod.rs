@@ -1016,4 +1016,89 @@ mod tests {
         println!("   - Returned {} downloads", downloads.len());
         println!("   - Status codes and data structure validated");
     }
+
+    #[tokio::test]
+    async fn test_get_download_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a test download to the database
+        use crate::db::NewDownload;
+
+        let new_download = NewDownload {
+            name: "Test Download".to_string(),
+            nzb_path: "/tmp/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("test_hash".to_string()),
+            job_name: Some("Test Download".to_string()),
+            category: Some("movies".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4, // UnpackAndCleanup
+            priority: 0,     // Normal
+            status: 0,       // Queued
+            size_bytes: 1024 * 1024 * 100, // 100 MB
+        };
+
+        // Insert download and get its ID
+        let download_id = downloader.db.insert_download(&new_download).await.unwrap();
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app_clone = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Get existing download
+        let request = Request::builder()
+            .uri(format!("/downloads/{}", download_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app_clone.oneshot(request).await.unwrap();
+
+        // Check that response is successful
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "get_download should return 200 OK for existing download"
+        );
+
+        // Parse response body
+        use axum::body::to_bytes;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let download_info: crate::types::DownloadInfo =
+            serde_json::from_slice(&body).expect("Response should be valid JSON");
+
+        // Verify download details
+        assert_eq!(download_info.id, download_id);
+        assert_eq!(download_info.name, "Test Download");
+        assert_eq!(download_info.category, Some("movies".to_string()));
+        assert_eq!(download_info.status, crate::types::Status::Queued);
+        assert_eq!(download_info.priority, crate::types::Priority::Normal);
+        assert_eq!(download_info.size_bytes, 1024 * 1024 * 100);
+
+        println!("✅ get_download endpoint test (existing download) passed!");
+        println!("   - Download ID: {}", download_info.id);
+        println!("   - Download name: {}", download_info.name);
+
+        // Test 2: Get non-existent download (should return 404)
+        let app_clone2 = create_router(downloader, config);
+        let request = Request::builder()
+            .uri("/downloads/99999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app_clone2.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "get_download should return 404 for non-existent download"
+        );
+
+        println!("✅ get_download endpoint test (non-existent download) passed!");
+        println!("   - Correctly returns 404 for missing download");
+    }
 }

@@ -4,7 +4,7 @@ use super::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde_json::json;
@@ -92,10 +92,62 @@ pub async fn list_downloads(State(state): State<AppState>) -> impl IntoResponse 
     )
 )]
 pub async fn get_download(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
-) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Response {
+    // Query download by ID from database
+    match state.downloader.db.get_download(id).await {
+        Ok(Some(d)) => {
+            // Calculate ETA if download is in progress and speed > 0
+            let eta_seconds = if d.speed_bps > 0 && d.status == 1 {
+                // Status 1 = Downloading
+                let remaining = d.size_bytes.saturating_sub(d.downloaded_bytes);
+                if remaining > 0 {
+                    Some((remaining as u64) / (d.speed_bps as u64))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let download_info = crate::types::DownloadInfo {
+                id: d.id,
+                name: d.name,
+                category: d.category,
+                status: crate::types::Status::from_i32(d.status),
+                progress: d.progress,
+                speed_bps: d.speed_bps as u64,
+                size_bytes: d.size_bytes as u64,
+                downloaded_bytes: d.downloaded_bytes as u64,
+                eta_seconds,
+                priority: crate::types::Priority::from_i32(d.priority),
+                created_at: chrono::DateTime::from_timestamp(d.created_at, 0)
+                    .unwrap_or_else(|| chrono::Utc::now()),
+                started_at: d
+                    .started_at
+                    .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
+            };
+
+            (StatusCode::OK, Json(download_info)).into_response()
+        }
+        Ok(None) => {
+            // Download not found
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "download not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to get download {}: {}", id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal server error"})),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// POST /downloads - Add NZB from file upload

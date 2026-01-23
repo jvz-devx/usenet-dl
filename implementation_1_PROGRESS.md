@@ -26,13 +26,14 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (16/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (17/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
-  - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test (24 API tests passing)
-- Total: 125/253 tasks complete (49.4%)
+  - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
+  - Task 19.2: ✅ GET /downloads/:id endpoint complete with comprehensive test (25 API tests passing)
+- Total: 126/253 tasks complete (49.8%)
 
-**Next Task:** Task 19.2 - Implement GET /downloads/:id (get_download handler)
+**Next Task:** Task 19.3 - Implement POST /downloads with multipart/form-data (add_download handler)
 
 ## Analysis
 
@@ -300,7 +301,7 @@ The implementation will require these major dependencies:
 - [x] Task 18.7: Test Swagger UI loads and shows all endpoints
 
 - [x] Task 19.1: Implement GET /downloads (list_downloads handler)
-- [ ] Task 19.2: Implement GET /downloads/:id (get_download handler)
+- [x] Task 19.2: Implement GET /downloads/:id (get_download handler)
 - [ ] Task 19.3: Implement POST /downloads with multipart/form-data (add_download handler)
 - [ ] Task 19.4: Implement POST /downloads/url (add_download_url handler)
 - [ ] Task 19.5: Implement POST /downloads/:id/pause (pause_download handler)
@@ -451,7 +452,47 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.1: Implement GET /downloads (list_downloads handler)**
+**Task 19.2: Implement GET /downloads/:id (get_download handler)**
+
+Successfully implemented the endpoint to retrieve a single download by ID:
+
+1. **Handler Implementation** (src/api/routes.rs:94-151):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Queries download by ID using `state.downloader.db.get_download(id)`
+   - Returns Response type to support different status codes
+   - Handles three cases:
+     * 200 OK: Download found, returns DownloadInfo
+     * 404 NOT_FOUND: Download not found, returns error JSON
+     * 500 INTERNAL_SERVER_ERROR: Database error, returns error JSON
+   - Uses `.into_response()` to convert different tuple types to Response
+   - Reuses same ETA calculation logic from list_downloads
+   - Converts database Download to API DownloadInfo following same pattern
+
+2. **Import Updates** (src/api/routes.rs:5):
+   - Added Response import to axum::response module
+   - Required for explicit return type instead of impl IntoResponse
+
+3. **Test Implementation** (src/api/mod.rs:1021-1109):
+   - Created comprehensive test `test_get_download_endpoint()`
+   - Tests two scenarios:
+     * **Existing download**: Inserts download, fetches by ID, validates all fields
+     * **Non-existent download**: Fetches invalid ID (99999), expects 404
+   - Validates response structure:
+     * Correct HTTP status codes (200, 404)
+     * Valid JSON response body
+     * Accurate field mappings (id, name, category, status, priority, size_bytes)
+     * Proper type conversions
+   - Uses tower::ServiceExt::oneshot() for making test requests
+   - Properly clones router for second test case
+
+4. **Test Results**:
+   - ✅ All 25 API tests pass
+   - ✅ Both test scenarios (existing/non-existent) work correctly
+   - ✅ Code compiles successfully (only documentation warnings)
+   - ✅ Proper error handling with appropriate status codes
+   - ✅ Response types correctly unified using Response
+
+**Previous Completion: Task 19.1: Implement GET /downloads (list_downloads handler)**
 
 Successfully implemented the first functional API endpoint to list all downloads:
 
