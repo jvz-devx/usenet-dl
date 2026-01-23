@@ -152,24 +152,24 @@ I've completed a thorough exploration of the codebase to understand what exists 
     ```
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs`
 
-- [ ] Task 3.2: Convert queue processor sequential loop to parallel stream (Part 1: Setup)
+- [x] Task 3.2: Convert queue processor sequential loop to parallel stream (Part 1: Setup)
   - Replace `for article in pending_articles` (line 3153) with stream setup
   - Create the stream: `let results = stream::iter(pending_articles)`
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3153`
 
-- [ ] Task 3.3: Convert queue processor sequential loop to parallel stream (Part 2: Map function)
+- [x] Task 3.3: Convert queue processor sequential loop to parallel stream (Part 2: Map function)
   - Add `.map()` closure with article download logic
   - Clone necessary variables: pool, db, speed_limiter, cancel_token, download_temp_dir, downloaded_bytes, downloaded_articles
   - Move article fetch logic (lines 3166-3247) into async closure
   - Keep error handling, but return `Result<(segment_number, size_bytes), Error>` instead of early return
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3153-3247`
 
-- [ ] Task 3.4: Convert queue processor sequential loop to parallel stream (Part 3: Buffer and collect)
+- [x] Task 3.4: Convert queue processor sequential loop to parallel stream (Part 3: Buffer and collect)
   - Add `.buffer_unordered(concurrency)` after map
   - Add `.collect::<Vec<_>>().await` to get all results
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3153-3310`
 
-- [ ] Task 3.5: Add result processing logic for queue processor
+- [x] Task 3.5: Add result processing logic for queue processor
   - After collect, iterate through results
   - Count successes and failures
   - Update atomic counters in map closure (increment on success)
@@ -177,13 +177,13 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - Handle failures: decide whether to fail entire download or continue with partial results
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (after line 3310)
 
-- [ ] Task 3.6: Update cancellation handling in queue processor
+- [x] Task 3.6: Update cancellation handling in queue processor
   - Check `cancel_token.is_cancelled()` at start of each article's async closure
   - Return early if cancelled
   - Ensure cleanup still happens (active_downloads removal)
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (inside map closure)
 
-- [ ] Task 3.7: Preserve progress event emissions in queue processor
+- [x] Task 3.7: Preserve progress event emissions in queue processor
   - Update atomic counters in map closure: `downloaded_bytes.fetch_add(size, Ordering::Relaxed)`
   - Progress reporting task reads these and emits events
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (inside map closure)
@@ -367,12 +367,20 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
-- Task 3.1: Calculate concurrency limit from config
-  - Added concurrency calculation at src/lib.rs:3215-3218
-  - Calculates total connections across all configured servers
-  - Formula: `config_clone.servers.iter().map(|s| s.connections).sum()`
-  - Variable will be used in next tasks for buffer_unordered() concurrency parameter
-  - Code compiles successfully with expected warnings (unused variable until next task)
+- Tasks 3.2-3.7: Converted queue processor sequential loop to parallel stream
+  - Replaced the sequential `for article in pending_articles` loop (lines 3221-3353) with parallel stream
+  - Created stream using `stream::iter(pending_articles)` with `.map()` and `.buffer_unordered(concurrency)`
+  - Moved all article download logic into async closure that runs concurrently
+  - Implemented proper error handling: collect all results, count successes/failures
+  - Added cancellation check at start of each article's async closure
+  - Updated atomic counters (downloaded_bytes, downloaded_articles) inside map closure
+  - Progress reporting task (from Task 2.2) reads these counters and emits events periodically
+  - Result processing: fail entire download if any articles fail (current strategy)
+  - Fixed type issues: used `std::result::Result<(i32, u64), String>` instead of type alias
+  - Fixed SpeedLimiter cloning: used `.clone()` instead of `Arc::clone()`
+  - Location: src/lib.rs:3220-3340 (entire parallel download implementation)
+  - Validated with `cargo check` - compiles successfully with only expected warnings
+  - Downloads will now use all configured connections concurrently instead of sequentially
 
 ## Previously Completed
 

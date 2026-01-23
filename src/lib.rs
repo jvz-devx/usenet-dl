@@ -3217,139 +3217,132 @@ impl UsenetDownloader {
                             .map(|s| s.connections)
                             .sum();
 
-                        // Download each article
-                        for article in pending_articles {
-                            // Check if download was paused/cancelled
-                            if cancel_token.is_cancelled() {
-                                // Stop progress reporting task
-                                progress_task.abort();
+                        // Download articles in parallel using buffered stream
+                        // This allows concurrent downloads up to the connection pool size
+                        let results: Vec<std::result::Result<(i32, u64), String>> = stream::iter(pending_articles)
+                            .map(|article| {
+                                // Clone variables needed in the async closure
+                                let pool = nntp_pools_clone.clone();
+                                let db = Arc::clone(&db_clone);
+                                let speed_limiter = speed_limiter_clone.clone();
+                                let cancel_token = cancel_token.clone();
+                                let download_temp_dir = download_temp_dir.clone();
+                                let downloaded_bytes = Arc::clone(&downloaded_bytes);
+                                let downloaded_articles = Arc::clone(&downloaded_articles);
 
-                                // Update status to Paused
-                                let _ = db_clone.update_status(id, Status::Paused.to_i32()).await;
+                                async move {
+                                    // Check if download was cancelled
+                                    if cancel_token.is_cancelled() {
+                                        return Err("Download cancelled".to_string());
+                                    }
 
-                                // Remove from active downloads
-                                let mut active = active_downloads_clone.lock().await;
-                                active.remove(&id);
-                                drop(active);
+                                    // Get a connection from the first NNTP pool
+                                    // TODO: Add multi-server failover in future tasks
+                                    let pool = match pool.first() {
+                                        Some(p) => p,
+                                        None => {
+                                            tracing::error!(download_id = id, "No NNTP pools configured");
+                                            return Err("No NNTP pools configured".to_string());
+                                        }
+                                    };
 
-                                return;
-                            }
-                            // Get a connection from the first NNTP pool
-                            // TODO: Add multi-server failover in future tasks
-                            let pool = match nntp_pools_clone.first() {
-                                Some(p) => p,
-                                None => {
-                                    tracing::error!(download_id = id, "No NNTP pools configured");
-                                    let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
-                                    let _ = db_clone.set_error(id, "No NNTP pools configured").await;
-                                    event_tx_clone
-                                        .send(Event::DownloadFailed {
-                                            id,
-                                            error: "No NNTP pools configured".to_string(),
-                                        })
-                                        .ok();
-                                    // Stop progress reporting task
-                                    progress_task.abort();
-                                    // Clean up active downloads
-                                    let mut active = active_downloads_clone.lock().await;
-                                    active.remove(&id);
-                                    return;
-                                }
-                            };
+                                    let mut conn = match pool.get().await {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            tracing::error!(download_id = id, error = %e, "Failed to get NNTP connection");
+                                            return Err(format!("Failed to get NNTP connection: {}", e));
+                                        }
+                                    };
 
-                            let mut conn = match pool.get().await {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    tracing::error!(download_id = id, error = %e, "Failed to get NNTP connection");
-                                    let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
-                                    let _ = db_clone.set_error(id, &format!("Failed to get NNTP connection: {}", e)).await;
-                                    event_tx_clone
-                                        .send(Event::DownloadFailed {
-                                            id,
-                                            error: format!("Failed to get NNTP connection: {}", e),
-                                        })
-                                        .ok();
-                                    // Clean up active downloads
-                                    let mut active = active_downloads_clone.lock().await;
-                                    active.remove(&id);
-                                    return;
-                                }
-                            };
+                                    // Acquire bandwidth tokens before downloading
+                                    // This enforces the global speed limit across all concurrent downloads
+                                    speed_limiter.acquire(article.size_bytes as u64).await;
 
-                            // Acquire bandwidth tokens before downloading
-                            // This enforces the global speed limit across all concurrent downloads
-                            speed_limiter_clone.acquire(article.size_bytes as u64).await;
+                                    // Fetch the article from the server
+                                    // NNTP requires angle brackets around message-ids for ARTICLE command
+                                    let message_id = if article.message_id.starts_with('<') {
+                                        article.message_id.clone()
+                                    } else {
+                                        format!("<{}>", article.message_id)
+                                    };
 
-                            // Fetch the article from the server
-                            // NNTP requires angle brackets around message-ids for ARTICLE command
-                            let message_id = if article.message_id.starts_with('<') {
-                                article.message_id.clone()
-                            } else {
-                                format!("<{}>", article.message_id)
-                            };
-                            match conn.fetch_article(&message_id).await {
-                                Ok(response) => {
+                                    let response = match conn.fetch_article(&message_id).await {
+                                        Ok(r) => r,
+                                        Err(e) => {
+                                            tracing::error!(download_id = id, article_id = article.id, error = %e, "Article fetch failed");
+                                            let _ = db.update_article_status(article.id, crate::db::article_status::FAILED).await;
+                                            return Err(format!("Article fetch failed: {}", e));
+                                        }
+                                    };
+
                                     // Save article content to temp directory
                                     let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
-
-                                    // Join response lines into single string for storage
                                     let article_content = response.lines.join("\n");
+
                                     if let Err(e) = tokio::fs::write(&article_file, article_content.as_bytes()).await {
                                         tracing::error!(download_id = id, error = %e, "Failed to write article file");
-                                        let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
-                                        let _ = db_clone.set_error(id, &format!("Failed to write article file: {}", e)).await;
-                                        event_tx_clone
-                                            .send(Event::DownloadFailed {
-                                                id,
-                                                error: format!("Failed to write article file: {}", e),
-                                            })
-                                            .ok();
-                                        // Clean up active downloads
-                                        let mut active = active_downloads_clone.lock().await;
-                                        active.remove(&id);
-                                        return;
+                                        return Err(format!("Failed to write article file: {}", e));
                                     }
 
                                     // Mark article as downloaded
-                                    if let Err(e) = db_clone.update_article_status(
+                                    if let Err(e) = db.update_article_status(
                                         article.id,
                                         crate::db::article_status::DOWNLOADED,
                                     ).await {
                                         tracing::error!(download_id = id, error = %e, "Failed to update article status");
-                                        continue;
+                                        // Continue even if database update fails
                                     }
 
                                     // Update atomic counters (progress reporting task reads these)
                                     downloaded_articles.fetch_add(1, Ordering::Relaxed);
                                     downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
+
+                                    Ok((article.segment_number, article.size_bytes as u64))
                                 }
+                            })
+                            .buffer_unordered(concurrency)
+                            .collect()
+                            .await;
+
+                        // Process results and check for failures
+                        let mut failed_count = 0;
+                        let mut success_count = 0;
+                        let mut first_error: Option<String> = None;
+
+                        for result in results {
+                            match result {
+                                Ok(_) => success_count += 1,
                                 Err(e) => {
-                                    // Mark article as failed
-                                    let _ = db_clone.update_article_status(article.id, crate::db::article_status::FAILED).await;
-
-                                    // For now, fail the entire download on first article failure
-                                    // TODO: Add retry logic in Tasks 8.1-8.6
-                                    tracing::error!(download_id = id, error = %e, "Article fetch failed");
-                                    let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
-                                    let _ = db_clone.set_error(id, &format!("Article fetch failed: {}", e)).await;
-
-                                    event_tx_clone
-                                        .send(Event::DownloadFailed {
-                                            id,
-                                            error: format!("Article fetch failed: {}", e),
-                                        })
-                                        .ok();
-
-                                    // Stop progress reporting task
-                                    progress_task.abort();
-
-                                    // Clean up active downloads
-                                    let mut active = active_downloads_clone.lock().await;
-                                    active.remove(&id);
-
-                                    return;
+                                    failed_count += 1;
+                                    if first_error.is_none() {
+                                        first_error = Some(e);
+                                    }
                                 }
                             }
+                        }
+
+                        // Stop progress reporting task
+                        progress_task.abort();
+
+                        // Handle download result
+                        if failed_count > 0 {
+                            // If any articles failed, fail the entire download
+                            let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
+                            tracing::error!(download_id = id, failed = failed_count, succeeded = success_count, "Download failed");
+                            let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                            let _ = db_clone.set_error(id, &error_msg).await;
+
+                            event_tx_clone
+                                .send(Event::DownloadFailed {
+                                    id,
+                                    error: error_msg,
+                                })
+                                .ok();
+
+                            // Clean up active downloads
+                            let mut active = active_downloads_clone.lock().await;
+                            active.remove(&id);
+                            return;
                         }
 
                         // Stop progress reporting task
