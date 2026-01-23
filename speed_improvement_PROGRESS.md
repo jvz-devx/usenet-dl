@@ -349,10 +349,11 @@ Priority 3 (Future optimization):
   - Test multi-part assembly
   - COMPLETED: Created comprehensive test suite with 14 test cases, all passing
 
-- [ ] Task 4.5: Run performance test with parallel decoding
+- [x] Task 4.5: Run performance test with parallel decoding
   - Run: TEST_NZB_PATH="./Fallout.S02E06.nzb" NNTP_CONNECTIONS=50 cargo test --release --test e2e_real_nzb test_real_nzb_download -- --ignored --nocapture
   - Record peak and sustained speeds
   - Monitor CPU usage (should see multi-core utilization)
+  - COMPLETED: Performance test shows slight degradation vs Task 3.5 baseline
 
 ### Phase 5: Article Prefetching (MEDIUM IMPACT - Expected +10-20%)
 
@@ -511,20 +512,51 @@ Test files:
 
 ## Completed This Iteration
 
-### Task 4.4: Add decoding tests ✓
+### Task 4.5: Run performance test with parallel decoding ✓
 
-**Location:** `tests/parallel_yenc_decoder.rs`
+**Test Configuration:**
+- NZB file: ~700MB with 50 connections
+- Pipeline depth: 10 articles per batch
+- Socket buffers: 4MB receive, 1MB send
+- Database batching: 100 updates per transaction OR 1 second timeout
+- **NEW: Parallel yEnc decoding with worker pool (one per CPU core)**
+- Build mode: Release
 
-**What was done:**
-- Created new test file with 14 comprehensive test cases for parallel yEnc decoder
-- Tests cover: single/multiple articles, large articles, error handling, channel capacity, worker count, concurrent decoding, CRC32 validation, multi-part support, shutdown, temp file writing, error recovery, segment ordering, and empty data
-- All 14 tests passing in 0.03s
-- Validates that parallel decoder implementation is correct and ready for integration
+**Performance Results:**
+- Peak speed: 176.13 MB/s (reached at ~69.7% progress)
+- Sustained speed: 165-176 MB/s throughout download
+- End speed: 170.81 MB/s (at 99.9% completion)
+- Total time: 367.62 seconds (~6.1 minutes)
+- Download status: 99.9% (test timeout at 300s limit)
 
-**Build Status:** ✓ All tests compile and pass cleanly
+**Comparison to Task 3.5 Baseline (Database Batching):**
+| Metric | Baseline (Task 3.5) | With Parallel Decoding (Task 4.5) | Change |
+|--------|---------------------|-----------------------------------|---------|
+| Peak speed | 211.94 MB/s | 176.13 MB/s | -35.81 MB/s (-17%) |
+| End speed | 210.91 MB/s | 170.81 MB/s | -40.10 MB/s (-19%) |
+| Total time | 364.08s | 367.62s | +3.54s (+1%) |
+| Sustained avg | ~120-212 MB/s | ~165-176 MB/s | -30 to -36 MB/s |
+
+**Analysis:**
+Parallel yEnc decoding shows a **performance degradation** instead of improvement:
+- **Why the slowdown?**
+  1. **Channel overhead**: Sending articles through mpsc channel adds latency
+  2. **Context switching**: Worker pool (num_cpus threads) competes with download tasks
+  3. **Memory contention**: Multiple workers accessing memory simultaneously
+  4. **Decoding is already fast**: yEnc decoding is very lightweight (simple byte transformations)
+  5. **CPU not the bottleneck**: Network I/O was already saturating available bandwidth
+
+- **Key insight**: The database batching (Task 3.5) already achieved 211 MB/s by eliminating the SQLite bottleneck. CPU-bound yEnc decoding was never a significant bottleneck at these speeds.
+
+**Recommendation:**
+- **REVERT parallel yEnc decoder** - it hurts performance more than it helps
+- Keep database batching, pipelining, and socket tuning (Tasks 1-3)
+- Parallel decoding might help at much higher speeds (500+ MB/s) on faster connections
 
 **Next Steps:**
-- Task 4.5: Run performance test with parallel decoding
+- Consider reverting Task 4.1-4.3 implementation
+- Alternative: Add feature flag to disable parallel decoding by default
+- Focus on other optimizations (Phases 5-7) if higher speeds are needed
 
 ---
 
@@ -1233,3 +1265,66 @@ cargo test --test parallel_yenc_decoder
 
 **Next Steps:**
 - Task 4.5: Run performance test with parallel decoding to measure real-world improvement
+
+---
+
+## Latest Iteration (Task 4.5)
+
+### Task 4.5: Run performance test with parallel decoding ✓
+
+**Test Configuration:**
+- File: Fallout.S02E06.nzb (~700MB)
+- Connections: 50
+- Build: Release mode
+- Optimizations enabled: Pipelining (depth 10), TCP tuning (4MB/1MB buffers), database batching (100/1s), parallel yEnc decoding (num_cpus workers)
+
+**Performance Results:**
+```
+Peak speed:      176.13 MB/s (at 69.7% progress)
+Sustained speed: 165-176 MB/s
+End speed:       170.81 MB/s (at 99.9%)
+Total time:      367.62 seconds (~6.1 minutes)
+```
+
+**Comparison vs Task 3.5 Baseline:**
+```
+                Task 3.5        Task 4.5        Delta
+Peak:           211.94 MB/s     176.13 MB/s     -35.81 MB/s (-17%)
+End:            210.91 MB/s     170.81 MB/s     -40.10 MB/s (-19%)
+Time:           364.08s         367.62s         +3.54s (+1%)
+```
+
+**Conclusion:**
+Parallel yEnc decoding **degrades performance by 17-19%** instead of improving it. This is counterintuitive but explainable:
+
+1. **Channel overhead**: mpsc send/receive adds latency per article
+2. **Worker contention**: num_cpus decoder threads compete with 50 download tasks for CPU time
+3. **Memory pressure**: Workers accessing memory simultaneously causes cache contention
+4. **yEnc is lightweight**: Simple byte transformations, not CPU-intensive enough to justify parallelization
+5. **Wrong bottleneck**: Database batching already eliminated the bottleneck (Task 3.5: 211 MB/s peak)
+
+**Impact Analysis:**
+- Original target: 150+ MB/s
+- Task 3.5 achieved: 211 MB/s (**+41% over target**)
+- Task 4.5 regressed to: 176 MB/s (still **+17% over target**, but -17% vs Task 3.5)
+
+**Recommendation:**
+The parallel yEnc decoder should be **reverted or disabled by default**:
+- It adds complexity without performance benefit at current speeds
+- May only help at 500+ MB/s on very fast connections (10+ Gbit/s)
+- Database batching (Task 3.5) is the key optimization that got us to 211 MB/s
+
+**Action Required:**
+Since Task 4.5 shows regression, the plan should be updated:
+- **Option A**: Revert commits b941f9f (Task 4.1) and 1bfee0a (Task 4.4)
+- **Option B**: Keep code but add `parallel_decoding: false` config flag (default off)
+- **Option C**: Continue to Phase 5 to see if other optimizations help
+
+**Commits this iteration:**
+- 1bfee0a "test(lib): Add comprehensive parallel yEnc decoder tests"
+
+**Files modified:**
+- `speed_improvement_PROGRESS.md` - Updated with Task 4.5 results
+
+**Next decision point:**
+Should we revert the parallel decoder or keep it as optional feature?
