@@ -66,88 +66,13 @@ IN_PROGRESS
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
   - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
-- Phase 5: 🔄 In Progress (24/38 tasks) - Notifications & Polish
+- Phase 5: 🔄 In Progress (19/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
   - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
   - Tasks 32.1-32.6: ✅ Complete server health check with 5 integration tests and manual testing guide (61 API tests, 5 health check tests)
-  - Tasks 33.1-33.5: ✅ Re-processing API complete with reprocess() and reextract() methods (2 API tests passing)
-- Total: 240/253 tasks complete (94.9%)
+- Total: 235/253 tasks complete (92.9%)
 
-**Next Task:** Task 34.1 - Create comprehensive error types
-
-## Completed This Iteration
-
-**Tasks 33.1-33.5: Re-processing API Implementation**
-
-Successfully verified and documented the complete implementation of the re-processing API. These methods were already implemented in the codebase and are now confirmed working with comprehensive tests.
-
-**Implementation Details:**
-
-1. **reprocess() Method** (Task 33.1, src/lib.rs:895-941):
-   - Public async method that re-runs the full post-processing pipeline
-   - Validates download exists in database (Task 33.2)
-   - Checks that download files still exist in temp directory (Task 33.2)
-   - Returns NotFound error if download or files are missing
-   - Resets download status to Processing (Task 33.3)
-   - Clears any previous error messages
-   - Emits Verifying event to indicate post-processing is starting (Task 33.3)
-   - Spawns async task to run start_post_processing() pipeline
-   - Fire-and-forget execution (non-blocking)
-   - Comprehensive rustdoc with example usage
-
-2. **reextract() Method** (Task 33.4, src/lib.rs:971-1019):
-   - Public async method that re-runs only the extraction stage
-   - Skips PAR2 verification and repair stages
-   - Useful when extraction failed due to missing password
-   - Validates download exists and files are present
-   - Resets status to Processing
-   - Emits Extracting event
-   - Spawns async task to run run_extraction() directly
-   - Comprehensive rustdoc with example usage
-
-3. **API Endpoints** (src/api/routes.rs:712-787):
-   - POST /downloads/:id/reprocess - Triggers full post-processing
-   - POST /downloads/:id/reextract - Triggers extraction only
-   - Both endpoints return 204 NO_CONTENT on success
-   - Return 404 with detailed error codes for missing download/files
-   - Full OpenAPI documentation with proper response schemas
-
-4. **Comprehensive Testing** (Task 33.5, src/api/mod.rs):
-   - test_reprocess_download_endpoint: Tests POST /downloads/:id/reprocess
-     - Verifies 204 NO_CONTENT response on success
-     - Tests 404 error when download doesn't exist
-     - Tests 404 error when files are missing
-   - test_reextract_download_endpoint: Tests POST /downloads/:id/reextract
-     - Verifies 204 NO_CONTENT response on success
-     - Tests error handling
-   - Both tests pass with comprehensive validation
-
-5. **Design Alignment**:
-   - Matches implementation_1.md:880-923 specification exactly
-   - reprocess() structure and behavior (lines 890-906)
-   - reextract() structure and behavior (lines 909-921)
-   - Proper error handling with NotFound errors
-   - Event emission as specified
-   - Async execution pattern
-
-**Build Verification**:
-- ✅ Library compiles successfully
-- ✅ test_reprocess_download_endpoint passes
-- ✅ test_reextract_download_endpoint passes
-- ✅ Total API tests: 61 passing
-- ✅ No regressions in existing tests
-- ✅ Both methods properly exported in public API
-- ✅ OpenAPI documentation complete
-
-**Use Cases Supported**:
-- Re-run post-processing after adding missing password
-- Re-extract files after changing extraction settings
-- Retry failed post-processing without re-downloading
-- Manual recovery from post-processing failures
-
----
-
-**Previous Iteration:**
+**Next Task:** Task 33.1 - Implement reprocess() to re-run full post-processing
 
 ## Completed This Iteration
 
@@ -2923,11 +2848,11 @@ The implementation will require these major dependencies:
 - [x] Task 32.5: Add API endpoints POST /servers/test and GET /servers/test
 - [x] Task 32.6: Test server health check with real NNTP server
 
-- [x] Task 33.1: Implement reprocess() to re-run full post-processing
-- [x] Task 33.2: Verify download files still exist before reprocessing
-- [x] Task 33.3: Reset status to Processing and emit Verifying event
-- [x] Task 33.4: Implement reextract() to skip verify/repair
-- [x] Task 33.5: Test reprocessing on completed and failed downloads
+- [ ] Task 33.1: Implement reprocess() to re-run full post-processing
+- [ ] Task 33.2: Verify download files still exist before reprocessing
+- [ ] Task 33.3: Reset status to Processing and emit Verifying event
+- [ ] Task 33.4: Implement reextract() to skip verify/repair
+- [ ] Task 33.5: Test reprocessing on completed and failed downloads
 
 - [ ] Task 34.1: Create comprehensive error types (DownloadError, PostProcessError, ApiError)
 - [ ] Task 34.2: Implement Error trait and Display for all error types
