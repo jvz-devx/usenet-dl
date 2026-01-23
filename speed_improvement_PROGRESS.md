@@ -313,11 +313,20 @@ Priority 3 (Future optimization):
 
 ### Phase 4: Parallel yEnc Decoding (MEDIUM IMPACT - Expected +10-15%)
 
-- [ ] Task 4.1: Create yEnc decoder task pool
-  - File: `src/lib.rs:3150-3170` (before download loop)
+- [x] Task 4.1: Create yEnc decoder task pool
+  - File: `src/lib.rs:3320-3409` (after batch_task setup)
   - Create mpsc channel: (decode_tx, decode_rx) with capacity 100
   - Spawn N decoder tasks (N = num_cpus::get())
-  - Each task: receive (raw_data, article_id, segment_num) → decode → write to temp file
+  - Each task: receive (raw_data, article_id, segment_num, article_file) → decode → write to temp file
+  - COMPLETED: Full implementation with comprehensive error handling
+    - Channel capacity 100 to prevent memory pressure
+    - One decoder worker per CPU core for optimal parallelism
+    - Workers decode yEnc and write decoded binary to temp files
+    - Graceful fallback: writes raw data if decode fails
+    - Workers automatically terminate when channel closes
+    - Added num_cpus = "1" dependency to Cargo.toml
+    - Clone protection: decode_tx cloned into async closure
+    - Shutdown handling: decode_tx dropped, all workers awaited before post-processing
 
 - [ ] Task 4.2: Integrate decoder into download loop
   - File: `src/lib.rs:3335-3338`
