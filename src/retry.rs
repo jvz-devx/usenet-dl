@@ -118,6 +118,8 @@ impl IsRetryable for Error {
                 | std::io::ErrorKind::Interrupted => true,
                 _ => false,
             },
+            // Duplicate errors are permanent (not retryable)
+            Error::Duplicate(_) => false,
             // Unknown errors - be conservative and don't retry
             Error::Other(_) => false,
         }

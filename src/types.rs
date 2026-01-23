@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use utoipa::ToSchema;
 
-use crate::config::PostProcess;
+use crate::config::{PostProcess, DuplicateMethod};
 
 /// Unique identifier for a download
 pub type DownloadId = i64;
@@ -269,6 +269,18 @@ pub enum Event {
         script: PathBuf,
         /// Exit code (if available)
         exit_code: Option<i32>,
+    },
+
+    /// Duplicate download detected
+    DuplicateDetected {
+        /// Existing download ID that matches
+        id: DownloadId,
+        /// Name of the new download attempt
+        name: String,
+        /// Detection method used
+        method: DuplicateMethod,
+        /// Name of the existing download
+        existing_name: String,
     },
 
     /// Graceful shutdown initiated

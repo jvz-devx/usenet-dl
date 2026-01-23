@@ -94,6 +94,10 @@ pub enum Error {
     #[error("I/O error: {0}")]
     IoError(std::io::Error),
 
+    /// Duplicate download detected
+    #[error("duplicate download: {0}")]
+    Duplicate(String),
+
     /// Other error
     #[error("{0}")]
     Other(String),

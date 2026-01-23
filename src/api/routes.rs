@@ -1454,6 +1454,7 @@ pub async fn event_stream(
                             crate::types::Event::QueueResumed => "queue_resumed",
                             crate::types::Event::WebhookFailed { .. } => "webhook_failed",
                             crate::types::Event::ScriptFailed { .. } => "script_failed",
+                            crate::types::Event::DuplicateDetected { .. } => "duplicate_detected",
                             crate::types::Event::Shutdown => "shutdown",
                         };
 
