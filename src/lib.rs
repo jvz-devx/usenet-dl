@@ -1836,13 +1836,29 @@ impl UsenetDownloader {
         url: &str,
         options: DownloadOptions,
     ) -> Result<DownloadId> {
-        // Fetch NZB from URL
-        let response = reqwest::get(url)
-            .await
+        // Create HTTP client with timeout to prevent hanging
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
             .map_err(|e| Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to fetch NZB from URL '{}': {}", url, e)
+                format!("Failed to create HTTP client: {}", e)
             )))?;
+
+        // Fetch NZB from URL with timeout
+        let response = client.get(url)
+            .send()
+            .await
+            .map_err(|e| {
+                let error_msg = if e.is_timeout() {
+                    format!("Timeout fetching NZB from URL '{}' (exceeded 30 seconds)", url)
+                } else if e.is_connect() {
+                    format!("Connection failed for URL '{}': {}", url, e)
+                } else {
+                    format!("Failed to fetch NZB from URL '{}': {}", url, e)
+                };
+                Error::Io(std::io::Error::new(std::io::ErrorKind::Other, error_msg))
+            })?;
 
         // Check HTTP status
         if !response.status().is_success() {
@@ -3018,6 +3034,246 @@ mod tests {
             .await
             .unwrap();
 
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(download.category, Some("movies".to_string()));
+        assert_eq!(download.priority, Priority::High as i32);
+    }
+
+    // URL Fetching Tests
+
+    #[tokio::test]
+    async fn test_add_nzb_url_success() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start mock HTTP server
+        let mock_server = MockServer::start().await;
+
+        // Mock successful NZB download with Content-Disposition header
+        Mock::given(method("GET"))
+            .and(path("/test.nzb"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Disposition", "attachment; filename=\"Movie.Release.nzb\"")
+                    .set_body_bytes(SAMPLE_NZB)
+            )
+            .mount(&mock_server)
+            .await;
+
+        // Fetch NZB from mock server
+        let url = format!("{}/test.nzb", mock_server.uri());
+        let download_id = downloader
+            .add_nzb_url(&url, DownloadOptions::default())
+            .await
+            .unwrap();
+
+        assert!(download_id > 0);
+
+        // Verify download was created with filename from Content-Disposition
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(download.name, "Movie.Release");
+        assert_eq!(download.status, Status::Queued.to_i32());
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_url_extracts_filename_from_url() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start mock HTTP server
+        let mock_server = MockServer::start().await;
+
+        // Mock successful NZB download without Content-Disposition header
+        Mock::given(method("GET"))
+            .and(path("/downloads/My.Movie.2024.nzb"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(SAMPLE_NZB)
+            )
+            .mount(&mock_server)
+            .await;
+
+        // Fetch NZB from mock server
+        let url = format!("{}/downloads/My.Movie.2024.nzb", mock_server.uri());
+        let download_id = downloader
+            .add_nzb_url(&url, DownloadOptions::default())
+            .await
+            .unwrap();
+
+        // Verify download was created with filename from URL path
+        let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(download.name, "My.Movie.2024");
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_url_http_404() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start mock HTTP server
+        let mock_server = MockServer::start().await;
+
+        // Mock 404 Not Found response
+        Mock::given(method("GET"))
+            .and(path("/notfound.nzb"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        // Attempt to fetch non-existent NZB
+        let url = format!("{}/notfound.nzb", mock_server.uri());
+        let result = downloader
+            .add_nzb_url(&url, DownloadOptions::default())
+            .await;
+
+        // Should return error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::Io(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("HTTP error"));
+                assert!(msg.contains("404"));
+            }
+            _ => panic!("Expected Io error for HTTP 404"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_url_http_403() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start mock HTTP server
+        let mock_server = MockServer::start().await;
+
+        // Mock 403 Forbidden response
+        Mock::given(method("GET"))
+            .and(path("/forbidden.nzb"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&mock_server)
+            .await;
+
+        // Attempt to fetch forbidden NZB
+        let url = format!("{}/forbidden.nzb", mock_server.uri());
+        let result = downloader
+            .add_nzb_url(&url, DownloadOptions::default())
+            .await;
+
+        // Should return error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::Io(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("HTTP error"));
+                assert!(msg.contains("403"));
+            }
+            _ => panic!("Expected Io error for HTTP 403"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_url_timeout() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+        use std::time::Duration;
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start mock HTTP server
+        let mock_server = MockServer::start().await;
+
+        // Mock slow response that exceeds timeout (30 seconds)
+        // Note: This test would take 30+ seconds to run, so we'll test connection failure instead
+        Mock::given(method("GET"))
+            .and(path("/slow.nzb"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(35))  // Exceeds 30 second timeout
+                    .set_body_bytes(SAMPLE_NZB)
+            )
+            .mount(&mock_server)
+            .await;
+
+        // Attempt to fetch slow NZB
+        let url = format!("{}/slow.nzb", mock_server.uri());
+        let result = downloader
+            .add_nzb_url(&url, DownloadOptions::default())
+            .await;
+
+        // Should return timeout error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::Io(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("Timeout") || msg.contains("timeout"));
+            }
+            _ => panic!("Expected Io error for timeout"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_url_connection_refused() {
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Use a URL that will cause connection refused (port unlikely to be in use)
+        // Port 9 is the discard service, rarely running on modern systems
+        let url = "http://127.0.0.1:9/test.nzb";
+        let result = downloader
+            .add_nzb_url(url, DownloadOptions::default())
+            .await;
+
+        // Should return connection error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::Io(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("Connection failed") || msg.contains("Failed to fetch"));
+            }
+            _ => panic!("Expected Io error for connection refused"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_nzb_url_with_options() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Start mock HTTP server
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/movie.nzb"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(SAMPLE_NZB)
+            )
+            .mount(&mock_server)
+            .await;
+
+        // Fetch NZB with options
+        let options = DownloadOptions {
+            category: Some("movies".to_string()),
+            priority: Priority::High,
+            ..Default::default()
+        };
+
+        let url = format!("{}/movie.nzb", mock_server.uri());
+        let download_id = downloader
+            .add_nzb_url(&url, options)
+            .await
+            .unwrap();
+
+        // Verify options were applied
         let download = downloader.db.get_download(download_id).await.unwrap().unwrap();
         assert_eq!(download.category, Some("movies".to_string()));
         assert_eq!(download.priority, Priority::High as i32);

@@ -59,15 +59,56 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (10/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (15/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
-- Total: 173/253 tasks complete (68.4%)
+  - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
+- Total: 178/253 tasks complete (70.4%)
 
-**Next Task:** Task 25.1 - Add reqwest dependency
+**Next Task:** Task 26.1 - Add rss and atom_syndication dependencies
 
 ## Completed This Iteration
 
-**Task 24.8: Test folder watching with file creation**
+**Tasks 25.1-25.5: Complete URL fetching implementation with timeout handling**
+
+Implemented comprehensive HTTP URL fetching for NZB files:
+
+1. **Timeout Configuration** (Task 25.4 completion):
+   - Modified `add_nzb_url()` to create dedicated HTTP client with 30-second timeout
+   - Changed from `reqwest::get()` to `reqwest::Client::builder()` with timeout
+   - Added detailed error messages distinguishing timeout, connection, and HTTP errors
+   - Prevents indefinite hanging on unresponsive servers
+
+2. **Error Handling Improvements**:
+   - Timeout errors: Explicit "Timeout fetching NZB" message with duration
+   - Connection errors: "Connection failed" with URL context
+   - HTTP status errors: Preserves status code and URL in error message
+   - Uses `e.is_timeout()` and `e.is_connect()` for precise error classification
+
+3. **Comprehensive Test Suite** (Task 25.5):
+   - Added 7 integration tests using wiremock for HTTP mocking:
+     - `test_add_nzb_url_success()` - Successful download with Content-Disposition header
+     - `test_add_nzb_url_extracts_filename_from_url()` - Fallback to URL path parsing
+     - `test_add_nzb_url_http_404()` - HTTP 404 Not Found error handling
+     - `test_add_nzb_url_http_403()` - HTTP 403 Forbidden error handling
+     - `test_add_nzb_url_timeout()` - 30-second timeout verification (tests delayed response)
+     - `test_add_nzb_url_connection_refused()` - Connection failure error handling
+     - `test_add_nzb_url_with_options()` - Options (category, priority) application
+   - All tests use mock HTTP server for isolation and reliability
+   - Total test count increased to 312 tests (up from 305)
+
+4. **Verification of Existing Features**:
+   - Task 25.1: ✅ reqwest 0.11 dependency already present in Cargo.toml
+   - Task 25.2: ✅ `add_nzb_url()` method fully implemented with delegation to `add_nzb_content()`
+   - Task 25.3: ✅ `extract_filename_from_response()` handles Content-Disposition and URL paths
+
+5. **Test Results:**
+   - ✅ All 7 new URL fetching tests pass
+   - ✅ Timeout test properly validates 30-second timeout (takes ~30s to run)
+   - ✅ HTTP error tests verify 404 and 403 handling
+   - ✅ Connection failure test validates error messaging
+   - ✅ Filename extraction tests confirm both header and URL parsing work
+
+**Previous Task: Task 24.8: Test folder watching with file creation**
 
 Added a comprehensive end-to-end integration test for folder watching:
 
@@ -599,11 +640,11 @@ The implementation will require these major dependencies:
 - [x] Task 24.9: Add multiple watch folder support
 - [x] Task 24.10: Implement category-specific watch folders
 
-- [ ] Task 25.1: Add reqwest dependency
-- [ ] Task 25.2: Implement add_nzb_url() to fetch NZB from HTTP
-- [ ] Task 25.3: Extract filename from Content-Disposition or URL
-- [ ] Task 25.4: Handle HTTP errors (404, 403, timeout)
-- [ ] Task 25.5: Test URL fetching with various NZB URLs
+- [x] Task 25.1: Add reqwest dependency
+- [x] Task 25.2: Implement add_nzb_url() to fetch NZB from HTTP
+- [x] Task 25.3: Extract filename from Content-Disposition or URL
+- [x] Task 25.4: Handle HTTP errors (404, 403, timeout)
+- [x] Task 25.5: Test URL fetching with various NZB URLs
 
 - [ ] Task 26.1: Add rss and atom_syndication dependencies
 - [ ] Task 26.2: Create RssFeedConfig with url, check_interval, category, filters, auto_download, priority
