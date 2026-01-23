@@ -337,4 +337,76 @@ mod tests {
         assert_eq!(found_config.path, watch_path);
         assert_eq!(found_config.category.as_deref(), Some("test"));
     }
+
+    #[tokio::test]
+    async fn test_folder_watching_with_file_creation() {
+        // Create test downloader with temporary directories
+        let temp_dir = TempDir::new().unwrap();
+        let watch_path = temp_dir.path().join("watch");
+        std::fs::create_dir_all(&watch_path).unwrap();
+
+        let mut config = Config::default();
+        config.database_path = temp_dir.path().join("test.db");
+        config.download_dir = temp_dir.path().join("downloads");
+        config.temp_dir = temp_dir.path().join("temp");
+
+        let downloader = Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Create watch folder configuration with Delete action
+        let watch_config = WatchFolderConfig {
+            path: watch_path.clone(),
+            after_import: WatchFolderAction::Delete,
+            category: Some("movies".to_string()),
+            scan_interval: Duration::from_secs(1),
+        };
+
+        // Create and start folder watcher
+        let mut watcher = FolderWatcher::new(downloader.clone(), vec![watch_config]).unwrap();
+        watcher.start().unwrap();
+
+        // Spawn watcher task
+        let watcher_handle = tokio::spawn(async move {
+            watcher.run().await;
+        });
+
+        // Give watcher time to start
+        sleep(Duration::from_millis(100)).await;
+
+        // Create a valid NZB file in the watch folder
+        let nzb_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file poster="test@example.com" date="1234567890" subject="test file">
+    <groups>
+      <group>alt.binaries.test</group>
+    </groups>
+    <segments>
+      <segment bytes="1024" number="1">test-message-id@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+        let nzb_path = watch_path.join("test_movie.nzb");
+        std::fs::write(&nzb_path, nzb_content).unwrap();
+
+        // Wait for the file to be processed
+        // The watcher has a 100ms delay + processing time
+        sleep(Duration::from_millis(500)).await;
+
+        // Verify the NZB was deleted (Delete action)
+        assert!(!nzb_path.exists(), "NZB file should have been deleted after import");
+
+        // Verify download was added to queue
+        let downloads = downloader.db.list_downloads().await.unwrap();
+        assert_eq!(downloads.len(), 1, "Expected 1 download in queue");
+
+        // Verify the download has the correct category
+        let download = &downloads[0];
+        assert_eq!(download.category.as_deref(), Some("movies"));
+        assert!(download.name.contains("test_movie") || download.name.contains("test file"));
+
+        // Cleanup: abort watcher task
+        watcher_handle.abort();
+        let _ = watcher_handle.await;
+    }
 }

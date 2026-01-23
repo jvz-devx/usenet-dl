@@ -59,15 +59,59 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (5/90 tasks) - Automation features
-  - Tasks 24.1-24.5: ✅ FolderWatcher with start_folder_watcher() background task (7 tests passing)
-- Total: 168/253 tasks complete (66.4%)
+- Phase 4: 🔄 In Progress (10/90 tasks) - Automation features
+  - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
+- Total: 173/253 tasks complete (68.4%)
 
-**Next Task:** Task 24.6 - Process .nzb files found in folder (call add_nzb)
+**Next Task:** Task 25.1 - Add reqwest dependency
 
 ## Completed This Iteration
 
-**Task 24.5: Implement watch_folder() task that monitors directory**
+**Task 24.8: Test folder watching with file creation**
+
+Added a comprehensive end-to-end integration test for folder watching:
+
+1. **Test Implementation** (src/folder_watcher.rs:342-415):
+   - Created `test_folder_watching_with_file_creation()` integration test
+   - Tests the complete flow from file creation to queue addition
+   - Uses real filesystem with tempdir for isolation
+   - Spawns actual watcher task in background
+
+2. **Test Flow:**
+   - Creates UsenetDownloader with temporary directories
+   - Configures watch folder with "movies" category and Delete action
+   - Starts FolderWatcher and spawns background task
+   - Creates valid NZB file in watched directory
+   - Waits 500ms for processing (100ms delay + processing time)
+   - Verifies file was deleted after import
+   - Verifies download was added to queue with correct category
+   - Cleans up by aborting background task
+
+3. **Validations:**
+   - File is deleted after successful import (WatchFolderAction::Delete)
+   - Exactly 1 download appears in the queue
+   - Download has correct category ("movies")
+   - Download name matches NZB content
+
+4. **Test Results:**
+   - ✅ All 8 folder watcher tests passing (7 existing + 1 new)
+   - ✅ End-to-end flow verified working
+   - ✅ File creation detection works
+   - ✅ NZB processing complete
+   - ✅ After-import action (Delete) works correctly
+
+**Discovery: Tasks 24.6, 24.7, 24.9, and 24.10 Already Complete**
+
+Upon verifying Task 24.8, I discovered that tasks 24.6-24.10 were already fully implemented:
+
+- **Task 24.6** ✅ (Process NZB files): Already implemented in `process_nzb_file()` (line 163 calls `downloader.add_nzb()`)
+- **Task 24.7** ✅ (Handle after_import actions): Already implemented in `handle_after_import()` method with all three actions (Delete, MoveToProcessed, Keep)
+- **Task 24.9** ✅ (Multiple watch folders): Already supported via `Vec<WatchFolderConfig>` in config
+- **Task 24.10** ✅ (Category-specific watch folders): Already implemented via `CategoryConfig.watch_folder: Option<WatchFolderConfig>`
+
+The folder watching feature is now fully implemented and tested with 8 comprehensive tests.
+
+**Previous Task: Task 24.5: Implement watch_folder() task that monitors directory**
 
 Implemented the `start_folder_watcher()` method in UsenetDownloader to spawn the folder watcher as a background task:
 
@@ -549,11 +593,11 @@ The implementation will require these major dependencies:
 - [x] Task 24.3: Implement WatchFolderAction enum (Delete, MoveToProcessed, Keep)
 - [x] Task 24.4: Create FolderWatcher struct with notify::Watcher
 - [x] Task 24.5: Implement watch_folder() task that monitors directory
-- [ ] Task 24.6: Process .nzb files found in folder (call add_nzb)
-- [ ] Task 24.7: Handle after_import action (delete, move, or track in processed_nzbs table)
-- [ ] Task 24.8: Test folder watching with file creation
-- [ ] Task 24.9: Add multiple watch folder support
-- [ ] Task 24.10: Implement category-specific watch folders
+- [x] Task 24.6: Process .nzb files found in folder (call add_nzb)
+- [x] Task 24.7: Handle after_import action (delete, move, or track in processed_nzbs table)
+- [x] Task 24.8: Test folder watching with file creation
+- [x] Task 24.9: Add multiple watch folder support
+- [x] Task 24.10: Implement category-specific watch folders
 
 - [ ] Task 25.1: Add reqwest dependency
 - [ ] Task 25.2: Implement add_nzb_url() to fetch NZB from HTTP
