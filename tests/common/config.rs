@@ -1,6 +1,5 @@
 //! Test configuration helpers for loading .env credentials and creating test downloaders
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 use usenet_dl::{Config, ServerConfig, UsenetDownloader};
@@ -57,6 +56,7 @@ pub fn load_server_config() -> Result<ServerConfig, ConfigError> {
         password: Some(password),
         connections,
         priority: 0,
+        pipeline_depth: 10,
     })
 }
 
@@ -138,6 +138,7 @@ pub async fn create_docker_downloader(
             password: None,
             connections: 2,
             priority: 0,
+            pipeline_depth: 10,
         }],
         database_path: temp_dir.path().join("test.db"),
         download_dir: temp_dir.path().join("downloads"),
