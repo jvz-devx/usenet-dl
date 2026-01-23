@@ -1,0 +1,231 @@
+//! Custom configuration example
+//!
+//! This example shows how to configure usenet-dl with various options:
+//! - Multiple NNTP servers with priorities
+//! - Custom directories and concurrent downloads
+//! - Speed limiting
+//! - Retry configuration
+//! - Post-processing settings
+//! - Watch folders and RSS feeds
+//! - Webhooks and scripts
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use usenet_dl::api::start_api_server;
+use usenet_dl::config::{
+    ApiConfig, Config, DeobfuscationConfig, DiskSpaceConfig, DuplicateAction, DuplicateConfig,
+    DuplicateMethod, ExtractionConfig, FailedDownloadAction, FileCollisionAction, PostProcess,
+    RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig, ScriptEvent,
+    ServerConfig, WatchFolderAction, WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
+};
+use usenet_dl::{Priority, UsenetDownloader};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing (optional)
+    // Uncomment if you add tracing-subscriber to your dependencies:
+    // tracing_subscriber::fmt::init();
+
+    // Primary and backup servers
+    let primary_server = ServerConfig {
+        host: "news.primary.com".to_string(),
+        port: 563,
+        tls: true,
+        username: Some("user".to_string()),
+        password: Some("pass".to_string()),
+        connections: 20,
+        priority: 0, // Try first
+    };
+
+    let backup_server = ServerConfig {
+        host: "news.backup.com".to_string(),
+        port: 563,
+        tls: true,
+        username: Some("user2".to_string()),
+        password: Some("pass2".to_string()),
+        connections: 10,
+        priority: 1, // Try if primary fails
+    };
+
+    // Retry configuration with exponential backoff
+    let retry_config = RetryConfig {
+        max_attempts: 5,
+        initial_delay: Duration::from_secs(1),
+        max_delay: Duration::from_secs(60),
+        backoff_multiplier: 2.0,
+        jitter: true,
+    };
+
+    // Extraction configuration
+    let extraction_config = ExtractionConfig {
+        max_recursion_depth: 2, // Extract archives within archives
+        archive_extensions: vec![
+            "rar".to_string(),
+            "zip".to_string(),
+            "7z".to_string(),
+            "tar".to_string(),
+            "gz".to_string(),
+        ],
+    };
+
+    // Disk space checking
+    let disk_space_config = DiskSpaceConfig {
+        enabled: true,
+        min_free_space: 5 * 1024 * 1024 * 1024, // 5 GB buffer
+        size_multiplier: 2.5,                    // Account for extraction overhead
+    };
+
+    // Duplicate detection
+    let duplicate_config = DuplicateConfig {
+        enabled: true,
+        action: DuplicateAction::Warn, // Warn but don't block
+        methods: vec![DuplicateMethod::NzbHash, DuplicateMethod::JobName],
+    };
+
+    // Deobfuscation
+    let deobfuscation_config = DeobfuscationConfig {
+        enabled: true,
+        min_length: 12,
+    };
+
+    // Watch folder for movies
+    let movies_watch = WatchFolderConfig {
+        path: PathBuf::from("/path/to/nzb/movies"),
+        after_import: WatchFolderAction::MoveToProcessed,
+        category: Some("movies".to_string()),
+        scan_interval: Duration::from_secs(5),
+    };
+
+    // RSS feed for TV shows
+    let tv_rss = RssFeedConfig {
+        url: "https://indexer.example.com/rss?cat=tv".to_string(),
+        check_interval: Duration::from_secs(900), // 15 minutes
+        category: Some("tv".to_string()),
+        filters: vec![],
+        auto_download: true,
+        priority: Priority::Normal,
+        enabled: true,
+    };
+
+    // Schedule: unlimited speed at night
+    let night_schedule = ScheduleRule {
+        name: "Night unlimited".to_string(),
+        days: vec![], // All days
+        start_time: "00:00".to_string(),
+        end_time: "06:00".to_string(),
+        action: ScheduleAction::Unlimited,
+        enabled: true,
+    };
+
+    // Schedule: limited during work hours
+    let work_schedule = ScheduleRule {
+        name: "Work hours limit".to_string(),
+        days: vec![
+            Weekday::Monday,
+            Weekday::Tuesday,
+            Weekday::Wednesday,
+            Weekday::Thursday,
+            Weekday::Friday,
+        ],
+        start_time: "09:00".to_string(),
+        end_time: "17:00".to_string(),
+        action: ScheduleAction::SpeedLimit {
+            limit_bps: 1_000_000, // 1 MB/s
+        },
+        enabled: true,
+    };
+
+    // Webhook notification
+    let webhook = WebhookConfig {
+        url: "https://example.com/webhook".to_string(),
+        events: vec![WebhookEvent::OnComplete, WebhookEvent::OnFailed],
+        auth_header: Some("Bearer secret-token".to_string()),
+        timeout: Duration::from_secs(30),
+    };
+
+    // Post-processing script
+    let script = ScriptConfig {
+        path: PathBuf::from("/path/to/post_process.sh"),
+        events: vec![ScriptEvent::OnComplete],
+        timeout: Duration::from_secs(300),
+    };
+
+    // Build complete configuration
+    let config = Config {
+        // Servers
+        servers: vec![primary_server, backup_server],
+
+        // Directories
+        download_dir: PathBuf::from("/data/downloads"),
+        temp_dir: PathBuf::from("/data/temp"),
+        database_path: PathBuf::from("/data/usenet-dl.db"),
+
+        // Download settings
+        max_concurrent_downloads: 3,
+        speed_limit_bps: None, // Controlled by scheduler
+
+        // Resilience
+        retry: retry_config,
+
+        // Post-processing
+        default_post_process: PostProcess::UnpackAndCleanup,
+        failed_action: FailedDownloadAction::Keep,
+        failed_directory: Some(PathBuf::from("/data/failed")),
+        delete_samples: true,
+
+        // Extraction
+        extraction: extraction_config,
+
+        // File handling
+        file_collision: FileCollisionAction::Rename,
+        deobfuscation: deobfuscation_config,
+        duplicate: duplicate_config,
+
+        // Safety
+        disk_space: disk_space_config,
+
+        // Passwords
+        password_file: Some(PathBuf::from("/etc/usenet-dl/passwords.txt")),
+        try_empty_password: true,
+
+        // API
+        api: ApiConfig {
+            bind_address: "0.0.0.0:6789".parse().unwrap(),
+            api_key: Some("your-secret-key".to_string()),
+            swagger_ui: true,
+            ..Default::default()
+        },
+
+        // Automation
+        watch_folders: vec![movies_watch],
+        rss_feeds: vec![tv_rss],
+        schedule_rules: vec![night_schedule, work_schedule],
+
+        // Notifications
+        webhooks: vec![webhook],
+        scripts: vec![script],
+
+        ..Default::default()
+    };
+
+    println!("Configuration:");
+    println!("  Servers: {}", config.servers.len());
+    println!("  Max concurrent: {}", config.max_concurrent_downloads);
+    println!("  Watch folders: {}", config.watch_folders.len());
+    println!("  RSS feeds: {}", config.rss_feeds.len());
+    println!("  Schedule rules: {}", config.schedule_rules.len());
+    println!("  API: {}", config.api.bind_address);
+
+    // Create downloader with this configuration
+    let downloader = Arc::new(UsenetDownloader::new(config.clone()).await?);
+    let config_arc = Arc::new(config);
+
+    println!("✓ Downloader initialized with custom configuration");
+    println!("Starting API server...");
+
+    // Start the API server
+    start_api_server(downloader, config_arc).await?;
+
+    Ok(())
+}

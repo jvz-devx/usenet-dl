@@ -66,16 +66,113 @@ IN_PROGRESS
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
   - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
-- Phase 5: 🔄 In Progress (31/38 tasks) - Notifications & Polish
+- Phase 5: 🔄 In Progress (32/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
   - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
   - Tasks 32.1-32.6: ✅ Complete server health check with 5 integration tests and manual testing guide (61 API tests, 5 health check tests)
   - Tasks 33.1-33.5: ✅ Re-processing API complete with reprocess() and reextract() methods (2 API tests passing)
   - Tasks 34.1-34.6: ✅ Comprehensive error types with HTTP status mapping and 11 error response tests passing
   - Task 35.1: ✅ Comprehensive README.md with 800+ lines of documentation
-- Total: 247/253 tasks complete (97.6%)
+- Total: 248/253 tasks complete (98.0%)
 
-**Next Task:** Task 35.2 - Create examples/ directory with sample code
+**Next Task:** Task 35.3 - Write API usage documentation with curl examples
+
+## Completed This Iteration
+
+**Task 35.2: Create examples/ directory with runnable sample code**
+
+Successfully created a comprehensive examples/ directory with 4 runnable examples and documentation. All examples compile successfully and demonstrate key features of usenet-dl.
+
+**Implementation Details:**
+
+1. **examples/basic_download.rs** (107 lines):
+   - Demonstrates core workflow: configuration, event subscription, adding downloads
+   - Shows event handling for progress monitoring
+   - Uses DownloadOptions with category and priority
+   - Handles all major event types (Queued, Downloading, Complete, Failed, Extracting)
+   - Simple, focused example for beginners
+
+2. **examples/rest_api_server.rs** (68 lines):
+   - Shows how to run usenet-dl as a REST API server
+   - Demonstrates ApiConfig setup with CORS and Swagger UI
+   - Includes example curl commands in output
+   - Uses Arc<UsenetDownloader> and Arc<Config> for API server
+   - Points users to Swagger UI at http://localhost:6789/swagger-ui
+
+3. **examples/multi_subscriber.rs** (129 lines):
+   - Demonstrates broadcast channel pattern with multiple independent subscribers
+   - Shows 4 different subscriber use cases:
+     - UI subscriber (progress bars, extraction progress)
+     - Logging subscriber (all events)
+     - Notification subscriber (completion/failure alerts)
+     - Statistics subscriber (metrics collection)
+   - Illustrates how different parts of an application can react to events independently
+   - Shows event filtering by type
+
+4. **examples/custom_configuration.rs** (224 lines):
+   - Comprehensive configuration example with ALL available options
+   - Demonstrates:
+     - Multiple NNTP servers with priorities (primary + backup)
+     - RetryConfig with exponential backoff
+     - ExtractionConfig for nested archives
+     - DiskSpaceConfig with 5GB buffer
+     - DuplicateConfig with hash and name detection
+     - DeobfuscationConfig for obfuscated filenames
+     - WatchFolderConfig for auto-importing NZBs
+     - RssFeedConfig for auto-downloading from feeds
+     - ScheduleRule with time-based speed limits (night unlimited, work hours limited)
+     - WebhookConfig with authentication
+     - ScriptConfig for post-processing
+     - ApiConfig with authentication
+   - Shows proper struct initialization for all config types
+   - Uses string times ("00:00", "06:00") for ScheduleRule
+   - Uses struct variant for ScheduleAction::SpeedLimit { limit_bps }
+
+5. **examples/README.md** (228 lines):
+   - Comprehensive guide to running and understanding examples
+   - "Running Examples" section with cargo run commands
+   - Detailed breakdown of each example:
+     - What it demonstrates
+     - Key concepts shown
+     - When to use it
+   - Configuration notes:
+     - NNTP server setup guide
+     - Directory structure explanation
+     - NZB file requirements
+   - Event types reference table with all common events
+   - Links to further reading (README.md, API_TESTING.md, etc.)
+
+**Build Verification:**
+- ✅ All 4 examples compile successfully (cargo build --examples)
+- ✅ No compilation errors
+- ✅ Only minor unused variable warning in multi_subscriber.rs
+- ✅ Proper use of config:: module for non-re-exported types
+- ✅ Correct API usage with start_api_server() function
+- ✅ Arc wrappers used correctly for API server examples
+
+**Design Alignment:**
+- Follows Rust conventions for examples directory
+- Each example is self-contained and runnable
+- Progressive complexity (basic → API → multi-subscriber → custom config)
+- Clear documentation in each file with //! comments
+- README provides comprehensive guidance
+
+**Key Fixes Applied:**
+- Import paths: Use `usenet_dl::config::` for Config types not re-exported at root
+- API server: Use `usenet_dl::api::start_api_server(Arc<UsenetDownloader>, Arc<Config>)`
+- ScheduleRule: Uses String for times ("HH:MM"), no id field
+- ScheduleAction::SpeedLimit: Struct variant with limit_bps field
+- Removed tracing_subscriber dependency (made optional in comments)
+
+**Examples Cover:**
+- Basic library usage (event-driven downloads)
+- REST API server deployment
+- Multi-subscriber pattern (concurrent event handlers)
+- Complete configuration reference (all options in one place)
+
+---
+
+**Previous Iteration:**
 
 ## Completed This Iteration
 
@@ -3048,7 +3145,7 @@ The implementation will require these major dependencies:
 - [x] Task 34.6: Test error responses in API
 
 - [x] Task 35.1: Write comprehensive README.md (features, installation, usage, configuration)
-- [ ] Task 35.2: Create examples/ directory with sample code
+- [x] Task 35.2: Create examples/ directory with sample code
 - [ ] Task 35.3: Write API usage documentation with curl examples
 - [ ] Task 35.4: Document configuration file format (TOML or JSON)
 - [ ] Task 35.5: Create CHANGELOG.md
