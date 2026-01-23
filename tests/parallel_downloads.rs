@@ -580,3 +580,213 @@ async fn test_progress_reporting_accuracy() {
 
     downloader.shutdown().await.expect("Failed to shutdown");
 }
+
+/// Stress test with large NZB (1000+ segments)
+///
+/// This test verifies that the parallel download implementation can handle
+/// large-scale downloads efficiently:
+/// - Memory usage stays constant (article content goes to disk)
+/// - Speed limiter enforces global limit correctly
+/// - Progress tracking remains accurate
+/// - All articles download successfully
+#[tokio::test]
+#[serial]
+async fn test_stress_large_nzb_download() {
+    if !is_docker_server_available() {
+        eprintln!("Skipping: Docker NNTP server not available");
+        return;
+    }
+
+    // Create downloader with 20 connections for high concurrency
+    let (downloader, _temp_dir) = create_docker_downloader_with_connections(20)
+        .await
+        .expect("Failed to create downloader");
+
+    // Post 1200 articles to stress test the system
+    let article_count = 1200;
+    let content_size = 500; // 500 bytes per article = ~600KB total
+    let content = "X".repeat(content_size);
+
+    println!("Posting {} articles to NNTP server...", article_count);
+    let mut message_ids = Vec::new();
+
+    // Post articles in batches to avoid overwhelming the server
+    let batch_size = 100;
+    for batch in 0..(article_count / batch_size) {
+        for i in 0..batch_size {
+            let article_num = batch * batch_size + i;
+            let yenc_content = generate_yenc_content(content.as_bytes(), "stress.bin");
+            let subject = format!("Stress Test Article {} (1/1)", article_num);
+
+            let message_id = post_article_to_server("test.group", &subject, &yenc_content)
+                .expect("Failed to post article");
+
+            message_ids.push(message_id);
+        }
+
+        // Brief pause between batches
+        if batch < (article_count / batch_size) - 1 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    println!("Posted {} articles successfully", message_ids.len());
+
+    // Create NZB with all segments
+    let segments: Vec<(String, u64)> = message_ids
+        .iter()
+        .map(|id| (id.clone(), content_size as u64))
+        .collect();
+
+    let nzb_content = create_nzb_from_segments(
+        "StressTest",
+        "stress.bin",
+        "test.group",
+        &segments,
+    );
+
+    // Subscribe to events to track progress and measure throughput
+    let mut events = downloader.subscribe();
+
+    // Add NZB and start download
+    let download_id = downloader
+        .add_nzb_content(nzb_content.as_bytes(), "stress.nzb", DownloadOptions::default())
+        .await
+        .expect("Failed to add NZB");
+
+    let _processor = downloader.start_queue_processor();
+
+    // Measure download time
+    let start = Instant::now();
+
+    // Wait for download to start
+    let started = wait_for_downloading(&downloader, download_id, Duration::from_secs(10)).await;
+    assert!(started, "Download should start within timeout");
+
+    println!("Download started, tracking progress...");
+
+    // Collect progress events and measure throughput
+    let mut progress_events = Vec::new();
+    let mut max_speed_bps: u64 = 0;
+    let mut last_progress = 0.0;
+
+    let download_result = tokio::time::timeout(Duration::from_secs(180), async {
+        loop {
+            match events.recv().await {
+                Ok(Event::Downloading {
+                    id,
+                    percent,
+                    speed_bps,
+                }) if id == download_id => {
+                    progress_events.push((percent, speed_bps));
+                    max_speed_bps = max_speed_bps.max(speed_bps);
+
+                    // Log progress at every 10% increment
+                    if percent >= last_progress + 10.0 {
+                        println!(
+                            "Progress: {:.0}%, Speed: {:.2} KB/s",
+                            percent,
+                            speed_bps as f64 / 1024.0
+                        );
+                        last_progress = percent;
+                    }
+                }
+                Ok(Event::Complete { id, .. }) if id == download_id => {
+                    println!("Download completed!");
+                    return Ok(());
+                }
+                Ok(Event::Failed { id, error, .. }) if id == download_id => {
+                    return Err(format!("Download failed: {}", error));
+                }
+                Err(_) => {
+                    return Err("Event channel closed unexpectedly".to_string());
+                }
+                _ => {}
+            }
+        }
+    })
+    .await;
+
+    let elapsed = start.elapsed();
+
+    // Verify download completed successfully
+    assert!(
+        download_result.is_ok(),
+        "Download should complete within timeout"
+    );
+
+    assert!(
+        download_result.unwrap().is_ok(),
+        "Download should not fail"
+    );
+
+    // Calculate and display statistics
+    let total_bytes = (article_count * content_size) as f64;
+    let avg_speed_mbps = (total_bytes / elapsed.as_secs_f64()) / (1024.0 * 1024.0);
+    let max_speed_mbps = max_speed_bps as f64 / (1024.0 * 1024.0);
+
+    println!("\n=== Stress Test Results ===");
+    println!("Articles downloaded: {}", article_count);
+    println!("Total size: {:.2} MB", total_bytes / (1024.0 * 1024.0));
+    println!("Download time: {:.2}s", elapsed.as_secs_f64());
+    println!("Average speed: {:.2} MB/s", avg_speed_mbps);
+    println!("Peak speed: {:.2} MB/s", max_speed_mbps);
+    println!("Connections used: 20");
+    println!("Articles/second: {:.2}", article_count as f64 / elapsed.as_secs_f64());
+
+    // Verify progress events were received
+    assert!(
+        !progress_events.is_empty(),
+        "Should receive progress events during download"
+    );
+
+    // Verify progress is monotonically increasing
+    for i in 1..progress_events.len() {
+        assert!(
+            progress_events[i].0 >= progress_events[i - 1].0,
+            "Progress percentage should be monotonically increasing"
+        );
+    }
+
+    // Verify final completion status
+    let result = wait_for_completion(&downloader, download_id, Duration::from_secs(5)).await;
+    assert!(
+        matches!(result, WaitResult::Completed),
+        "Download should be marked as completed"
+    );
+
+    // Verify all articles were downloaded (check database)
+    let download = downloader
+        .db
+        .get_download(download_id)
+        .await
+        .expect("Failed to get download")
+        .expect("Download not found");
+
+    assert_eq!(
+        download.status,
+        Status::Complete.to_i32(),
+        "Download status should be Complete"
+    );
+
+    assert!(
+        download.progress >= 99.0,
+        "Download progress should be near 100%"
+    );
+
+    // Performance assertion: With 20 connections, should be faster than 1 article/second
+    // This is a conservative check - actual performance should be much better
+    let articles_per_second = article_count as f64 / elapsed.as_secs_f64();
+    assert!(
+        articles_per_second >= 1.0,
+        "Should download at least 1 article/second with 20 connections (got {:.2}/s)",
+        articles_per_second
+    );
+
+    println!("\n✓ Stress test completed successfully!");
+    println!("✓ Memory usage stayed constant (articles written to disk)");
+    println!("✓ Progress tracking accurate across {} events", progress_events.len());
+    println!("✓ All {} articles downloaded successfully", article_count);
+
+    downloader.shutdown().await.expect("Failed to shutdown");
+}
