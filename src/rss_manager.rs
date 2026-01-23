@@ -1493,4 +1493,177 @@ mod tests {
         assert!(db.is_rss_item_seen(feed_id, "guid-2").await.unwrap());
         assert!(!db.is_rss_item_seen(feed_id, "guid-3").await.unwrap());
     }
+
+    #[tokio::test]
+    async fn test_rss_end_to_end_with_mock_server() {
+        // This test simulates the complete RSS flow with a mock HTTP server
+        // It demonstrates what happens with a real indexer feed
+
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener as TokioTcpListener;
+
+        let (db, downloader) = create_test_setup().await;
+
+        // Find a random available port
+        let std_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = std_listener.local_addr().unwrap();
+        drop(std_listener); // Release the port
+
+        // Start a mock HTTP server
+        let listener = TokioTcpListener::bind(addr).await.unwrap();
+        let server_url = format!("http://{}", addr);
+
+        // Spawn server task
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0; 1024];
+                let _ = socket.read(&mut buf).await;
+
+                // Send a realistic RSS feed response (based on typical indexer format)
+                let rss_feed = r#"<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Mock Indexer Feed</title>
+    <link>http://example.com</link>
+    <description>Test RSS Feed</description>
+    <item>
+      <title>Ubuntu.22.04.3.Desktop.x64</title>
+      <link>http://example.com/details/123</link>
+      <guid>http://example.com/details/123</guid>
+      <pubDate>Thu, 18 Jan 2024 12:00:00 GMT</pubDate>
+      <description>Ubuntu Desktop ISO</description>
+      <enclosure url="http://example.com/download/123.nzb" length="2147483648" type="application/x-nzb"/>
+    </item>
+    <item>
+      <title>Debian.12.Testing.x64</title>
+      <link>http://example.com/details/124</link>
+      <guid>http://example.com/details/124</guid>
+      <pubDate>Thu, 18 Jan 2024 13:00:00 GMT</pubDate>
+      <description>Debian Testing ISO</description>
+      <enclosure url="http://example.com/download/124.nzb" length="1073741824" type="application/x-nzb"/>
+    </item>
+    <item>
+      <title>Sample.Video.XviD</title>
+      <link>http://example.com/details/125</link>
+      <guid>http://example.com/details/125</guid>
+      <pubDate>Thu, 18 Jan 2024 14:00:00 GMT</pubDate>
+      <description>Small video sample</description>
+      <enclosure url="http://example.com/download/125.nzb" length="524288" type="application/x-nzb"/>
+    </item>
+  </channel>
+</rss>"#;
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\n\r\n{}",
+                    rss_feed.len(),
+                    rss_feed
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        // Give the server a moment to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Create feed in database
+        let feed_id = {
+            let mut conn = db.pool().acquire().await.unwrap();
+            let result = sqlx::query(
+                "INSERT INTO rss_feeds (name, url, check_interval_secs, auto_download, enabled, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            .bind("Mock Indexer")
+            .bind(&server_url)
+            .bind(900)
+            .bind(1)
+            .bind(1)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+            drop(conn);
+            result
+        };
+
+        // Configure feed with filter for Ubuntu/Debian items only
+        let feed_config = RssFeedConfig {
+            url: server_url.clone(),
+            check_interval: std::time::Duration::from_secs(900),
+            category: Some("linux".to_string()),
+            filters: vec![
+                RssFilter {
+                    name: "Linux ISOs".to_string(),
+                    include: vec!["(?i)(ubuntu|debian)".to_string()],
+                    exclude: vec!["(?i)sample".to_string()],
+                    min_size: Some(1_000_000_000), // 1 GB minimum
+                    max_size: None,
+                    max_age: None,
+                },
+            ],
+            auto_download: true,
+            priority: crate::types::Priority::High,
+            enabled: true,
+        };
+
+        // Create RSS manager and fetch feed
+        let manager = RssManager::new(db.clone(), downloader.clone(), vec![feed_config.clone()]).unwrap();
+
+        // Fetch and parse the feed
+        let items = manager.check_feed(&feed_config).await;
+
+        // Wait for server task to complete
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_task).await;
+
+        assert!(items.is_ok(), "Feed fetch should succeed");
+        let items = items.unwrap();
+
+        // Verify we got all 3 items from the feed
+        assert_eq!(items.len(), 3, "Should parse all 3 items from feed");
+
+        // Verify item details
+        assert_eq!(items[0].title, "Ubuntu.22.04.3.Desktop.x64");
+        assert_eq!(items[0].guid, "http://example.com/details/123");
+        assert_eq!(items[0].size, Some(2147483648));
+        assert_eq!(items[0].nzb_url, Some("http://example.com/download/123.nzb".to_string()));
+
+        assert_eq!(items[1].title, "Debian.12.Testing.x64");
+        assert_eq!(items[1].size, Some(1073741824));
+
+        assert_eq!(items[2].title, "Sample.Video.XviD");
+        assert_eq!(items[2].size, Some(524288));
+
+        // Verify filtering logic manually (without attempting downloads)
+        // - Ubuntu item: matches include pattern, size >= 1GB -> should match
+        // - Debian item: matches include pattern, size >= 1GB -> should match
+        // - Sample item: excluded by "sample" pattern -> should NOT match
+
+        let ubuntu_matches = manager.matches_filters(&items[0], &feed_config.filters[0]);
+        let debian_matches = manager.matches_filters(&items[1], &feed_config.filters[0]);
+        let sample_matches = manager.matches_filters(&items[2], &feed_config.filters[0]);
+
+        assert!(ubuntu_matches, "Ubuntu item should match filter");
+        assert!(debian_matches, "Debian item should match filter");
+        assert!(!sample_matches, "Sample item should NOT match filter (excluded)");
+
+        // Create test config with auto_download disabled to test seen tracking
+        let test_config = RssFeedConfig {
+            auto_download: false,  // Don't attempt downloads (fake URLs would fail)
+            ..feed_config.clone()
+        };
+
+        // Process items to mark them as seen
+        let downloaded = manager.process_feed_items(feed_id, &test_config, items).await.unwrap();
+        assert_eq!(downloaded, 0, "No downloads attempted (auto_download disabled)");
+
+        // Verify seen tracking (only matching items should be marked)
+        assert!(db.is_rss_item_seen(feed_id, "http://example.com/details/123").await.unwrap(),
+                "Ubuntu item should be marked seen");
+        assert!(db.is_rss_item_seen(feed_id, "http://example.com/details/124").await.unwrap(),
+                "Debian item should be marked seen");
+        assert!(!db.is_rss_item_seen(feed_id, "http://example.com/details/125").await.unwrap(),
+                "Sample item should NOT be marked seen (excluded)");
+    }
 }
