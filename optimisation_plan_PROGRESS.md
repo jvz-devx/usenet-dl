@@ -135,7 +135,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
     ```
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3128-3129`
 
-- [ ] Task 2.2: Create progress reporting task for queue processor
+- [x] Task 2.2: Create progress reporting task for queue processor
   - Spawn separate task that periodically reads atomic counters and emits progress events
   - Prevents event spam while maintaining real-time updates
   - Location: After atomic counter setup, before article download loop
@@ -367,13 +367,18 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
-- Task 2.1: Add atomic counter fields for parallel progress tracking
-  - Replaced mutable variables `downloaded_articles` and `downloaded_bytes` with `Arc<AtomicU64>` at lines 3129-3130
-  - Added import for `std::sync::atomic::{AtomicU64, Ordering}` at line 98
-  - Updated all counter operations to use atomic fetch_add and load operations
-  - Changes in src/lib.rs:3251-3274 to use atomic operations for thread-safe progress tracking
-  - Validated with `cargo check` - compiles successfully with no errors
-  - Ready for parallel download implementation
+- Task 2.2: Create progress reporting task for queue processor
+  - Created dedicated tokio task that runs every 500ms to emit progress events
+  - Task reads atomic counters (downloaded_bytes and downloaded_articles) and calculates progress
+  - Updates database progress and emits Event::Downloading at regular intervals
+  - Prevents event spam that would occur with parallel downloads completing out of order
+  - Uses tokio::select! to gracefully cancel when download finishes or is cancelled
+  - Added .abort() calls at all exit points: success (line 3379), failure (line 3371), cancellation (line 3220), and no-pool error (line 3247)
+  - Removed inline progress reporting code (lines 3320-3354) since the dedicated task handles it
+  - Only atomic counter updates remain in the article download loop
+  - Location: src/lib.rs:3154-3213 (task spawn), cleanup at multiple exit points
+  - Validated with `cargo check` - compiles successfully with only expected warnings (unused imports will be used in next tasks)
+  - Ready for parallel stream implementation
 
 ## Notes
 

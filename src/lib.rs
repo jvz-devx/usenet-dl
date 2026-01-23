@@ -3151,10 +3151,74 @@ impl UsenetDownloader {
                             return;
                         }
 
+                        // Spawn progress reporting task to periodically emit progress events
+                        // This prevents event spam when downloads complete out of order
+                        let progress_task = {
+                            let downloaded_articles = Arc::clone(&downloaded_articles);
+                            let downloaded_bytes = Arc::clone(&downloaded_bytes);
+                            let event_tx = event_tx_clone.clone();
+                            let db = Arc::clone(&db_clone);
+                            let cancel_token = cancel_token.child_token();
+
+                            tokio::spawn(async move {
+                                let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+                                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                                loop {
+                                    tokio::select! {
+                                        _ = interval.tick() => {
+                                            let current_bytes = downloaded_bytes.load(Ordering::Relaxed);
+                                            let current_articles = downloaded_articles.load(Ordering::Relaxed);
+
+                                            // Calculate progress percentage
+                                            let progress_percent = if total_size_bytes > 0 {
+                                                (current_bytes as f32 / total_size_bytes as f32) * 100.0
+                                            } else {
+                                                (current_articles as f32 / total_articles as f32) * 100.0
+                                            };
+
+                                            // Calculate download speed (bytes per second)
+                                            let elapsed_secs = download_start.elapsed().as_secs_f64();
+                                            let speed_bps = if elapsed_secs > 0.0 {
+                                                (current_bytes as f64 / elapsed_secs) as u64
+                                            } else {
+                                                0
+                                            };
+
+                                            // Update progress in database
+                                            if let Err(e) = db.update_progress(
+                                                id,
+                                                progress_percent,
+                                                speed_bps,
+                                                current_bytes,
+                                            ).await {
+                                                tracing::error!(download_id = id, error = %e, "Failed to update progress");
+                                            }
+
+                                            // Emit progress event
+                                            event_tx
+                                                .send(Event::Downloading {
+                                                    id,
+                                                    percent: progress_percent,
+                                                    speed_bps,
+                                                })
+                                                .ok();
+                                        }
+                                        _ = cancel_token.cancelled() => {
+                                            break;
+                                        }
+                                    }
+                                }
+                            })
+                        };
+
                         // Download each article
                         for article in pending_articles {
                             // Check if download was paused/cancelled
                             if cancel_token.is_cancelled() {
+                                // Stop progress reporting task
+                                progress_task.abort();
+
                                 // Update status to Paused
                                 let _ = db_clone.update_status(id, Status::Paused.to_i32()).await;
 
@@ -3179,6 +3243,8 @@ impl UsenetDownloader {
                                             error: "No NNTP pools configured".to_string(),
                                         })
                                         .ok();
+                                    // Stop progress reporting task
+                                    progress_task.abort();
                                     // Clean up active downloads
                                     let mut active = active_downloads_clone.lock().await;
                                     active.remove(&id);
@@ -3248,44 +3314,9 @@ impl UsenetDownloader {
                                         continue;
                                     }
 
+                                    // Update atomic counters (progress reporting task reads these)
                                     downloaded_articles.fetch_add(1, Ordering::Relaxed);
                                     downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
-
-                                    // Calculate progress percentage
-                                    let current_bytes = downloaded_bytes.load(Ordering::Relaxed);
-                                    let current_articles = downloaded_articles.load(Ordering::Relaxed);
-                                    let progress_percent = if total_size_bytes > 0 {
-                                        (current_bytes as f32 / total_size_bytes as f32) * 100.0
-                                    } else {
-                                        (current_articles as f32 / total_articles as f32) * 100.0
-                                    };
-
-                                    // Calculate download speed (bytes per second)
-                                    let elapsed_secs = download_start.elapsed().as_secs_f64();
-                                    let speed_bps = if elapsed_secs > 0.0 {
-                                        (current_bytes as f64 / elapsed_secs) as u64
-                                    } else {
-                                        0
-                                    };
-
-                                    // Update progress in database
-                                    if let Err(e) = db_clone.update_progress(
-                                        id,
-                                        progress_percent,
-                                        speed_bps,
-                                        current_bytes,
-                                    ).await {
-                                        tracing::error!(download_id = id, error = %e, "Failed to update progress");
-                                    }
-
-                                    // Emit progress event
-                                    event_tx_clone
-                                        .send(Event::Downloading {
-                                            id,
-                                            percent: progress_percent,
-                                            speed_bps,
-                                        })
-                                        .ok();
                                 }
                                 Err(e) => {
                                     // Mark article as failed
@@ -3304,6 +3335,9 @@ impl UsenetDownloader {
                                         })
                                         .ok();
 
+                                    // Stop progress reporting task
+                                    progress_task.abort();
+
                                     // Clean up active downloads
                                     let mut active = active_downloads_clone.lock().await;
                                     active.remove(&id);
@@ -3312,6 +3346,9 @@ impl UsenetDownloader {
                                 }
                             }
                         }
+
+                        // Stop progress reporting task
+                        progress_task.abort();
 
                         // All articles downloaded successfully
                         if let Err(e) = db_clone.update_status(id, Status::Complete.to_i32()).await {
