@@ -59,15 +59,103 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (21/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (22/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Tasks 26.1-26.6: ✅ RSS feed parsing with comprehensive tests (14 tests passing)
-- Total: 184/253 tasks complete (72.7%)
+  - Tasks 26.1-26.7: ✅ RSS feed filtering with regex matching complete (14 tests passing)
+- Total: 185/253 tasks complete (73.1%)
 
-**Next Task:** Task 26.7 - Implement matches_filters() using regex for include/exclude
+**Next Task:** Task 26.8 - Track seen items in rss_seen table (guid or link)
 
 ## Completed This Iteration
+
+**Task 26.7: Implement matches_filters() using regex for include/exclude**
+
+Successfully implemented RSS feed item filtering with comprehensive regex support:
+
+1. **Method Implementation** (src/rss_manager.rs:290-380):
+   - Created `matches_filters()` public method on RssManager
+   - Takes `&RssItem` and `&RssFilter` as parameters
+   - Returns bool indicating if item passes all filter rules
+   - Comprehensive documentation explaining filtering logic
+
+2. **Include Pattern Logic** (OR logic):
+   - Checks title + description combined text
+   - If include patterns specified, at least one must match
+   - Uses regex for flexible pattern matching
+   - Returns false if no include patterns match
+   - Empty include list = accept all
+
+3. **Exclude Pattern Logic** (Override):
+   - Checked after include patterns
+   - ANY exclude match = immediate rejection
+   - Excludes override includes (as per design)
+   - Case-sensitive by default (can use (?i) for case-insensitive)
+
+4. **Size Constraints**:
+   - Checks min_size if specified and item has size
+   - Checks max_size if specified and item has size
+   - Items without size info pass size filters (allows unknown sizes)
+   - Size in bytes for precise filtering
+
+5. **Age Constraint**:
+   - Calculates age from item pub_date vs current time
+   - Compares against max_age Duration
+   - Items without pub_date pass age filter (allows unknown dates)
+   - Uses chrono::Duration for proper time handling
+
+6. **Error Handling**:
+   - Invalid regex patterns logged as warnings
+   - Invalid patterns treated as non-matches
+   - Gracefully handles missing optional fields
+   - Debug logging for filter decisions
+
+7. **Comprehensive Test Suite** (7 new tests, src/rss_manager.rs:543-804):
+   - `test_matches_filters_include_patterns()`: Tests OR logic for includes
+     - Validates multiple include patterns
+     - Confirms items without matches are rejected
+   - `test_matches_filters_exclude_patterns()`: Tests exclude override
+     - Confirms excludes override includes
+     - Tests multiple exclude patterns
+   - `test_matches_filters_regex_patterns()`: Tests complex regex
+     - Episode pattern matching (S01E01)
+     - Case-insensitive matching with (?i)
+     - Validates proper regex compilation
+   - `test_matches_filters_size_constraints()`: Tests size filtering
+     - Within range acceptance
+     - Too small rejection
+     - Too large rejection
+     - Missing size handling
+   - `test_matches_filters_age_constraint()`: Tests age filtering
+     - Recent items accepted
+     - Old items rejected
+     - Missing date handling
+   - `test_matches_filters_description_matching()`: Tests description search
+     - Matches in description (not just title)
+     - Combined title+description search text
+   - `test_matches_filters_no_filters()`: Tests empty filter
+     - Empty filter accepts everything
+     - Validates default behavior
+
+8. **Design Alignment**:
+   - Follows implementation_1.md:2050-2062 specification
+   - Include/exclude regex pattern support
+   - Size constraint filtering (min/max bytes)
+   - Age constraint filtering (max_age Duration)
+   - Search text combines title + description
+   - Proper error handling for invalid regex
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 14 RSS manager tests pass (7 new filter tests)
+- ✅ Regex patterns work correctly (tested with complex patterns)
+- ✅ Size and age constraints validated
+- ✅ Description matching confirmed working
+- ✅ Empty filter behavior validated
+- ✅ Deprecated chrono API updated to use MAX instead of max_value()
+- ✅ Unused error import removed
+
+**Previous Iteration:**
 
 **Task 26.6: Implement check_feed() to fetch and parse RSS/Atom**
 
@@ -975,7 +1063,7 @@ The implementation will require these major dependencies:
 - [x] Task 26.4: Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
 - [x] Task 26.5: Implement RssManager struct
 - [x] Task 26.6: Implement check_feed() to fetch and parse RSS/Atom
-- [ ] Task 26.7: Implement matches_filters() using regex for include/exclude
+- [x] Task 26.7: Implement matches_filters() using regex for include/exclude
 - [ ] Task 26.8: Track seen items in rss_seen table (guid or link)
 - [ ] Task 26.9: Auto-download matching items if auto_download=true
 - [ ] Task 26.10: Implement scheduled feed checking task

@@ -1,10 +1,11 @@
-use crate::config::RssFeedConfig;
+use crate::config::{RssFeedConfig, RssFilter};
 use crate::db::Database;
 use crate::error::{Error, Result};
 use crate::UsenetDownloader;
 use chrono::{DateTime, Utc};
+use regex::Regex;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Represents an item from an RSS or Atom feed
 #[derive(Clone, Debug)]
@@ -284,6 +285,97 @@ impl RssManager {
 
         Ok(items)
     }
+
+    /// Check if an RSS item matches the configured filters
+    ///
+    /// This method applies filtering rules from an RssFilter to determine if an item should be accepted.
+    /// Filtering logic:
+    /// 1. If include patterns exist, at least one must match (OR logic)
+    /// 2. If exclude patterns exist, none must match (exclude overrides include)
+    /// 3. Size constraints (min_size, max_size) are checked if specified
+    /// 4. Age constraint (max_age) is checked against publication date if specified
+    ///
+    /// # Arguments
+    /// * `item` - The RSS item to check
+    /// * `filter` - The filter rules to apply
+    ///
+    /// # Returns
+    /// true if the item passes all filter rules, false otherwise
+    pub fn matches_filters(&self, item: &RssItem, filter: &RssFilter) -> bool {
+        // Build the search text (title + description)
+        let search_text = format!(
+            "{} {}",
+            item.title,
+            item.description.as_deref().unwrap_or("")
+        );
+
+        // Check include patterns (OR logic - at least one must match)
+        if !filter.include.is_empty() {
+            let any_include_matches = filter.include.iter().any(|pattern| {
+                match Regex::new(pattern) {
+                    Ok(re) => re.is_match(&search_text),
+                    Err(e) => {
+                        warn!("Invalid regex pattern '{}': {}", pattern, e);
+                        false
+                    }
+                }
+            });
+
+            if !any_include_matches {
+                debug!("Item '{}' rejected: no include patterns matched", item.title);
+                return false;
+            }
+        }
+
+        // Check exclude patterns (ANY exclude match = reject)
+        for pattern in &filter.exclude {
+            match Regex::new(pattern) {
+                Ok(re) => {
+                    if re.is_match(&search_text) {
+                        debug!("Item '{}' rejected: matched exclude pattern '{}'", item.title, pattern);
+                        return false;
+                    }
+                }
+                Err(e) => {
+                    warn!("Invalid exclude regex pattern '{}': {}", pattern, e);
+                }
+            }
+        }
+
+        // Check size constraints
+        if let Some(size) = item.size {
+            if let Some(min_size) = filter.min_size {
+                if size < min_size {
+                    debug!("Item '{}' rejected: size {} < min {}", item.title, size, min_size);
+                    return false;
+                }
+            }
+
+            if let Some(max_size) = filter.max_size {
+                if size > max_size {
+                    debug!("Item '{}' rejected: size {} > max {}", item.title, size, max_size);
+                    return false;
+                }
+            }
+        }
+
+        // Check age constraint
+        if let Some(max_age) = filter.max_age {
+            if let Some(pub_date) = item.pub_date {
+                let age = Utc::now().signed_duration_since(pub_date);
+                let max_age_chrono = chrono::Duration::from_std(max_age)
+                    .unwrap_or_else(|_| chrono::Duration::MAX);
+
+                if age > max_age_chrono {
+                    debug!("Item '{}' rejected: age {:?} > max {:?}", item.title, age, max_age_chrono);
+                    return false;
+                }
+            }
+        }
+
+        debug!("Item '{}' accepted: passed all filter checks", item.title);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -535,5 +627,339 @@ mod tests {
         let items = manager.parse_as_rss(rss_no_guid_no_link).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].guid, "Movie Title Only", "Should use title as GUID");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_include_patterns() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        let filter = RssFilter {
+            name: "HD Filter".to_string(),
+            include: vec!["1080p".to_string(), "720p".to_string()],
+            exclude: vec![],
+            min_size: None,
+            max_size: None,
+            max_age: None,
+        };
+
+        // Should match - has 1080p
+        let item1 = RssItem {
+            title: "Movie Name 1080p BluRay".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item1, &filter), "Should match include pattern 1080p");
+
+        // Should match - has 720p
+        let item2 = RssItem {
+            title: "TV Show S01E01 720p".to_string(),
+            link: None,
+            guid: "2".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item2, &filter), "Should match include pattern 720p");
+
+        // Should NOT match - has neither
+        let item3 = RssItem {
+            title: "Movie Name 480p".to_string(),
+            link: None,
+            guid: "3".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item3, &filter), "Should not match - no include pattern found");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_exclude_patterns() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        let filter = RssFilter {
+            name: "No CAM Filter".to_string(),
+            include: vec!["1080p".to_string()],
+            exclude: vec!["CAM".to_string(), "TS".to_string()],
+            min_size: None,
+            max_size: None,
+            max_age: None,
+        };
+
+        // Should match - has 1080p, no CAM
+        let item1 = RssItem {
+            title: "Movie Name 1080p BluRay".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item1, &filter), "Should match - has include, no exclude");
+
+        // Should NOT match - has CAM (exclude overrides include)
+        let item2 = RssItem {
+            title: "Movie Name 1080p CAM".to_string(),
+            link: None,
+            guid: "2".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item2, &filter), "Should not match - CAM in title");
+
+        // Should NOT match - has TS
+        let item3 = RssItem {
+            title: "Movie Name 1080p TS".to_string(),
+            link: None,
+            guid: "3".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item3, &filter), "Should not match - TS in title");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_regex_patterns() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        let filter = RssFilter {
+            name: "Regex Filter".to_string(),
+            include: vec![r"S\d{2}E\d{2}".to_string()], // Matches S01E01 format
+            exclude: vec![r"(?i)french".to_string()],    // Case-insensitive French
+            min_size: None,
+            max_size: None,
+            max_age: None,
+        };
+
+        // Should match - has S01E01
+        let item1 = RssItem {
+            title: "Show Name S01E01 1080p".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item1, &filter), "Should match episode pattern");
+
+        // Should NOT match - no episode pattern
+        let item2 = RssItem {
+            title: "Movie Name 2024".to_string(),
+            link: None,
+            guid: "2".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item2, &filter), "Should not match - no episode pattern");
+
+        // Should NOT match - has french (case insensitive)
+        let item3 = RssItem {
+            title: "Show Name S02E05 FRENCH 1080p".to_string(),
+            link: None,
+            guid: "3".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item3, &filter), "Should not match - has FRENCH");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_size_constraints() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        let filter = RssFilter {
+            name: "Size Filter".to_string(),
+            include: vec![],
+            exclude: vec![],
+            min_size: Some(1024 * 1024 * 500),        // 500 MB
+            max_size: Some(1024 * 1024 * 1024 * 5),  // 5 GB
+            max_age: None,
+        };
+
+        // Should match - size within range
+        let item1 = RssItem {
+            title: "Movie 1080p".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: None,
+            description: None,
+            size: Some(1024 * 1024 * 1024 * 2), // 2 GB
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item1, &filter), "Should match - size within range");
+
+        // Should NOT match - too small
+        let item2 = RssItem {
+            title: "Movie 480p".to_string(),
+            link: None,
+            guid: "2".to_string(),
+            pub_date: None,
+            description: None,
+            size: Some(1024 * 1024 * 100), // 100 MB
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item2, &filter), "Should not match - too small");
+
+        // Should NOT match - too large
+        let item3 = RssItem {
+            title: "Movie 4K".to_string(),
+            link: None,
+            guid: "3".to_string(),
+            pub_date: None,
+            description: None,
+            size: Some(1024 * 1024 * 1024 * 10), // 10 GB
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item3, &filter), "Should not match - too large");
+
+        // Should match - no size specified (ignores filter)
+        let item4 = RssItem {
+            title: "Movie Unknown Size".to_string(),
+            link: None,
+            guid: "4".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item4, &filter), "Should match - no size to check");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_age_constraint() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        let filter = RssFilter {
+            name: "Age Filter".to_string(),
+            include: vec![],
+            exclude: vec![],
+            min_size: None,
+            max_size: None,
+            max_age: Some(Duration::from_secs(86400 * 7)), // 7 days
+        };
+
+        // Should match - recent item (1 day old)
+        let item1 = RssItem {
+            title: "Recent Movie".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: Some(Utc::now() - chrono::Duration::days(1)),
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item1, &filter), "Should match - recent item");
+
+        // Should NOT match - too old (30 days)
+        let item2 = RssItem {
+            title: "Old Movie".to_string(),
+            link: None,
+            guid: "2".to_string(),
+            pub_date: Some(Utc::now() - chrono::Duration::days(30)),
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item2, &filter), "Should not match - too old");
+
+        // Should match - no pub_date (ignores age filter)
+        let item3 = RssItem {
+            title: "No Date Movie".to_string(),
+            link: None,
+            guid: "3".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item3, &filter), "Should match - no date to check");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_description_matching() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        let filter = RssFilter {
+            name: "Description Filter".to_string(),
+            include: vec!["BluRay".to_string()],
+            exclude: vec!["sample".to_string()],
+            min_size: None,
+            max_size: None,
+            max_age: None,
+        };
+
+        // Should match - BluRay in description
+        let item1 = RssItem {
+            title: "Movie Name".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: None,
+            description: Some("Full BluRay release".to_string()),
+            size: None,
+            nzb_url: None,
+        };
+        assert!(manager.matches_filters(&item1, &filter), "Should match - BluRay in description");
+
+        // Should NOT match - sample in description
+        let item2 = RssItem {
+            title: "Movie BluRay".to_string(),
+            link: None,
+            guid: "2".to_string(),
+            pub_date: None,
+            description: Some("This is a sample release".to_string()),
+            size: None,
+            nzb_url: None,
+        };
+        assert!(!manager.matches_filters(&item2, &filter), "Should not match - sample in description");
+    }
+
+    #[tokio::test]
+    async fn test_matches_filters_no_filters() {
+        let (db, downloader) = create_test_setup().await;
+        let manager = RssManager::new(db, downloader, vec![]).unwrap();
+
+        // Empty filter - should match everything
+        let filter = RssFilter {
+            name: "Empty Filter".to_string(),
+            include: vec![],
+            exclude: vec![],
+            min_size: None,
+            max_size: None,
+            max_age: None,
+        };
+
+        let item = RssItem {
+            title: "Any Movie".to_string(),
+            link: None,
+            guid: "1".to_string(),
+            pub_date: None,
+            description: None,
+            size: None,
+            nzb_url: None,
+        };
+
+        assert!(manager.matches_filters(&item, &filter), "Empty filter should match any item");
     }
 }
