@@ -49,9 +49,10 @@ IN_PROGRESS
   - Task 21.1: ✅ GET /config endpoint complete with sensitive field redaction (47 API tests passing)
   - Task 21.2: ✅ PATCH /config endpoint complete with ConfigUpdate type (48 API tests passing)
   - Task 21.3: ✅ GET /config/speed-limit endpoint complete with comprehensive test (49 API tests passing)
-- Total: 148/253 tasks complete (58.5%)
+  - Task 21.4: ✅ PUT /config/speed-limit endpoint complete with comprehensive test (50 API tests passing)
+- Total: 149/253 tasks complete (58.9%)
 
-**Next Task:** Task 21.4 - Implement PUT /config/speed-limit endpoint
+**Next Task:** Task 21.5 - Implement GET /categories endpoint
 
 ## Analysis
 
@@ -470,34 +471,42 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 21.3: GET /config/speed-limit endpoint implementation**
+**Task 21.4: PUT /config/speed-limit endpoint implementation**
 
-Successfully implemented the endpoint to retrieve the current global speed limit:
+Successfully implemented the endpoint to update the global speed limit at runtime:
 
-1. **Core Method Addition** (src/lib.rs:1159-1184):
-   - Added `get_speed_limit()` method to `UsenetDownloader`
-   - Returns `Option<u64>` - the current speed limit in bytes per second or None for unlimited
-   - Simply delegates to `speed_limiter.get_limit()`
-   - Added comprehensive documentation with examples
+1. **Request Type Definition** (src/api/routes.rs:49-54):
+   - Created `SetSpeedLimitRequest` struct with proper OpenAPI schema annotation
+   - Single field: `limit_bps: Option<u64>` to support both numeric limits and unlimited (null)
+   - Implements Serialize, Deserialize, Debug, and ToSchema traits
 
-2. **API Endpoint Implementation** (src/api/routes.rs:1179-1196):
-   - Implemented `GET /config/speed-limit` handler
-   - Returns JSON response: `{"limit_bps": number | null}`
-   - `null` indicates unlimited speed
-   - Proper OpenAPI annotations with response schema
-   - Already included in OpenAPI paths list
+2. **API Endpoint Implementation** (src/api/routes.rs:1219-1226):
+   - Implemented `PUT /config/speed-limit` handler
+   - Accepts JSON request body with `SetSpeedLimitRequest`
+   - Calls `downloader.set_speed_limit(request.limit_bps).await`
+   - Returns HTTP 204 No Content on success
+   - Updated OpenAPI annotations to reference the new request type
 
-3. **Comprehensive Testing** (src/api/mod.rs:3334-3386):
-   - Created `test_get_speed_limit()` test with two scenarios
-   - Test 1: Verify default unlimited speed returns `{"limit_bps": null}`
-   - Test 2: Set a speed limit (10 MB/s) and verify endpoint returns correct value
-   - Validates JSON structure and response status codes
-   - All 49 API tests passing (48 previous + 1 new test)
+3. **Comprehensive Testing** (src/api/mod.rs:3398-3511):
+   - Created `test_set_speed_limit()` test with three comprehensive scenarios
+   - Test 1: Set limit to 10 MB/s and verify via GET endpoint
+   - Test 2: Set to unlimited (null) and verify
+   - Test 3: Change limit to 5 MB/s and verify
+   - Each test validates both PUT response (204) and GET response (correct value)
+   - All 50 API tests passing (49 previous + 1 new test)
+
+4. **Integration Verification**:
+   - Endpoint already registered in router (src/api/mod.rs:123)
+   - Already included in OpenAPI documentation (src/api/openapi.rs:63)
+   - Leverages existing `UsenetDownloader::set_speed_limit()` core method
+   - Changes take effect immediately for all active downloads
 
 **Technical Details**:
-- Endpoint leverages existing `SpeedLimiter::get_limit()` method
+- Clean request/response handling with proper JSON deserialization
+- Leverages existing core functionality - no duplication
+- Follows established patterns from other config endpoints
+- Emits `SpeedLimitChanged` event (via core method) for subscribers
 - No new dependencies required
-- Clean separation: core logic in lib.rs, API handler in routes.rs
 - Thread-safe access via Arc-wrapped downloader in AppState
 - Consistent with other config endpoints (GET /config, PATCH /config)
 

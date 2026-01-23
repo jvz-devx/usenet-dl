@@ -3394,4 +3394,116 @@ mod tests {
         println!("   - Returns null for unlimited speed");
         println!("   - Returns correct limit value after setting");
     }
+
+    #[tokio::test]
+    async fn test_set_speed_limit() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use serde_json::Value;
+        use tower::ServiceExt;
+
+        println!("\n=== Testing PUT /config/speed-limit ===");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = downloader.get_config();
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Set a speed limit (10 MB/s)
+        println!("\nTest 1: Setting speed limit to 10 MB/s");
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/config/speed-limit")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"limit_bps": 10485760}"#))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify the limit was actually set by calling GET endpoint
+        let request = Request::builder()
+            .method("GET")
+            .uri("/config/speed-limit")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit_bps"], 10_485_760);
+
+        println!("✅ PUT /config/speed-limit (set limit) test passed!");
+
+        // Test 2: Set unlimited (null)
+        println!("\nTest 2: Setting unlimited speed");
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/config/speed-limit")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"limit_bps": null}"#))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify unlimited was set
+        let request = Request::builder()
+            .method("GET")
+            .uri("/config/speed-limit")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit_bps"], Value::Null);
+
+        println!("✅ PUT /config/speed-limit (unlimited) test passed!");
+
+        // Test 3: Set another specific limit (5 MB/s)
+        println!("\nTest 3: Changing to 5 MB/s");
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/config/speed-limit")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"limit_bps": 5242880}"#))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify the new limit
+        let request = Request::builder()
+            .method("GET")
+            .uri("/config/speed-limit")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit_bps"], 5_242_880);
+
+        println!("✅ PUT /config/speed-limit (change limit) test passed!");
+        println!("   - Returns 204 No Content on success");
+        println!("   - Accepts JSON with limit_bps field");
+        println!("   - Properly sets numeric limits");
+        println!("   - Properly sets unlimited (null)");
+        println!("   - Changes are immediately reflected in GET endpoint");
+    }
 }

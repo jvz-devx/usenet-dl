@@ -46,6 +46,13 @@ pub struct ClearHistoryQuery {
     pub status: Option<String>,
 }
 
+/// Request body for PUT /config/speed-limit
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct SetSpeedLimitRequest {
+    /// Speed limit in bytes per second. Use null for unlimited.
+    pub limit_bps: Option<u64>,
+}
+
 // ============================================================================
 // Queue Management - Downloads
 // ============================================================================
@@ -1202,15 +1209,22 @@ pub async fn get_speed_limit(State(state): State<AppState>) -> impl IntoResponse
     put,
     path = "/api/v1/config/speed-limit",
     tag = "config",
-    request_body(content = u64, description = "Speed limit in bytes per second (null for unlimited)"),
+    request_body = SetSpeedLimitRequest,
     responses(
         (status = 204, description = "Speed limit updated successfully"),
         (status = 400, description = "Invalid speed limit value"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn set_speed_limit(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn set_speed_limit(
+    State(state): State<AppState>,
+    Json(request): Json<SetSpeedLimitRequest>,
+) -> impl IntoResponse {
+    // Update the speed limit in the downloader
+    state.downloader.set_speed_limit(request.limit_bps).await;
+
+    // Return 204 No Content on success
+    StatusCode::NO_CONTENT
 }
 
 // ============================================================================
