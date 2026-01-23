@@ -1131,8 +1131,26 @@ pub async fn test_all_servers(State(_state): State<AppState>) -> impl IntoRespon
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn get_config(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
+    // Get the config from the downloader
+    let config = state.downloader.get_config();
+
+    // Clone the config and redact sensitive fields
+    let mut redacted_config = (*config).clone();
+
+    // Redact server passwords
+    for server in &mut redacted_config.servers {
+        if server.password.is_some() {
+            server.password = Some("***REDACTED***".to_string());
+        }
+    }
+
+    // Redact API key
+    if redacted_config.api.api_key.is_some() {
+        redacted_config.api.api_key = Some("***REDACTED***".to_string());
+    }
+
+    (StatusCode::OK, Json(redacted_config))
 }
 
 /// PATCH /config - Update config

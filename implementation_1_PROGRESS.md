@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (29/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (30/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -46,9 +46,10 @@ IN_PROGRESS
   - Task 19.15: ✅ DELETE /history endpoint complete with comprehensive test (45 API tests passing)
   - Task 19.16: ✅ Manual testing tools complete (test_api.sh, postman_collection.json, API_TESTING.md)
   - Tasks 20.1-20.5: ✅ Server-Sent Events endpoint complete (46 API tests passing)
-- Total: 145/253 tasks complete (57.3%)
+  - Task 21.1: ✅ GET /config endpoint complete with sensitive field redaction (47 API tests passing)
+- Total: 146/253 tasks complete (57.7%)
 
-**Next Task:** Task 21.1 - Implement GET /config endpoint
+**Next Task:** Task 21.2 - Implement PATCH /config endpoint
 
 ## Analysis
 
@@ -338,7 +339,7 @@ The implementation will require these major dependencies:
 - [x] Task 20.4: Handle client disconnects gracefully
 - [x] Task 20.5: Test SSE stream with curl -N or browser EventSource
 
-- [ ] Task 21.1: Implement GET /config (get_config handler) with sensitive field redaction
+- [x] Task 21.1: Implement GET /config (get_config handler) with sensitive field redaction
 - [ ] Task 21.2: Implement PATCH /config (update_config handler)
 - [ ] Task 21.3: Implement GET /config/speed-limit (get_speed_limit handler)
 - [ ] Task 21.4: Implement PUT /config/speed-limit (set_speed_limit handler)
@@ -5178,29 +5179,53 @@ The endpoint is fully functional and ready for use.
 
 ## Completed This Iteration
 
-- Task 19.14: Implemented GET /history endpoint with pagination
-  - Added HistoryQuery struct for query parameters (limit, offset, status filter)
-  - Implemented get_history handler with:
-    - Default pagination (limit=50, offset=0)
-    - Limit boundary checking (min=1, max=1000)
-    - Status filtering ("complete" or "failed")
-    - Returns JSON with items, total, limit, offset
-  - Updated OpenAPI documentation with 400 BAD_REQUEST for invalid status
-  - Wrote comprehensive test with 7 test cases:
-    1. Empty history returns correct structure
-    2. History with multiple entries
-    3. Pagination with limit and offset
-    4. Filter by status=complete
-    5. Filter by status=failed
-    6. Invalid status returns 400 error
-    7. Limit boundary values (capped at 1000, minimum 1)
-  - All 44 API tests passing
+**Task 21.1: Implement GET /config endpoint with sensitive field redaction**
+
+Successfully implemented the endpoint to retrieve the current configuration with automatic redaction of sensitive fields:
+
+1. **Core Method Implementation** (src/lib.rs:241-264):
+   - Added `get_config()` method to UsenetDownloader
+   - Returns Arc<Config> for cheap cloning
+   - Includes comprehensive documentation with usage examples
+   - Simple getter that clones the Arc reference
+
+2. **Route Handler Implementation** (src/api/routes.rs:1124-1151):
+   - Implemented `get_config()` route handler
+   - Retrieves config from downloader state
+   - Clones config and redacts sensitive fields:
+     * Server passwords replaced with "***REDACTED***"
+     * API keys replaced with "***REDACTED***"
+   - Returns 200 OK with redacted Config as JSON
+   - Properly annotated with OpenAPI metadata
+
+3. **Comprehensive Test** (src/api/mod.rs:3172-3279):
+   - Created test with config containing sensitive data
+   - Added server with password
+   - Verified 200 OK response
+   - Confirmed response is valid Config JSON
+   - Validated password redaction (***REDACTED***)
+   - Verified non-sensitive fields preserved (hostname, username, settings)
+   - All 47 API tests passing (46 previous + 1 new)
+
+4. **Validation**:
+   - ✅ Build successful with no errors
+   - ✅ All 47 API tests pass
+   - ✅ Sensitive fields properly redacted
+   - ✅ Non-sensitive fields preserved
+   - ✅ OpenAPI documentation complete
+
+**Technical Details**:
+- Sensitive fields redacted: server passwords, API keys
+- Non-sensitive fields preserved: all other config settings
+- Uses manual cloning and mutation for redaction (simple and explicit)
+- Returns full Config structure (not a subset)
+- Works seamlessly with existing authentication middleware
 
 ## Notes
 
-- The GET /history endpoint leverages the fully-implemented database layer (query_history and count_history methods)
-- Status filtering maps string values ("complete"/"failed") to database integer values (4/5)
-- Pagination includes total count for client-side page calculation
-- Comprehensive error handling for invalid status filters
-- The endpoint is fully functional and production-ready
+- The GET /config endpoint provides read-only access to current configuration
+- Sensitive field redaction prevents accidental exposure of credentials
+- The endpoint is useful for debugging, validation, and configuration export
+- Server passwords and API keys are replaced with "***REDACTED***" constant
+- Non-sensitive fields like hostnames, ports, paths, and settings are returned unchanged
 

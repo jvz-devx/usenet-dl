@@ -3167,4 +3167,113 @@ mod tests {
         println!("   - Event broadcasting system works");
         println!("   - Subscribers can receive events");
     }
+
+    #[tokio::test]
+    async fn test_get_config_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing GET /config endpoint...");
+
+        // Setup with custom config that has some sensitive fields
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Modify the config to include sensitive data
+        let mut config = (*downloader.get_config()).clone();
+
+        // Add a server with password
+        config.servers.push(crate::config::ServerConfig {
+            host: "news.example.com".to_string(),
+            port: 563,
+            tls: true,
+            username: Some("testuser".to_string()),
+            password: Some("super_secret_password".to_string()),
+            connections: 10,
+            priority: 0,
+        });
+
+        // DO NOT add an API key - we want to test without authentication
+        // (authentication is tested separately in test_authentication_enabled)
+        config.api.api_key = None;
+
+        // Create a new downloader with the modified config
+        let downloader = Arc::new(crate::UsenetDownloader::new(config).await.unwrap());
+
+        // Create router
+        let config_arc = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config_arc);
+
+        println!("  🔍 Testing GET /config returns 200 OK and redacts sensitive fields");
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/config")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "get_config should return 200 OK"
+        );
+        println!("    ✓ Returns 200 OK");
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let returned_config: crate::config::Config = serde_json::from_slice(&body).unwrap();
+        println!("    ✓ Response body is valid Config JSON");
+
+        // Verify sensitive fields are redacted
+        assert!(
+            returned_config.servers.len() > 0,
+            "Should have at least one server"
+        );
+
+        // Find the server we added (with password)
+        let test_server = returned_config.servers.iter()
+            .find(|s| s.host == "news.example.com")
+            .expect("Should have the test server");
+
+        assert_eq!(
+            test_server.password.as_ref().unwrap(),
+            "***REDACTED***",
+            "Server passwords should be redacted"
+        );
+        println!("    ✓ Server passwords are redacted");
+
+        // Verify API key is None (we didn't set one to avoid auth issues in test)
+        assert!(
+            returned_config.api.api_key.is_none(),
+            "API key should be None for this test"
+        );
+        println!("    ✓ API key field is correctly None (we didn't set one)");
+
+        // Verify non-sensitive fields are NOT redacted
+        assert!(
+            returned_config.servers.iter().any(|s| s.host == "news.example.com"),
+            "Server hostname should not be redacted"
+        );
+        println!("    ✓ Non-sensitive fields (hostname) are not redacted");
+
+        assert!(
+            returned_config.servers.iter().any(|s| s.username == Some("testuser".to_string())),
+            "Username should not be redacted"
+        );
+        println!("    ✓ Username is not redacted");
+
+        // Verify other config fields are returned correctly
+        assert_eq!(
+            returned_config.max_concurrent_downloads,
+            3,
+            "max_concurrent_downloads should match default"
+        );
+        println!("    ✓ Other config fields are returned correctly");
+
+        println!("✅ GET /config endpoint test passed!");
+        println!("   - Returns 200 OK");
+        println!("   - Returns valid Config JSON");
+        println!("   - Redacts server passwords (***REDACTED***)");
+        println!("   - Preserves non-sensitive fields (hostname, username)");
+    }
 }

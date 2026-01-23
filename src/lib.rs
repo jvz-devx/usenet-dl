@@ -239,6 +239,32 @@ impl UsenetDownloader {
         self.event_tx.subscribe()
     }
 
+    /// Get the current configuration
+    ///
+    /// Returns a reference to the current configuration. The configuration is wrapped in an Arc,
+    /// so this is a cheap clone operation.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the current `Config`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, config::Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = Config::default();
+    /// let downloader = UsenetDownloader::new(config).await?;
+    ///
+    /// let current_config = downloader.get_config();
+    /// println!("Download directory: {:?}", current_config.download_dir);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_config(&self) -> std::sync::Arc<Config> {
+        std::sync::Arc::clone(&self.config)
+    }
+
     /// Emit an event to all subscribers
     ///
     /// This is an internal helper method used throughout the codebase to emit events.
