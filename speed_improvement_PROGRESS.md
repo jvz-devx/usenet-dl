@@ -1092,3 +1092,64 @@ cargo test --release --test e2e_real_nzb test_real_nzb_download -- --ignored --n
 
 **Commit:**
 - usenet-dl: docs: Update progress for Task 3.5 - database batching performance test complete
+
+---
+
+## Latest Iteration (Task 4.1)
+
+### Task 4.1: Create yEnc decoder task pool ✓
+
+**Location:** `src/lib.rs:3320-3409`
+
+**Implementation Details:**
+
+Created a parallel yEnc decoder task pool that decodes articles in the background while downloads continue:
+
+**1. Channel Creation (line 3320-3342):**
+- Created mpsc channel with capacity 100 for (raw_data, article_id, segment_num, file_path) tuples
+- Wrapped receiver in Arc<Mutex> for sharing across worker tasks
+- Channel capacity prevents memory pressure from prefetched articles
+
+**2. Worker Task Pool:**
+- Spawns one decoder worker per CPU core (num_cpus::get())
+- Each worker runs in a loop:
+  1. Receives article from channel
+  2. Decodes yEnc data using nntp_rs::yenc::decode()
+  3. Writes decoded binary to temp file
+  4. Handles decode errors gracefully (writes raw data as fallback)
+  5. Exits when channel closes
+
+**3. Integration with Download Loop (line 3555-3568):**
+- Removed direct file write: `tokio::fs::write(&article_file, &response.data)`
+- Replaced with channel send: `decode_tx.send((data, id, segment, path))`
+- Downloads no longer blocked on yEnc decoding
+- Decoding happens in parallel with ongoing downloads
+
+**4. Shutdown Handling (line 3628-3636):**
+- Drops decode_tx to close channel and signal workers to exit
+- Awaits all decoder tasks to ensure all articles decoded
+- Happens before assembly/post-processing to guarantee all files ready
+
+**Architecture Benefits:**
+- **CPU overlap**: Decoding uses idle CPU cycles during network I/O
+- **Parallel decoding**: Multiple cores decode simultaneously
+- **Non-blocking**: Downloads continue while decode happens in background
+- **Memory-bounded**: Channel capacity 100 prevents excessive buffering
+- **Graceful degradation**: Writes raw data if decode fails
+
+**Dependencies Added:**
+- `num_cpus = "1"` to Cargo.toml for CPU core detection
+
+**Build Status:** ✓ Compiles cleanly with no errors
+
+**Expected Performance Gain:** +10-15% throughput by overlapping CPU-bound decoding with network I/O
+
+**Next Steps:**
+- Task 4.2: Integrate decoder into download loop (COMPLETED - done as part of 4.1)
+- Task 4.3: Add decoder shutdown handling (COMPLETED - done as part of 4.1)
+- Task 4.4: Add decoding tests
+- Task 4.5: Run performance test with parallel decoding
+
+**Commit:** b941f9f "feat(lib): Add parallel yEnc decoder task pool for improved throughput"
+
+**Note:** Tasks 4.2 and 4.3 were naturally completed as part of implementing 4.1 since they're tightly coupled with the decoder task pool implementation.
