@@ -103,7 +103,8 @@ use utils::extract_filename_from_response;
 #[derive(Clone)]
 pub struct UsenetDownloader {
     /// Database instance for persistence (wrapped in Arc for sharing across tasks)
-    db: std::sync::Arc<Database>,
+    /// Public for integration tests to query download status
+    pub db: std::sync::Arc<Database>,
     /// Event broadcast channel sender (multiple subscribers supported)
     event_tx: tokio::sync::broadcast::Sender<crate::types::Event>,
     /// Configuration (wrapped in Arc for sharing across tasks)
@@ -3207,7 +3208,13 @@ impl UsenetDownloader {
                             speed_limiter_clone.acquire(article.size_bytes as u64).await;
 
                             // Fetch the article from the server
-                            match conn.fetch_article(&article.message_id).await {
+                            // NNTP requires angle brackets around message-ids for ARTICLE command
+                            let message_id = if article.message_id.starts_with('<') {
+                                article.message_id.clone()
+                            } else {
+                                format!("<{}>", article.message_id)
+                            };
+                            match conn.fetch_article(&message_id).await {
                                 Ok(response) => {
                                     // Save article content to temp directory
                                     let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
@@ -3696,7 +3703,13 @@ impl UsenetDownloader {
                 })?;
 
                 // Fetch the article from the server
-                match conn.fetch_article(&article.message_id).await {
+                // NNTP requires angle brackets around message-ids for ARTICLE command
+                let message_id = if article.message_id.starts_with('<') {
+                    article.message_id.clone()
+                } else {
+                    format!("<{}>", article.message_id)
+                };
+                match conn.fetch_article(&message_id).await {
                     Ok(response) => {
                         // Save article content to temp directory
                         // Each article gets its own file: article_<segment_number>.dat

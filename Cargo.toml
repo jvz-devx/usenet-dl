@@ -17,6 +17,7 @@ nntp-rs = { path = "../nntp-rs" }
 # Async runtime
 tokio = { version = "1", features = ["full", "signal"] }
 tokio-util = "0.7"
+futures = "0.3"
 
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
@@ -71,11 +72,20 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 rss = "2"
 atom_syndication = "0.12"  # Using 0.12 for better quick-xml compatibility
 
+[features]
+default = []
+live-tests = []                                      # Real NNTP provider tests
+docker-tests = []                                    # Docker-based tests
+
 [dev-dependencies]
 # Testing utilities
 tempfile = "3"
 tokio-test = "0.4"
 wiremock = "0.6"
+
+# E2E testing
+dotenvy = "0.15"                                     # Load .env files
+serial_test = "3"                                    # Sequential test execution
 
 # Platform-specific dependencies for disk space checking
 [target.'cfg(unix)'.dependencies]
