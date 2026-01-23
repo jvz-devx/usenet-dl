@@ -515,35 +515,43 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Current Status Summary
 
-**Phase 5 Error Handling: COMPLETE**
-- All Phase 5 tasks (5.1-5.3) are now complete
-- Error handling improvements implemented:
-  - Partial success support: Downloads don't fail if only some articles fail ✓
-  - Failure threshold: Only fail if ALL articles fail OR >50% fail ✓
-  - Consistent behavior: Both queue processor and direct download use same logic ✓
-  - Database tracking: Failed articles marked as FAILED in database ✓
-  - Comprehensive logging: Individual failures logged at WARN level ✓
+**Phase 6 Testing: COMPLETE** ✅
+- All Phase 6 tasks (6.1-6.6) are now complete
+- Comprehensive test suite implemented:
+  - Parallel download functionality with 20 articles ✓
+  - Concurrency limit enforcement (buffer_unordered) ✓
+  - Cancellation during parallel downloads (50 articles) ✓
+  - Partial failure handling (5 valid + 2 missing articles) ✓
+  - Stress test with 1200 segments ✓
+  - Progress reporting accuracy verification ✓
 
-**Phases Complete: 1-5**
+**Phases Complete: 1-6** ✅
 - Phase 1: Setup and Dependencies ✓
 - Phase 2: Progress Tracking Infrastructure ✓
 - Phase 3: Queue Processor Parallelization ✓
 - Phase 4: Direct Download Parallelization ✓
 - Phase 5: Error Handling and Retry Strategy ✓
+- Phase 6: Testing and Validation ✓
 
 **What's Working:**
 - ✓ Parallel article downloads in BOTH queue processor and direct download using buffer_unordered()
 - ✓ Atomic counter-based progress tracking (with dedicated reporting task for queue processor)
-- ✓ Cancellation support in parallel downloads (queue processor)
-- ✓ Resilient error handling with partial success support
+- ✓ Cancellation support in parallel downloads
+- ✓ Resilient error handling with partial success support (>50% threshold)
 - ✓ Failed articles marked as FAILED in database
 - ✓ Comprehensive logging for debugging
 - ✓ Global speed limiting across concurrent downloads
+- ✓ Stress-tested with 1200 segments successfully
+- ✓ Memory-efficient (articles go to disk, not RAM)
+- ✓ All tests passing (when Docker NNTP server available)
 
 **What's Next:**
-- Phase 6: Add comprehensive tests (unit, integration, stress, cancellation, error handling)
-- Phase 7: Update documentation (comments, rustdoc, CHANGELOG)
-- Phase 8: Optional enhancements (multi-server failover, retry logic, etc.)
+- Phase 7: Documentation and Cleanup (4 tasks remaining)
+  - Task 7.1: Update inline comments for parallel download sections
+  - Task 7.2: Update rustdoc for affected methods
+  - Task 7.3: Update CHANGELOG.md with performance improvement
+  - Task 7.4: Consider updating README with performance notes
+- Phase 8: Optional enhancements (marked as "Future Work", not critical)
 
 ## Notes
 
