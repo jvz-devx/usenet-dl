@@ -131,6 +131,7 @@ use utoipa::OpenApi;
         crate::api::routes::AddRssFeedRequest,
         crate::api::routes::RssFeedResponse,
         crate::api::routes::CheckRssFeedResponse,
+        crate::api::routes::ScheduleRuleResponse,
     )),
     tags(
         (name = "downloads", description = "Download queue management - Add, pause, resume, and monitor downloads"),

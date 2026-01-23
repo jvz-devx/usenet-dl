@@ -1780,18 +1780,40 @@ pub async fn check_rss_feed(
 // Scheduler
 // ============================================================================
 
+/// Response for GET /scheduler - schedule rule with ID
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ScheduleRuleResponse {
+    /// Rule ID (index in the list)
+    pub id: i64,
+    /// Schedule rule configuration
+    #[serde(flatten)]
+    pub rule: crate::config::ScheduleRule,
+}
+
 /// GET /scheduler - Get schedule rules
 #[utoipa::path(
     get,
     path = "/api/v1/scheduler",
     tag = "scheduler",
     responses(
-        (status = 200, description = "List of schedule rules", body = Vec<crate::config::ScheduleRule>),
+        (status = 200, description = "List of schedule rules", body = Vec<ScheduleRuleResponse>),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn list_schedule_rules(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn list_schedule_rules(State(state): State<AppState>) -> impl IntoResponse {
+    let rules = state.downloader.get_schedule_rules().await;
+
+    // Convert to response format with IDs
+    let response: Vec<ScheduleRuleResponse> = rules
+        .into_iter()
+        .enumerate()
+        .map(|(id, rule)| ScheduleRuleResponse {
+            id: id as i64,
+            rule,
+        })
+        .collect();
+
+    Json(response).into_response()
 }
 
 /// POST /scheduler - Add schedule rule
@@ -1806,8 +1828,41 @@ pub async fn list_schedule_rules(State(_state): State<AppState>) -> impl IntoRes
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn add_schedule_rule(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn add_schedule_rule(
+    State(state): State<AppState>,
+    Json(rule): Json<crate::config::ScheduleRule>,
+) -> impl IntoResponse {
+    // Validate time formats
+    if chrono::NaiveTime::parse_from_str(&rule.start_time, "%H:%M").is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "code": "invalid_input",
+                    "message": format!("Invalid start_time format: '{}'. Expected HH:MM", rule.start_time)
+                }
+            }))
+        ).into_response();
+    }
+
+    if chrono::NaiveTime::parse_from_str(&rule.end_time, "%H:%M").is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "code": "invalid_input",
+                    "message": format!("Invalid end_time format: '{}'. Expected HH:MM", rule.end_time)
+                }
+            }))
+        ).into_response();
+    }
+
+    let id = state.downloader.add_schedule_rule(rule).await;
+
+    (
+        StatusCode::CREATED,
+        Json(json!({ "id": id }))
+    ).into_response()
 }
 
 /// PUT /scheduler/:id - Update schedule rule
@@ -1827,10 +1882,47 @@ pub async fn add_schedule_rule(State(_state): State<AppState>) -> impl IntoRespo
     )
 )]
 pub async fn update_schedule_rule(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(rule): Json<crate::config::ScheduleRule>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // Validate time formats
+    if chrono::NaiveTime::parse_from_str(&rule.start_time, "%H:%M").is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "code": "invalid_input",
+                    "message": format!("Invalid start_time format: '{}'. Expected HH:MM", rule.start_time)
+                }
+            }))
+        ).into_response();
+    }
+
+    if chrono::NaiveTime::parse_from_str(&rule.end_time, "%H:%M").is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "code": "invalid_input",
+                    "message": format!("Invalid end_time format: '{}'. Expected HH:MM", rule.end_time)
+                }
+            }))
+        ).into_response();
+    }
+
+    match state.downloader.update_schedule_rule(id, rule).await {
+        true => StatusCode::NO_CONTENT.into_response(),
+        false => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "Schedule rule not found"
+                }
+            }))
+        ).into_response(),
+    }
 }
 
 /// DELETE /scheduler/:id - Delete schedule rule
@@ -1848,8 +1940,19 @@ pub async fn update_schedule_rule(
     )
 )]
 pub async fn delete_schedule_rule(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    match state.downloader.remove_schedule_rule(id).await {
+        true => StatusCode::NO_CONTENT.into_response(),
+        false => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "Schedule rule not found"
+                }
+            }))
+        ).into_response(),
+    }
 }

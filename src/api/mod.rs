@@ -4718,4 +4718,292 @@ mod tests {
         // Clean up: abort the server task
         server_handle.abort();
     }
+
+    #[tokio::test]
+    async fn test_scheduler_endpoints() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use crate::config::{ScheduleAction, ScheduleRule, Weekday};
+        use serde_json::Value;
+        use tower::ServiceExt;
+
+        println!("\n=== Testing Scheduler Endpoints ===");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+        let config = downloader.get_config();
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: GET /scheduler - should be empty initially
+        println!("\nTest 1: GET /scheduler (empty)");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/scheduler")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        println!("Initial scheduler response: {}", serde_json::to_string_pretty(&json).unwrap());
+
+        assert!(json.is_array());
+        assert_eq!(json.as_array().unwrap().len(), 0);
+        println!("   ✓ Empty list returned");
+
+        // Test 2: POST /scheduler - add a new rule
+        println!("\nTest 2: POST /scheduler (add rule)");
+        let rule = ScheduleRule {
+            name: "Night time unlimited".to_string(),
+            days: vec![],
+            start_time: "00:00".to_string(),
+            end_time: "06:00".to_string(),
+            action: ScheduleAction::Unlimited,
+            enabled: true,
+        };
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/scheduler")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&rule).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        println!("Add rule response: {}", serde_json::to_string_pretty(&json).unwrap());
+
+        assert!(json["id"].is_number());
+        let rule_id = json["id"].as_i64().unwrap();
+        println!("   ✓ Rule added with ID: {}", rule_id);
+
+        // Test 3: POST /scheduler - add another rule with speed limit
+        println!("\nTest 3: POST /scheduler (add work hours rule)");
+        let rule2 = ScheduleRule {
+            name: "Work hours limited".to_string(),
+            days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday, Weekday::Thursday, Weekday::Friday],
+            start_time: "09:00".to_string(),
+            end_time: "17:00".to_string(),
+            action: ScheduleAction::SpeedLimit { limit_bps: 1_000_000 },
+            enabled: true,
+        };
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/scheduler")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&rule2).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        let rule2_id = json["id"].as_i64().unwrap();
+        println!("   ✓ Rule added with ID: {}", rule2_id);
+
+        // Test 4: GET /scheduler - should now have 2 rules
+        println!("\nTest 4: GET /scheduler (with rules)");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/scheduler")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        println!("Scheduler with rules: {}", serde_json::to_string_pretty(&json).unwrap());
+
+        assert!(json.is_array());
+        let rules = json.as_array().unwrap();
+        assert_eq!(rules.len(), 2);
+        println!("   ✓ 2 rules returned");
+
+        // Verify first rule
+        assert_eq!(rules[0]["id"], 0);
+        assert_eq!(rules[0]["name"], "Night time unlimited");
+        assert_eq!(rules[0]["start_time"], "00:00");
+        assert_eq!(rules[0]["end_time"], "06:00");
+        println!("   ✓ First rule details correct");
+
+        // Verify second rule
+        assert_eq!(rules[1]["id"], 1);
+        assert_eq!(rules[1]["name"], "Work hours limited");
+        assert_eq!(rules[1]["days"].as_array().unwrap().len(), 5);
+        println!("   ✓ Second rule details correct");
+
+        // Test 5: PUT /scheduler/:id - update a rule
+        println!("\nTest 5: PUT /scheduler/0 (update rule)");
+        let updated_rule = ScheduleRule {
+            name: "Night time unlimited (updated)".to_string(),
+            days: vec![Weekday::Saturday, Weekday::Sunday],
+            start_time: "00:00".to_string(),
+            end_time: "08:00".to_string(), // Changed to 8 AM
+            action: ScheduleAction::Unlimited,
+            enabled: false, // Disabled
+        };
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/scheduler/0")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&updated_rule).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        println!("   ✓ Rule updated successfully (204 No Content)");
+
+        // Test 6: GET /scheduler - verify update
+        println!("\nTest 6: GET /scheduler (verify update)");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/scheduler")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        let rules = json.as_array().unwrap();
+        assert_eq!(rules[0]["name"], "Night time unlimited (updated)");
+        assert_eq!(rules[0]["end_time"], "08:00");
+        assert_eq!(rules[0]["enabled"], false);
+        assert_eq!(rules[0]["days"].as_array().unwrap().len(), 2);
+        println!("   ✓ Rule update verified");
+
+        // Test 7: PUT /scheduler/999 - update non-existent rule (should fail)
+        println!("\nTest 7: PUT /scheduler/999 (not found)");
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/scheduler/999")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&updated_rule).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "not_found");
+        println!("   ✓ 404 Not Found returned for non-existent rule");
+
+        // Test 8: POST /scheduler with invalid time format
+        println!("\nTest 8: POST /scheduler (invalid time format)");
+        let invalid_rule = ScheduleRule {
+            name: "Invalid".to_string(),
+            days: vec![],
+            start_time: "25:00".to_string(), // Invalid hour
+            end_time: "06:00".to_string(),
+            action: ScheduleAction::Unlimited,
+            enabled: true,
+        };
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/scheduler")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&invalid_rule).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "invalid_input");
+        assert!(json["error"]["message"].as_str().unwrap().contains("Invalid start_time format"));
+        println!("   ✓ 400 Bad Request returned for invalid time format");
+
+        // Test 9: DELETE /scheduler/:id - delete a rule
+        println!("\nTest 9: DELETE /scheduler/0 (delete rule)");
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/scheduler/0")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        println!("   ✓ Rule deleted successfully (204 No Content)");
+
+        // Test 10: GET /scheduler - verify deletion (should have 1 rule left)
+        println!("\nTest 10: GET /scheduler (verify deletion)");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/scheduler")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        let rules = json.as_array().unwrap();
+        assert_eq!(rules.len(), 1);
+        // After deleting rule 0, rule 1 becomes rule 0 (array shifts)
+        assert_eq!(rules[0]["name"], "Work hours limited");
+        println!("   ✓ Only 1 rule remaining after deletion");
+
+        // Test 11: DELETE /scheduler/999 - delete non-existent rule
+        println!("\nTest 11: DELETE /scheduler/999 (not found)");
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/scheduler/999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "not_found");
+        println!("   ✓ 404 Not Found returned for non-existent rule");
+
+        println!("\n=== Scheduler Endpoints Test: PASSED ===");
+        println!("\nSummary:");
+        println!("  - GET /scheduler (empty): ✓");
+        println!("  - POST /scheduler (add rules): ✓");
+        println!("  - GET /scheduler (with rules): ✓");
+        println!("  - PUT /scheduler/:id (update): ✓");
+        println!("  - PUT /scheduler/:id (not found): ✓");
+        println!("  - POST /scheduler (invalid time): ✓");
+        println!("  - DELETE /scheduler/:id: ✓");
+        println!("  - DELETE /scheduler/:id (not found): ✓");
+        println!("  - Rule details and IDs correct: ✓");
+    }
 }

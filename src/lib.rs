@@ -107,6 +107,10 @@ pub struct UsenetDownloader {
     post_processor: std::sync::Arc<post_processing::PostProcessor>,
     /// Runtime-mutable categories (separate from config for dynamic updates)
     categories: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::config::CategoryConfig>>>,
+    /// Runtime-mutable schedule rules (separate from config for dynamic updates)
+    schedule_rules: std::sync::Arc<tokio::sync::RwLock<Vec<crate::config::ScheduleRule>>>,
+    /// Next schedule rule ID counter
+    next_schedule_rule_id: std::sync::Arc<std::sync::atomic::AtomicI64>,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -190,6 +194,12 @@ impl UsenetDownloader {
         // Initialize runtime-mutable categories from config
         let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.categories.clone()));
 
+        // Initialize runtime-mutable schedule rules from config
+        let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(config.schedule_rules.clone()));
+
+        // Initialize the next ID counter (0 since config rules don't have IDs yet)
+        let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+
         // Create post-processing pipeline executor
         let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
             event_tx.clone(),
@@ -208,6 +218,8 @@ impl UsenetDownloader {
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             post_processor,
             categories,
+            schedule_rules,
+            next_schedule_rule_id,
         };
 
         // Restore any incomplete downloads from database (from previous session)
@@ -1359,6 +1371,159 @@ impl UsenetDownloader {
     /// ```
     pub async fn get_categories(&self) -> std::collections::HashMap<String, crate::config::CategoryConfig> {
         self.categories.read().await.clone()
+    }
+
+    // =========================================================================
+    // Schedule Rule Management
+    // =========================================================================
+
+    /// Get all schedule rules
+    ///
+    /// Returns a clone of the current schedule rules list.
+    ///
+    /// # Returns
+    ///
+    /// A vector of ScheduleRule configurations
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let rules = downloader.get_schedule_rules().await;
+    /// for rule in rules {
+    ///     println!("Rule: {}, Active: {}", rule.name, rule.enabled);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_schedule_rules(&self) -> Vec<crate::config::ScheduleRule> {
+        self.schedule_rules.read().await.clone()
+    }
+
+    /// Add a new schedule rule
+    ///
+    /// This method adds a new schedule rule to the runtime configuration.
+    /// Returns the assigned rule ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `rule` - The schedule rule configuration to add
+    ///
+    /// # Returns
+    ///
+    /// The assigned rule ID (i64)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # use usenet_dl::config::{ScheduleRule, ScheduleAction};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let rule = ScheduleRule {
+    ///     name: "Night time".to_string(),
+    ///     days: vec![],
+    ///     start_time: "00:00".to_string(),
+    ///     end_time: "06:00".to_string(),
+    ///     action: ScheduleAction::Unlimited,
+    ///     enabled: true,
+    /// };
+    /// let id = downloader.add_schedule_rule(rule).await;
+    /// println!("Added rule with ID: {}", id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_schedule_rule(&self, rule: crate::config::ScheduleRule) -> i64 {
+        let mut rules = self.schedule_rules.write().await;
+        let id = self.next_schedule_rule_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        rules.push(rule);
+        id
+    }
+
+    /// Update an existing schedule rule
+    ///
+    /// This method updates a schedule rule at the specified index.
+    /// Returns true if the rule was updated, false if the index was invalid.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The index of the rule to update
+    /// * `rule` - The new schedule rule configuration
+    ///
+    /// # Returns
+    ///
+    /// `true` if the rule was updated, `false` if the index was invalid
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # use usenet_dl::config::{ScheduleRule, ScheduleAction};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let rule = ScheduleRule {
+    ///     name: "Updated rule".to_string(),
+    ///     days: vec![],
+    ///     start_time: "09:00".to_string(),
+    ///     end_time: "17:00".to_string(),
+    ///     action: ScheduleAction::SpeedLimit { limit_bps: 1_000_000 },
+    ///     enabled: true,
+    /// };
+    /// let updated = downloader.update_schedule_rule(0, rule).await;
+    /// if updated {
+    ///     println!("Rule updated successfully");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn update_schedule_rule(&self, id: i64, rule: crate::config::ScheduleRule) -> bool {
+        let mut rules = self.schedule_rules.write().await;
+        if let Some(r) = rules.get_mut(id as usize) {
+            *r = rule;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a schedule rule
+    ///
+    /// This method removes a schedule rule at the specified index.
+    /// Returns true if the rule was removed, false if the index was invalid.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The index of the rule to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the rule was removed, `false` if the index was invalid
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let was_removed = downloader.remove_schedule_rule(0).await;
+    /// if was_removed {
+    ///     println!("Rule removed");
+    /// } else {
+    ///     println!("Rule not found");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn remove_schedule_rule(&self, id: i64) -> bool {
+        let mut rules = self.schedule_rules.write().await;
+        if (id as usize) < rules.len() {
+            rules.remove(id as usize);
+            true
+        } else {
+            false
+        }
     }
 
     // =========================================================================
@@ -3128,6 +3293,10 @@ mod tests {
         // Initialize runtime-mutable categories from config
         let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.categories.clone()));
 
+        // Initialize runtime-mutable schedule rules (empty for tests)
+        let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(vec![]));
+        let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+
         // Create post-processing pipeline executor
         let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
             event_tx.clone(),
@@ -3146,6 +3315,8 @@ mod tests {
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             post_processor,
             categories,
+            schedule_rules,
+            next_schedule_rule_id,
         };
 
         (downloader, temp_dir)
