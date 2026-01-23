@@ -2576,4 +2576,210 @@ mod tests {
         println!("   - Speed limit is reflected in response");
         println!("   - Total size and progress are calculated correctly");
     }
+
+    #[tokio::test]
+    async fn test_get_history_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+        use crate::db::NewHistoryEntry;
+
+        println!("🧪 Testing GET /history endpoint...");
+
+        // Setup
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config);
+
+        // Test 1: Empty history
+        println!("  🔍 Test 1: Empty history returns empty array");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /history should return 200 OK"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["items"].as_array().unwrap().len(), 0, "Empty history should have 0 items");
+        assert_eq!(json["total"].as_i64().unwrap(), 0, "Empty history should have total=0");
+        assert_eq!(json["limit"].as_i64().unwrap(), 50, "Default limit should be 50");
+        assert_eq!(json["offset"].as_i64().unwrap(), 0, "Default offset should be 0");
+        println!("    ✓ Empty history returns correct structure");
+
+        // Test 2: Add history entries
+        println!("  🔍 Test 2: History with entries");
+
+        // Add some history entries directly to the database
+        use std::path::PathBuf;
+        use chrono::Utc;
+
+        for i in 1..=5 {
+            let entry = NewHistoryEntry {
+                name: format!("Download {}", i),
+                category: Some("test".to_string()),
+                destination: Some(PathBuf::from(format!("/downloads/test{}", i))),
+                status: 4, // Complete
+                size_bytes: i * 1000,
+                download_time_secs: (i * 60) as i64,
+                completed_at: Utc::now().timestamp(),
+            };
+            downloader.db.insert_history(&entry).await.unwrap();
+        }
+
+        // Add 2 failed downloads
+        for i in 6..=7 {
+            let entry = NewHistoryEntry {
+                name: format!("Download {}", i),
+                category: Some("test".to_string()),
+                destination: None,
+                status: 5, // Failed
+                size_bytes: i * 1000,
+                download_time_secs: (i * 60) as i64,
+                completed_at: Utc::now().timestamp(),
+            };
+            downloader.db.insert_history(&entry).await.unwrap();
+        }
+
+        println!("  📝 Created 7 history entries (5 complete, 2 failed)");
+
+        // Query all history
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["items"].as_array().unwrap().len(), 7, "Should have 7 items");
+        assert_eq!(json["total"].as_i64().unwrap(), 7, "Total should be 7");
+        println!("    ✓ All history entries returned");
+
+        // Test 3: Pagination
+        println!("  🔍 Test 3: Pagination with limit and offset");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history?limit=3&offset=2")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["items"].as_array().unwrap().len(), 3, "Should return 3 items");
+        assert_eq!(json["limit"].as_i64().unwrap(), 3, "Limit should be 3");
+        assert_eq!(json["offset"].as_i64().unwrap(), 2, "Offset should be 2");
+        assert_eq!(json["total"].as_i64().unwrap(), 7, "Total should still be 7");
+        println!("    ✓ Pagination works correctly");
+
+        // Test 4: Filter by status - complete
+        println!("  🔍 Test 4: Filter by status=complete");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history?status=complete")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["items"].as_array().unwrap().len(), 5, "Should have 5 complete items");
+        assert_eq!(json["total"].as_i64().unwrap(), 5, "Total should be 5");
+        println!("    ✓ status=complete filter works");
+
+        // Test 5: Filter by status - failed
+        println!("  🔍 Test 5: Filter by status=failed");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history?status=failed")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["items"].as_array().unwrap().len(), 2, "Should have 2 failed items");
+        assert_eq!(json["total"].as_i64().unwrap(), 2, "Total should be 2");
+        println!("    ✓ status=failed filter works");
+
+        // Test 6: Invalid status filter
+        println!("  🔍 Test 6: Invalid status filter returns 400");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history?status=invalid")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "Invalid status should return 400"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["error"]["code"].as_str().unwrap().contains("invalid_status"));
+        println!("    ✓ Invalid status returns 400 with error code");
+
+        // Test 7: Limit boundary values
+        println!("  🔍 Test 7: Limit boundary values");
+
+        // Very high limit should be capped at 1000
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history?limit=9999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit"].as_i64().unwrap(), 1000, "Limit should be capped at 1000");
+
+        // Zero or negative limit should be converted to 1
+        let request = Request::builder()
+            .method("GET")
+            .uri("/history?limit=0")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit"].as_i64().unwrap(), 1, "Limit should be at least 1");
+        println!("    ✓ Limit boundary values handled correctly");
+
+        println!("✅ GET /history endpoint test passed!");
+        println!("   - Returns 200 OK with valid JSON");
+        println!("   - Empty history returns correct structure");
+        println!("   - Pagination works correctly (limit, offset)");
+        println!("   - Status filtering works (complete/failed)");
+        println!("   - Invalid status returns 400");
+        println!("   - Limit boundary values handled correctly");
+    }
 }

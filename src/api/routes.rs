@@ -23,6 +23,17 @@ pub struct DeleteDownloadQuery {
     pub delete_files: bool,
 }
 
+/// Query parameters for GET /history
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct HistoryQuery {
+    /// Maximum number of items to return (default: 50)
+    pub limit: Option<i64>,
+    /// Number of items to skip (default: 0)
+    pub offset: Option<i64>,
+    /// Filter by status: "complete" or "failed"
+    pub status: Option<String>,
+}
+
 // ============================================================================
 // Queue Management - Downloads
 // ============================================================================
@@ -910,11 +921,83 @@ pub async fn queue_stats(State(state): State<AppState>) -> Response {
     ),
     responses(
         (status = 200, description = "Download history", body = Vec<crate::types::HistoryEntry>),
+        (status = 400, description = "Invalid query parameters"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn get_history(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn get_history(
+    State(state): State<AppState>,
+    Query(query): Query<HistoryQuery>,
+) -> impl IntoResponse {
+    // Set defaults for pagination
+    let limit = query.limit.unwrap_or(50).max(1).min(1000) as usize;
+    let offset = query.offset.unwrap_or(0).max(0) as usize;
+
+    // Parse status filter if provided
+    let status_filter = if let Some(status_str) = query.status {
+        match status_str.to_lowercase().as_str() {
+            "complete" => Some(4), // Status::Complete = 4
+            "failed" => Some(5),   // Status::Failed = 5
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": {
+                            "code": "invalid_status",
+                            "message": "Invalid status filter. Must be 'complete' or 'failed'"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    // Query history from database
+    match state.downloader.db.query_history(status_filter, limit, offset).await {
+        Ok(entries) => {
+            // Get total count for pagination metadata
+            match state.downloader.db.count_history(status_filter).await {
+                Ok(total) => {
+                    let response = json!({
+                        "items": entries,
+                        "total": total,
+                        "limit": limit,
+                        "offset": offset
+                    });
+                    (StatusCode::OK, Json(response)).into_response()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to count history: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": {
+                                "code": "database_error",
+                                "message": "Failed to count history entries"
+                            }
+                        })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to query history: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "database_error",
+                        "message": "Failed to retrieve history"
+                    }
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// DELETE /history - Clear history

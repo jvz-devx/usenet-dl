@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (26/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (27/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -42,9 +42,10 @@ IN_PROGRESS
   - Task 19.11: ✅ POST /queue/pause endpoint complete with comprehensive test (41 API tests passing)
   - Task 19.12: ✅ POST /queue/resume endpoint complete with comprehensive test (42 API tests passing)
   - Task 19.13: ✅ GET /queue/stats endpoint complete with comprehensive test (43 API tests passing)
-- Total: 137/253 tasks complete (54.2%)
+  - Task 19.14: ✅ GET /history endpoint complete with comprehensive test (44 API tests passing)
+- Total: 138/253 tasks complete (54.5%)
 
-**Next Task:** Task 19.14 - Implement GET /history with pagination (get_history handler)
+**Next Task:** Task 19.15 - Implement DELETE /history (clear_history handler)
 
 ## Analysis
 
@@ -324,7 +325,7 @@ The implementation will require these major dependencies:
 - [x] Task 19.11: Implement POST /queue/pause (pause_all handler)
 - [x] Task 19.12: Implement POST /queue/resume (resume_all handler)
 - [x] Task 19.13: Implement GET /queue/stats (queue_stats handler)
-- [ ] Task 19.14: Implement GET /history with pagination (get_history handler)
+- [x] Task 19.14: Implement GET /history with pagination (get_history handler)
 - [ ] Task 19.15: Implement DELETE /history (clear_history handler)
 - [ ] Task 19.16: Test all queue endpoints with curl/Postman
 
@@ -5004,20 +5005,29 @@ The endpoint is fully functional and ready for use.
 
 ## Completed This Iteration
 
-- Task 19.13: Implemented GET /queue/stats endpoint
-  - Added QueueStats type with comprehensive statistics (total, queued, downloading, paused, processing, speed, size, progress)
-  - Implemented queue_stats handler that queries database and calculates statistics
-  - Fixed speed limit retrieval to use SpeedLimiter.get_limit() instead of config (reflects runtime changes)
-  - Added QueueStats to OpenAPI schema
-  - Exported QueueStats from library
-  - Wrote comprehensive test covering empty queue, multiple downloads with different statuses, and speed limit changes
-  - All 43 API tests passing
+- Task 19.14: Implemented GET /history endpoint with pagination
+  - Added HistoryQuery struct for query parameters (limit, offset, status filter)
+  - Implemented get_history handler with:
+    - Default pagination (limit=50, offset=0)
+    - Limit boundary checking (min=1, max=1000)
+    - Status filtering ("complete" or "failed")
+    - Returns JSON with items, total, limit, offset
+  - Updated OpenAPI documentation with 400 BAD_REQUEST for invalid status
+  - Wrote comprehensive test with 7 test cases:
+    1. Empty history returns correct structure
+    2. History with multiple entries
+    3. Pagination with limit and offset
+    4. Filter by status=complete
+    5. Filter by status=failed
+    6. Invalid status returns 400 error
+    7. Limit boundary values (capped at 1000, minimum 1)
+  - All 44 API tests passing
 
 ## Notes
 
-- The queue_stats endpoint provides real-time statistics about the download queue
-- Statistics include counts by status (queued, downloading, paused, processing)
-- Overall progress is calculated based on total size vs downloaded bytes
-- Speed limit correctly reflects runtime changes made via set_speed_limit()
+- The GET /history endpoint leverages the fully-implemented database layer (query_history and count_history methods)
+- Status filtering maps string values ("complete"/"failed") to database integer values (4/5)
+- Pagination includes total count for client-side page calculation
+- Comprehensive error handling for invalid status filters
 - The endpoint is fully functional and production-ready
 
