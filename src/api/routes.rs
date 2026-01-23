@@ -53,6 +53,35 @@ pub struct SetSpeedLimitRequest {
     pub limit_bps: Option<u64>,
 }
 
+/// Request body for POST /rss and PUT /rss/:id
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct AddRssFeedRequest {
+    /// Human-readable name for the feed
+    pub name: String,
+    /// RSS feed configuration
+    #[serde(flatten)]
+    pub config: crate::config::RssFeedConfig,
+}
+
+/// Response for GET /rss - list of RSS feeds with their IDs
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RssFeedResponse {
+    /// Feed ID
+    pub id: i64,
+    /// Feed name
+    pub name: String,
+    /// Feed configuration
+    #[serde(flatten)]
+    pub config: crate::config::RssFeedConfig,
+}
+
+/// Response for POST /rss/:id/check - number of items queued
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CheckRssFeedResponse {
+    /// Number of new items queued for download
+    pub queued: usize,
+}
+
 // ============================================================================
 // Queue Management - Downloads
 // ============================================================================
@@ -1477,12 +1506,72 @@ pub async fn shutdown(State(_state): State<AppState>) -> impl IntoResponse {
     path = "/api/v1/rss",
     tag = "rss",
     responses(
-        (status = 200, description = "List of RSS feeds"),
+        (status = 200, description = "List of RSS feeds", body = Vec<RssFeedResponse>),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn list_rss_feeds(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn list_rss_feeds(State(state): State<AppState>) -> impl IntoResponse {
+    // Get all feeds from database
+    let feeds = match state.downloader.db.get_all_rss_feeds().await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("Failed to get RSS feeds: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "database_error",
+                        "message": format!("Failed to get RSS feeds: {}", e)
+                    }
+                }))
+            ).into_response();
+        }
+    };
+
+    let mut responses = Vec::new();
+
+    for feed in feeds {
+        // Get filters for this feed
+        let filter_rows = match state.downloader.db.get_rss_filters(feed.id).await {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("Failed to get filters for feed {}: {}", feed.id, e);
+                continue;
+            }
+        };
+
+        let filters = filter_rows.into_iter().map(|row| {
+            use std::time::Duration;
+            crate::config::RssFilter {
+                name: row.name,
+                include: row.include_patterns
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                exclude: row.exclude_patterns
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                min_size: row.min_size.map(|s| s as u64),
+                max_size: row.max_size.map(|s| s as u64),
+                max_age: row.max_age_secs.map(|s| Duration::from_secs(s as u64)),
+            }
+        }).collect();
+
+        responses.push(RssFeedResponse {
+            id: feed.id,
+            name: feed.name,
+            config: crate::config::RssFeedConfig {
+                url: feed.url,
+                check_interval: std::time::Duration::from_secs(feed.check_interval_secs as u64),
+                category: feed.category,
+                filters,
+                auto_download: feed.auto_download != 0,
+                priority: crate::types::Priority::from_i32(feed.priority),
+                enabled: feed.enabled != 0,
+            },
+        });
+    }
+
+    (StatusCode::OK, Json(responses)).into_response()
 }
 
 /// POST /rss - Add RSS feed
@@ -1490,14 +1579,49 @@ pub async fn list_rss_feeds(State(_state): State<AppState>) -> impl IntoResponse
     post,
     path = "/api/v1/rss",
     tag = "rss",
+    request_body = AddRssFeedRequest,
     responses(
         (status = 201, description = "RSS feed added successfully", body = i64),
         (status = 400, description = "Invalid RSS feed configuration"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn add_rss_feed(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn add_rss_feed(
+    State(state): State<AppState>,
+    Json(request): Json<AddRssFeedRequest>,
+) -> impl IntoResponse {
+    // Validate URL
+    if request.config.url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "code": "invalid_input",
+                    "message": "Feed URL cannot be empty"
+                }
+            }))
+        ).into_response();
+    }
+
+    // Add the feed
+    match state.downloader.add_rss_feed(request.name, request.config).await {
+        Ok(id) => (
+            StatusCode::CREATED,
+            Json(json!({ "id": id }))
+        ).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to add RSS feed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "database_error",
+                        "message": format!("Failed to add RSS feed: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// PUT /rss/:id - Update RSS feed
@@ -1508,6 +1632,7 @@ pub async fn add_rss_feed(State(_state): State<AppState>) -> impl IntoResponse {
     params(
         ("id" = i64, Path, description = "RSS feed ID")
     ),
+    request_body = AddRssFeedRequest,
     responses(
         (status = 204, description = "RSS feed updated successfully"),
         (status = 404, description = "RSS feed not found"),
@@ -1516,10 +1641,48 @@ pub async fn add_rss_feed(State(_state): State<AppState>) -> impl IntoResponse {
     )
 )]
 pub async fn update_rss_feed(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(request): Json<AddRssFeedRequest>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // Validate URL
+    if request.config.url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "code": "invalid_input",
+                    "message": "Feed URL cannot be empty"
+                }
+            }))
+        ).into_response();
+    }
+
+    // Update the feed
+    match state.downloader.update_rss_feed(id, request.name, request.config).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "RSS feed not found"
+                }
+            }))
+        ).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update RSS feed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "database_error",
+                        "message": format!("Failed to update RSS feed: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// DELETE /rss/:id - Delete RSS feed
@@ -1537,10 +1700,33 @@ pub async fn update_rss_feed(
     )
 )]
 pub async fn delete_rss_feed(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    match state.downloader.delete_rss_feed(id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "RSS feed not found"
+                }
+            }))
+        ).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete RSS feed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "database_error",
+                        "message": format!("Failed to delete RSS feed: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// POST /rss/:id/check - Force check feed now
@@ -1552,16 +1738,42 @@ pub async fn delete_rss_feed(
         ("id" = i64, Path, description = "RSS feed ID")
     ),
     responses(
-        (status = 200, description = "Number of new items queued"),
+        (status = 200, description = "Number of new items queued", body = CheckRssFeedResponse),
         (status = 404, description = "RSS feed not found"),
         (status = 500, description = "Internal server error")
     )
 )]
 pub async fn check_rss_feed(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    match state.downloader.check_rss_feed_now(id).await {
+        Ok(queued) => (
+            StatusCode::OK,
+            Json(CheckRssFeedResponse { queued })
+        ).into_response(),
+        Err(crate::Error::NotFound(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "RSS feed not found"
+                }
+            }))
+        ).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to check RSS feed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "check_failed",
+                        "message": format!("Failed to check RSS feed: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 // ============================================================================

@@ -124,6 +124,13 @@ use utoipa::OpenApi;
         crate::config::ScriptConfig,
         crate::config::ScriptEvent,
         crate::config::CategoryConfig,
+        crate::config::RssFeedConfig,
+        crate::config::RssFilter,
+
+        // API request/response types from routes.rs
+        crate::api::routes::AddRssFeedRequest,
+        crate::api::routes::RssFeedResponse,
+        crate::api::routes::CheckRssFeedResponse,
     )),
     tags(
         (name = "downloads", description = "Download queue management - Add, pause, resume, and monitor downloads"),
