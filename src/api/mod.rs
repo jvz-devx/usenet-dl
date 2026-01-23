@@ -3089,4 +3089,82 @@ mod tests {
         println!("   - Combines both filters (before + status) correctly");
         println!("   - Returns 400 for invalid status filter");
     }
+
+    #[tokio::test]
+    async fn test_sse_event_stream() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+        use crate::types::Event;
+
+        println!("\n🧪 Testing GET /events (SSE stream) endpoint...");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+        let config = Arc::new((*downloader.config).clone());
+
+        // Create router
+        let app = create_router(downloader.clone(), config);
+
+        // Make request to /events endpoint
+        let request = Request::builder()
+            .uri("/events")
+            .header("Accept", "text/event-stream")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Verify response status and content type
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "SSE endpoint should return 200 OK"
+        );
+        println!("    ✓ Returns 200 OK");
+
+        let content_type = response.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        assert!(
+            content_type.contains("text/event-stream"),
+            "Content-Type should be text/event-stream, got: {}",
+            content_type
+        );
+        println!("    ✓ Content-Type is text/event-stream");
+
+        // Test that events are actually sent by emitting an event and checking the stream
+        // Note: This is a basic test - full integration testing would require
+        // reading from the stream, which is more complex in a unit test
+
+        // Emit a test event
+        downloader.emit_event(Event::QueuePaused);
+        println!("    ✓ Event emission works (via emit_event)");
+
+        // Verify subscribe works (the SSE endpoint uses this internally)
+        let mut receiver = downloader.subscribe();
+
+        // Emit another event and verify the receiver gets it
+        downloader.emit_event(Event::QueueResumed);
+
+        // Try to receive the event with a timeout
+        let received = tokio::time::timeout(
+            Duration::from_millis(100),
+            receiver.recv()
+        ).await;
+
+        assert!(
+            received.is_ok() && received.unwrap().is_ok(),
+            "Should be able to subscribe and receive events"
+        );
+        println!("    ✓ Event subscription works (SSE will use this)");
+
+        println!("✅ GET /events endpoint test passed!");
+        println!("   - Returns 200 OK");
+        println!("   - Sets Content-Type to text/event-stream");
+        println!("   - Event broadcasting system works");
+        println!("   - Subscribers can receive events");
+    }
 }

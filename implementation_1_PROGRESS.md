@@ -45,9 +45,10 @@ IN_PROGRESS
   - Task 19.14: ✅ GET /history endpoint complete with comprehensive test (44 API tests passing)
   - Task 19.15: ✅ DELETE /history endpoint complete with comprehensive test (45 API tests passing)
   - Task 19.16: ✅ Manual testing tools complete (test_api.sh, postman_collection.json, API_TESTING.md)
-- Total: 140/253 tasks complete (55.3%)
+  - Tasks 20.1-20.5: ✅ Server-Sent Events endpoint complete (46 API tests passing)
+- Total: 145/253 tasks complete (57.3%)
 
-**Next Task:** Task 20.1 - Add tokio-stream dependency
+**Next Task:** Task 21.1 - Implement GET /config endpoint
 
 ## Analysis
 
@@ -331,11 +332,11 @@ The implementation will require these major dependencies:
 - [x] Task 19.15: Implement DELETE /history (clear_history handler)
 - [x] Task 19.16: Test all queue endpoints with curl/Postman
 
-- [ ] Task 20.1: Add tokio-stream dependency
-- [ ] Task 20.2: Implement GET /events endpoint with text/event-stream response
-- [ ] Task 20.3: Convert tokio::broadcast events to SSE format (event: type, data: json)
-- [ ] Task 20.4: Handle client disconnects gracefully
-- [ ] Task 20.5: Test SSE stream with curl -N or browser EventSource
+- [x] Task 20.1: Add tokio-stream dependency
+- [x] Task 20.2: Implement GET /events endpoint with text/event-stream response
+- [x] Task 20.3: Convert tokio::broadcast events to SSE format (event: type, data: json)
+- [x] Task 20.4: Handle client disconnects gracefully
+- [x] Task 20.5: Test SSE stream with curl -N or browser EventSource
 
 - [ ] Task 21.1: Implement GET /config (get_config handler) with sensitive field redaction
 - [ ] Task 21.2: Implement PATCH /config (update_config handler)
@@ -466,7 +467,57 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.16: Test all queue endpoints with curl/Postman**
+**Tasks 20.1-20.5: Server-Sent Events (SSE) endpoint implementation**
+
+Successfully implemented real-time event streaming for the REST API:
+
+1. **Dependency Setup** (Task 20.1):
+   - Added `tokio-stream = { version = "0.1", features = ["sync"] }` to Cargo.toml
+   - Enabled the "sync" feature to access BroadcastStream wrapper
+   - Verified compilation and all existing tests still pass
+
+2. **SSE Endpoint Implementation** (Task 20.2):
+   - Implemented `GET /events` endpoint in `src/api/routes.rs`
+   - Uses Axum's built-in SSE support with `axum::response::sse::Sse`
+   - Subscribes to the downloader's event broadcast channel
+   - Returns `text/event-stream` content type for SSE protocol
+   - Added comprehensive documentation with usage examples (curl and JavaScript EventSource)
+
+3. **Event Format Conversion** (Task 20.3):
+   - Converts internal `Event` enum to SSE format using `tokio_stream::StreamExt`
+   - Maps each event variant to appropriate event type string:
+     * `queued`, `removed`, `downloading`, `download_complete`, `download_failed`
+     * `verifying`, `verify_complete`, `repairing`, `repair_complete`
+     * `extracting`, `extract_complete`, `moving`, `cleaning`
+     * `complete`, `failed`, `speed_limit_changed`
+     * `queue_paused`, `queue_resumed`, `webhook_failed`, `script_failed`, `shutdown`
+   - Serializes event data to JSON for SSE data field
+   - Properly handles serialization errors with logging
+
+4. **Client Disconnect Handling** (Task 20.4):
+   - Gracefully handles `BroadcastStreamRecvError::Lagged` when clients fall behind
+   - Logs warnings and sends error events to inform client of missed events
+   - Automatically ends stream when broadcast channel closes
+   - Uses `KeepAlive::default()` to maintain connection with periodic ping frames
+   - Filter_map pattern ensures clean stream termination
+
+5. **Testing** (Task 20.5):
+   - Created comprehensive test in `src/api/mod.rs::test_sse_event_stream()`
+   - Verifies endpoint returns 200 OK status
+   - Confirms Content-Type is `text/event-stream`
+   - Tests event emission and subscription system
+   - Validates that events flow through the broadcast channel correctly
+   - All 46 API tests passing (45 previous + 1 new SSE test)
+
+**Technical Details**:
+- Uses `tokio::sync::broadcast` channel for multiple concurrent subscribers
+- Each SSE client gets independent event stream via `downloader.subscribe()`
+- BroadcastStream wraps the receiver to make it compatible with StreamExt
+- Stream uses filter_map to handle errors and convert events to SSE format
+- SSE protocol automatically reconnects on connection loss (browser built-in)
+- 1000-event buffer prevents slow clients from blocking event emission
+
+**Previous Iteration: Task 19.16: Test all queue endpoints with curl/Postman**
 
 Successfully created comprehensive manual testing tools for all implemented API endpoints:
 

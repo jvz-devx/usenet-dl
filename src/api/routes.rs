@@ -4,11 +4,14 @@ use super::AppState;
 use axum::{
     extract::{Multipart, Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Response, sse::{Event as SseEvent, KeepAlive, Sse}},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::convert::Infallible;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use utoipa;
 
 // ============================================================================
@@ -1276,6 +1279,33 @@ pub async fn openapi_spec() -> impl IntoResponse {
 }
 
 /// GET /events - Server-sent events stream
+///
+/// Subscribe to real-time events from the download manager.
+/// Returns a Server-Sent Events (SSE) stream in text/event-stream format.
+///
+/// # Event Format
+///
+/// Each event is sent as:
+/// ```text
+/// event: <event_type>
+/// data: <json_payload>
+/// ```
+///
+/// # Example Usage
+///
+/// Using curl:
+/// ```bash
+/// curl -N http://localhost:6789/api/v1/events
+/// ```
+///
+/// Using JavaScript EventSource:
+/// ```javascript
+/// const events = new EventSource('http://localhost:6789/api/v1/events');
+/// events.onmessage = (e) => {
+///     const event = JSON.parse(e.data);
+///     console.log(event);
+/// };
+/// ```
 #[utoipa::path(
     get,
     path = "/api/v1/events",
@@ -1285,8 +1315,70 @@ pub async fn openapi_spec() -> impl IntoResponse {
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn event_stream(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn event_stream(
+    State(state): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<SseEvent, Infallible>>> {
+    // Subscribe to the downloader's event broadcast channel
+    let receiver = state.downloader.subscribe();
+
+    // Convert the broadcast receiver to a stream
+    let stream = BroadcastStream::new(receiver);
+
+    // Map events to SSE format
+    let sse_stream = stream.filter_map(|result| {
+        match result {
+            Ok(event) => {
+                // Serialize the event to JSON
+                match serde_json::to_string(&event) {
+                    Ok(json_data) => {
+                        // Determine event type from the event variant
+                        let event_type = match &event {
+                            crate::types::Event::Queued { .. } => "queued",
+                            crate::types::Event::Removed { .. } => "removed",
+                            crate::types::Event::Downloading { .. } => "downloading",
+                            crate::types::Event::DownloadComplete { .. } => "download_complete",
+                            crate::types::Event::DownloadFailed { .. } => "download_failed",
+                            crate::types::Event::Verifying { .. } => "verifying",
+                            crate::types::Event::VerifyComplete { .. } => "verify_complete",
+                            crate::types::Event::Repairing { .. } => "repairing",
+                            crate::types::Event::RepairComplete { .. } => "repair_complete",
+                            crate::types::Event::Extracting { .. } => "extracting",
+                            crate::types::Event::ExtractComplete { .. } => "extract_complete",
+                            crate::types::Event::Moving { .. } => "moving",
+                            crate::types::Event::Cleaning { .. } => "cleaning",
+                            crate::types::Event::Complete { .. } => "complete",
+                            crate::types::Event::Failed { .. } => "failed",
+                            crate::types::Event::SpeedLimitChanged { .. } => "speed_limit_changed",
+                            crate::types::Event::QueuePaused => "queue_paused",
+                            crate::types::Event::QueueResumed => "queue_resumed",
+                            crate::types::Event::WebhookFailed { .. } => "webhook_failed",
+                            crate::types::Event::ScriptFailed { .. } => "script_failed",
+                            crate::types::Event::Shutdown => "shutdown",
+                        };
+
+                        // Create SSE event with type and data
+                        Some(Ok(SseEvent::default()
+                            .event(event_type)
+                            .data(json_data)))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize event to JSON: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(skipped)) => {
+                // Client is too slow and missed some events
+                tracing::warn!("SSE client lagged, skipped {} events", skipped);
+                Some(Ok(SseEvent::default()
+                    .event("error")
+                    .data(format!(r#"{{"error":"lagged","skipped":{}}}"#, skipped))))
+            }
+        }
+    });
+
+    // Return SSE response with keep-alive
+    Sse::new(sse_stream).keep_alive(KeepAlive::default())
 }
 
 /// POST /shutdown - Graceful shutdown
