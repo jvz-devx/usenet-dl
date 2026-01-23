@@ -305,6 +305,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - API usage guide with 70+ curl examples
   - Configuration documentation (1187 lines, TOML and JSON formats)
 
+#### Phase 6: Performance Optimizations
+- **Parallel Article Downloads** (Tasks 1.1-7.2)
+  - Converted sequential article downloads to parallel using `futures::stream::buffer_unordered()`
+  - Automatic concurrency calculation from configured server connection counts
+  - Lock-free atomic counters for progress tracking across parallel downloads
+  - Dedicated progress reporting task to prevent event spam
+  - Resilient error handling with partial success support (>50% threshold)
+  - Cancellation support in parallel download contexts
+  - Memory-efficient implementation (articles written to disk, not buffered in RAM)
+  - Expected performance: ~N× speedup with N connections (4 connections: 4×, 20 connections: 20×, 50 connections: 40-50×)
+  - Comprehensive test suite with stress testing up to 1200 concurrent segments
+  - Queue processor and direct download methods both parallelized
+
 ### Testing
 - **Unit Tests**: 297 tests across all modules
 - **Integration Tests**: API, RSS, webhooks, health checks
@@ -322,6 +335,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - reqwest 0.11 - HTTP client
 - notify 6.0 - File system watching
 - rss 2.0 - RSS feed parsing
+- futures 0.3 - Async stream utilities for parallel downloads
 
 ### Architecture
 - Event-driven design with tokio::broadcast channels

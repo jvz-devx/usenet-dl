@@ -298,7 +298,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - Mention: Parallel download behavior, concurrency limits
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs`
 
-- [ ] Task 7.3: Update CHANGELOG.md with performance improvement
+- [x] Task 7.3: Update CHANGELOG.md with performance improvement
   - Add entry: "Performance: Parallel article downloads using connection pool"
   - Mention: Expected speedup (N× with N connections)
   - File: `/home/jens/Documents/source/usenet-dl/CHANGELOG.md`
@@ -371,6 +371,30 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 **Parallel Work Possible**: Phases 3 and 4 can be worked on simultaneously after Phase 2
 
 ## Completed This Iteration
+
+- Task 7.3: Updated CHANGELOG.md with performance improvement
+  - **File Modified**: `CHANGELOG.md` - Added Phase 6: Performance Optimizations section
+  - **New Section Added** (lines 308-319):
+    - Added "Phase 6: Performance Optimizations" subsection under "Unreleased"
+    - Documented parallel article download implementation (Tasks 1.1-7.2)
+    - Key features documented:
+      - `futures::stream::buffer_unordered()` for parallel downloads
+      - Automatic concurrency calculation from server connection counts
+      - Lock-free atomic counters for progress tracking
+      - Dedicated progress reporting task
+      - Resilient error handling with >50% success threshold
+      - Cancellation support in parallel contexts
+      - Memory-efficient design (articles to disk, not RAM)
+    - Performance expectations documented: 4×, 20×, 40-50× speedup examples
+    - Mentioned comprehensive test suite (up to 1200 concurrent segments)
+    - Noted both queue processor and direct download are parallelized
+  - **Dependencies Section Updated** (line 338):
+    - Added `futures 0.3 - Async stream utilities for parallel downloads`
+  - **Format**: Follows "Keep a Changelog" convention consistently
+  - **Validation**: Verified formatting with head/tail commands
+  - **Next**: Task 7.4 - Consider updating README with performance notes (optional)
+
+## Previously Completed This Iteration
 
 - Task 7.2: Updated rustdoc for affected methods
   - **Files Modified**: `src/lib.rs` - Enhanced rustdoc documentation for public API methods
