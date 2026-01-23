@@ -23,7 +23,7 @@ IN_PROGRESS
 ### 3. Create New Documentation
 - [x] Create `docs/getting-started.md`
 - [x] Create `docs/architecture.md`
-- [ ] Create `docs/post-processing.md`
+- [x] Create `docs/post-processing.md`
 - [ ] Create `tests/manual/README.md`
 
 ### 4. Clean Documentation Files
@@ -57,7 +57,16 @@ IN_PROGRESS
 
 ## Completed This Iteration
 
-- Created `docs/architecture.md` with comprehensive documentation of system design, module structure, design patterns, data flow, database schema, REST API architecture, concurrency model, and automation components
+- Created `docs/post-processing.md` with comprehensive documentation covering:
+  - 5-stage post-processing pipeline (verify, repair, extract, move, cleanup)
+  - Archive extraction for RAR, 7z, ZIP with password handling
+  - Nested archive support and recursion
+  - File collision handling (rename, overwrite, skip)
+  - Cleanup configuration and behavior
+  - Deobfuscation system with detection heuristics
+  - Event monitoring and error handling
+  - Re-extraction functionality
+  - Complete usage examples
 
 ## Notes
 
