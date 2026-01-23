@@ -231,6 +231,7 @@ pub async fn get_download(
     responses(
         (status = 201, description = "Download added successfully", body = i64),
         (status = 400, description = "Invalid NZB file"),
+        (status = 409, description = "Duplicate download detected"),
         (status = 422, description = "Unprocessable entity"),
         (status = 500, description = "Internal server error")
     )
@@ -337,6 +338,18 @@ pub async fn add_download(
                 }))
             ).into_response()
         }
+        Err(crate::Error::Duplicate(msg)) => {
+            // Return 409 Conflict for duplicate downloads
+            (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": {
+                        "code": "duplicate",
+                        "message": msg
+                    }
+                }))
+            ).into_response()
+        }
         Err(e) => {
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -360,6 +373,7 @@ pub async fn add_download(
     responses(
         (status = 201, description = "Download added successfully", body = i64),
         (status = 400, description = "Invalid URL or NZB content"),
+        (status = 409, description = "Duplicate download detected"),
         (status = 422, description = "Unprocessable entity"),
         (status = 500, description = "Internal server error")
     )
@@ -413,20 +427,31 @@ pub async fn add_download_url(
             ).into_response()
         }
         Err(e) => {
-            // Check error type to determine status code
-            let status = match e {
-                crate::error::Error::Io(_) => StatusCode::BAD_REQUEST,
-                crate::error::Error::Network(_) => StatusCode::BAD_REQUEST,
-                crate::error::Error::InvalidNzb(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            // Check error type to determine status code and error code
+            let (status, code, message) = match e {
+                crate::error::Error::Duplicate(msg) => {
+                    (StatusCode::CONFLICT, "duplicate", msg)
+                }
+                crate::error::Error::Io(ref e) => {
+                    (StatusCode::BAD_REQUEST, "io_error", format!("I/O error: {}", e))
+                }
+                crate::error::Error::Network(ref e) => {
+                    (StatusCode::BAD_REQUEST, "network_error", format!("Network error: {}", e))
+                }
+                crate::error::Error::InvalidNzb(ref e) => {
+                    (StatusCode::UNPROCESSABLE_ENTITY, "invalid_nzb", format!("Invalid NZB: {}", e))
+                }
+                _ => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "add_failed", format!("Failed to add NZB from URL: {}", e))
+                }
             };
 
             (
                 status,
                 Json(json!({
                     "error": {
-                        "code": "add_failed",
-                        "message": format!("Failed to add NZB from URL: {}", e)
+                        "code": code,
+                        "message": message
                     }
                 }))
             ).into_response()

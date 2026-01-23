@@ -59,17 +59,90 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (39/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (40/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
-  - Tasks 28.1-28.7: ✅ Duplicate detection integration complete (11 duplicate detection tests passing)
-- Total: 207/253 tasks complete (81.8%)
+  - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
+- Total: 208/253 tasks complete (82.2%)
 
-**Next Task:** Task 28.8 - Test duplicate detection with same NZB added twice
+**Next Task:** Task 29.1 - Create WebhookConfig with url, events, auth_header, timeout
 
 ## Completed This Iteration
+
+**Task 28.8: Test duplicate detection with same NZB added twice via API**
+
+Successfully implemented comprehensive API-level integration test for duplicate detection that validates all three action modes (Block, Warn, Allow) plus disabled state. This completes the duplicate detection feature (Tasks 28.1-28.8).
+
+1. **API Integration Test** (src/api/mod.rs:5012-5321):
+   - Created `test_duplicate_detection_via_api()` comprehensive test
+   - Tests all 4 scenarios with multipart/form-data uploads
+   - Validates HTTP status codes, error messages, and events
+
+2. **Test 1: Block Action**:
+   - First upload succeeds with 201 Created
+   - Second upload of same NZB fails with 409 Conflict
+   - Error response has code="duplicate" and descriptive message
+   - Verifies duplicate is detected by NZB hash and properly blocked
+
+3. **Test 2: Warn Action**:
+   - First upload succeeds with ID 1
+   - Second upload with different filename succeeds with ID 2
+   - DuplicateDetected event emitted with correct details
+   - Event verification loops through event stream to find duplicate event
+   - All event fields validated (existing ID, new name, method, existing name)
+
+4. **Test 3: Allow Action**:
+   - Both uploads succeed (IDs 1 and 2)
+   - No blocking occurs
+   - Duplicate is allowed silently as configured
+
+5. **Test 4: Disabled Detection**:
+   - Detection disabled in config (enabled=false)
+   - Both uploads succeed regardless of duplicate content
+   - No duplicate checking performed
+
+6. **API Error Handling Improvements** (src/api/routes.rs):
+   - Updated `add_download` handler (lines 340-358):
+     - Added specific handling for Error::Duplicate → 409 Conflict
+     - Returns error code="duplicate" with message from Error
+     - Other errors still return 422 Unprocessable Entity
+   - Updated `add_download_url` handler (lines 427-450):
+     - Added Error::Duplicate case → 409 Conflict with code="duplicate"
+     - Improved error specificity: io_error, network_error, invalid_nzb
+     - Better error messages for each error type
+
+7. **OpenAPI Documentation Updates** (src/api/routes.rs):
+   - Added 409 Conflict response to POST /downloads (line 234)
+   - Added 409 Conflict response to POST /downloads/url (line 376)
+   - Both now properly document duplicate detection behavior
+
+8. **Test Fix for Changed Error Codes** (src/api/mod.rs:1376-1385):
+   - Updated `test_add_download_url_endpoint` to accept new error codes
+   - Now accepts io_error, network_error, or add_failed
+   - Reflects improved error specificity from handler changes
+
+9. **Event Stream Handling**:
+   - Test loops through up to 10 events to find DuplicateDetected
+   - Handles timing issues where other events (Queued) may arrive first
+   - Robust event verification with proper timeout handling
+
+10. **Test Output and Validation**:
+    - Test produces clear console output with checkmarks for each scenario
+    - Summary table at end confirms all 4 scenarios pass
+    - Validates both success paths (Block, Warn, Allow, Disabled)
+    - Comprehensive coverage of duplicate detection feature
+
+**Build Verification**:
+- ✅ Library compiles successfully (103 warnings, no errors)
+- ✅ New test `test_duplicate_detection_via_api` passes (0.94s)
+- ✅ Existing test `test_add_download_endpoint` still passes
+- ✅ Fixed test `test_add_download_url_endpoint` passes with updated assertions
+- ✅ All 3 library duplicate tests `test_add_nzb_content_duplicate_*` pass
+- ✅ No regressions in existing tests
+
+**Previous Iteration:**
 
 **Tasks 28.6-28.7: Add duplicate detection to add_nzb_content() and emit warning events**
 
@@ -2278,7 +2351,7 @@ The implementation will require these major dependencies:
 - [x] Task 28.5: Implement check_duplicate() with sha256 hashing
 - [x] Task 28.6: Add duplicate detection to add_nzb_content()
 - [x] Task 28.7: Emit warning event or block based on DuplicateAction
-- [ ] Task 28.8: Test duplicate detection with same NZB added twice
+- [x] Task 28.8: Test duplicate detection with same NZB added twice
 
 ### Phase 5: Notifications & Polish (Steps 29-35)
 
