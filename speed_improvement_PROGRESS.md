@@ -355,6 +355,18 @@ Priority 3 (Future optimization):
   - Monitor CPU usage (should see multi-core utilization)
   - COMPLETED: Performance test shows slight degradation vs Task 3.5 baseline
 
+- [x] Task 4.6: REVERT parallel yEnc decoder implementation
+  - REASON: Task 4.5 showed 17-19% performance degradation instead of improvement
+  - Removed decoder channel and worker pool from src/lib.rs:3321-3411
+  - Removed decode_tx clone from download loop (line 3467)
+  - Replaced decoder send with direct file write (lines 3544-3558)
+  - Removed decoder shutdown code (lines 3617-3626)
+  - Removed num_cpus dependency from Cargo.toml
+  - Deleted tests/parallel_yenc_decoder.rs test file
+  - COMPLETED: Code compiles cleanly, all batch update tests pass
+  - RESULT: Reverted to Task 3.5 baseline (211 MB/s peak, 210 MB/s sustained)
+  - LESSON LEARNED: CPU-bound optimizations don't help when network/database are the bottleneck
+
 ### Phase 5: Article Prefetching (MEDIUM IMPACT - Expected +10-20%)
 
 - [ ] Task 5.1: Design prefetch architecture

@@ -55,9 +55,6 @@ regex = "1"
 # Random number generation (retry jitter)
 rand = "0.8"
 
-# CPU detection (for decoder parallelism)
-num_cpus = "1"
-
 # REST API
 axum = { version = "0.7", features = ["multipart"] }
 tower = { version = "0.4", features = ["util"] }

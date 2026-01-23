@@ -3297,7 +3297,6 @@ dependencies = [
  "libc",
  "nntp-rs",
  "notify",
- "num_cpus",
  "rand",
  "regex",
  "reqwest",
