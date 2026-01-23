@@ -143,7 +143,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
 
 ### Phase 3: Parallelize Queue Processor Download Loop
 
-- [ ] Task 3.1: Calculate concurrency limit from config
+- [x] Task 3.1: Calculate concurrency limit from config
   - Before article download loop (around line 3150):
     ```rust
     let concurrency: usize = config_clone.servers.iter()
@@ -366,6 +366,15 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 **Parallel Work Possible**: Phases 3 and 4 can be worked on simultaneously after Phase 2
 
 ## Completed This Iteration
+
+- Task 3.1: Calculate concurrency limit from config
+  - Added concurrency calculation at src/lib.rs:3215-3218
+  - Calculates total connections across all configured servers
+  - Formula: `config_clone.servers.iter().map(|s| s.connections).sum()`
+  - Variable will be used in next tasks for buffer_unordered() concurrency parameter
+  - Code compiles successfully with expected warnings (unused variable until next task)
+
+## Previously Completed
 
 - Task 2.2: Create progress reporting task for queue processor
   - Created dedicated tokio task that runs every 500ms to emit progress events

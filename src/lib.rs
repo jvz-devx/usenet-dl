@@ -3212,6 +3212,11 @@ impl UsenetDownloader {
                             })
                         };
 
+                        // Calculate concurrency limit based on total connections across all servers
+                        let concurrency: usize = config_clone.servers.iter()
+                            .map(|s| s.connections)
+                            .sum();
+
                         // Download each article
                         for article in pending_articles {
                             // Check if download was paused/cancelled
