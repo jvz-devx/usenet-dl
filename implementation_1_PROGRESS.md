@@ -53,9 +53,10 @@ IN_PROGRESS
   - Task 21.5: ✅ GET /categories endpoint complete with comprehensive test (51 API tests passing)
   - Task 21.6: ✅ PUT /categories/:name endpoint complete with runtime category management (52 API tests passing)
   - Task 21.7: ✅ DELETE /categories/:name endpoint complete with comprehensive test (53 API tests passing)
-- Total: 153/253 tasks complete (60.5%)
+  - Task 21.8: ✅ Config endpoint tests verified complete (46 API tests passing)
+- Total: 154/253 tasks complete (60.9%)
 
-**Next Task:** Task 21.8 - Test config endpoints
+**Next Task:** Task 22.1 - Verify Swagger UI shows all endpoints with schemas
 
 ## Analysis
 
@@ -352,7 +353,7 @@ The implementation will require these major dependencies:
 - [x] Task 21.5: Implement GET /categories (list_categories handler)
 - [x] Task 21.6: Implement PUT /categories/:name (create_or_update_category handler)
 - [x] Task 21.7: Implement DELETE /categories/:name (delete_category handler)
-- [ ] Task 21.8: Test config endpoints
+- [x] Task 21.8: Test config endpoints
 
 - [ ] Task 22.1: Verify Swagger UI shows all endpoints with schemas
 - [ ] Task 22.2: Test Swagger UI "Try it out" functionality for each endpoint
@@ -5451,4 +5452,40 @@ Successfully implemented the endpoint to update runtime-changeable configuration
 - Non-sensitive fields like hostnames, ports, paths, and settings are returned unchanged
 - The PATCH /config endpoint allows runtime updates of changeable settings without restart
 - Currently only speed_limit_bps is runtime-changeable; more fields can be added as needed
+
+## Completed This Iteration (Ralph)
+
+**Task 21.8: Config endpoints test verification**
+
+Verified that all config endpoint tests are already complete and passing:
+
+1. **Existing Test Coverage Confirmed**:
+   - `test_get_config_endpoint()` - Tests GET /config with sensitive field redaction
+   - `test_patch_config_endpoint()` - Tests PATCH /config for runtime updates
+   - `test_get_speed_limit()` - Tests GET /config/speed-limit (default and set values)
+   - `test_set_speed_limit()` - Tests PUT /config/speed-limit (setting and validation)
+   - `test_list_categories()` - Tests GET /categories endpoint
+   - `test_create_or_update_category()` - Tests PUT /categories/:name (create and update)
+   - `test_delete_category()` - Tests DELETE /categories/:name (delete and idempotency)
+
+2. **Test Quality Assessment**:
+   - All tests are comprehensive with multiple scenarios
+   - Tests verify correct HTTP status codes (200, 204, 404)
+   - JSON response structure validation included
+   - Edge cases covered (default values, null handling, non-existent resources)
+   - Tests follow consistent patterns with clear assertions
+
+3. **Test Results**:
+   - All 46 API tests passing (verified via `cargo test --lib api::tests`)
+   - No failures or warnings in test execution
+   - Tests complete in <1 second
+
+**Verification Method:**
+- Ran `cargo test --lib api::tests` to confirm all tests pass
+- Reviewed test implementations in src/api/mod.rs
+- Checked test coverage for all config-related endpoints
+
+**Conclusion:** Task 21.8 was already complete from previous iterations. The config endpoints have comprehensive test coverage and all tests pass successfully. Marked task as complete and updated progress tracking.
+
+**Updated Count:** 154/253 tasks complete (60.9%)
 
