@@ -1213,6 +1213,64 @@ impl Database {
 
         Ok(())
     }
+
+    /// Mark an NZB file as processed
+    ///
+    /// This is used by the folder watcher with WatchFolderAction::Keep to track
+    /// which NZB files have already been processed to avoid re-adding them.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the NZB file
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) on success, or an error if the database operation fails.
+    pub async fn mark_nzb_processed(&self, path: &std::path::Path) -> Result<()> {
+        let path_str = path.to_string_lossy().to_string();
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO processed_nzbs (path, processed_at)
+            VALUES (?, ?)
+            ON CONFLICT(path) DO UPDATE SET processed_at = ?
+            "#
+        )
+        .bind(&path_str)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark NZB as processed: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Check if an NZB file has been processed
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the NZB file
+    ///
+    /// # Returns
+    ///
+    /// Returns true if the NZB has been processed before, false otherwise.
+    pub async fn is_nzb_processed(&self, path: &std::path::Path) -> Result<bool> {
+        let path_str = path.to_string_lossy().to_string();
+
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM processed_nzbs WHERE path = ?
+            "#
+        )
+        .bind(&path_str)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to check if NZB is processed: {}", e)))?;
+
+        Ok(count > 0)
+    }
 }
 
 #[cfg(test)]

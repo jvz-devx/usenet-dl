@@ -55,6 +55,7 @@ pub mod db;
 pub mod deobfuscation;
 pub mod error;
 pub mod extraction;
+pub mod folder_watcher;
 pub mod post_processing;
 pub mod retry;
 pub mod speed_limiter;
@@ -1864,6 +1865,34 @@ impl UsenetDownloader {
 
         // Delegate to add_nzb_content
         self.add_nzb_content(&content, &name, options).await
+    }
+
+    /// Mark an NZB file as processed in the database
+    ///
+    /// This is used by the folder watcher with WatchFolderAction::Keep to track
+    /// which NZB files have already been processed to avoid re-adding them.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the NZB file to mark as processed
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) on success, or an error if the database operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # use std::path::Path;
+    /// # async fn example(downloader: UsenetDownloader) -> Result<()> {
+    /// let nzb_path = Path::new("/watch/folder/movie.nzb");
+    /// downloader.mark_nzb_processed(nzb_path).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn mark_nzb_processed(&self, path: &std::path::Path) -> Result<()> {
+        self.db.mark_nzb_processed(path).await
     }
 
     /// Start the queue processor task

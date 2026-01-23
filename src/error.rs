@@ -86,6 +86,10 @@ pub enum Error {
     #[error("API server error: {0}")]
     ApiServerError(String),
 
+    /// Folder watching error
+    #[error("folder watch error: {0}")]
+    FolderWatch(String),
+
     /// I/O error (non-std::io::Error)
     #[error("I/O error: {0}")]
     IoError(std::io::Error),

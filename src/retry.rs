@@ -105,6 +105,8 @@ impl IsRetryable for Error {
             Error::InvalidPath { .. } => false,
             // API server errors are generally not retryable (application-level errors)
             Error::ApiServerError(_) => false,
+            // Folder watch errors are generally not retryable (file system issues)
+            Error::FolderWatch(_) => false,
             // IoError is similar to Io but allows wrapping std::io::Error explicitly
             Error::IoError(e) => match e.kind() {
                 std::io::ErrorKind::TimedOut

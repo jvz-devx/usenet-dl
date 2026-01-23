@@ -59,15 +59,79 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Total: 163/253 tasks complete (64.4%)
+- Phase 4: 🔄 In Progress (4/90 tasks) - Automation features
+  - Tasks 24.1-24.4: ✅ FolderWatcher struct complete with notify integration (4 tests passing)
+- Total: 167/253 tasks complete (66.0%)
 
-**Next Task:** Task 24.1 - Add notify crate dependency
+**Next Task:** Task 24.5 - Implement watch_folder() task that monitors directory
 
 ## Completed This Iteration
 
-**Tasks 23.5 & 23.6: Comprehensive rate limiting tests**
+**Task 24.4: Create FolderWatcher struct with notify::Watcher**
 
-Implemented comprehensive automated tests for API rate limiting that validate all critical aspects of the system:
+Implemented the complete folder watching infrastructure for automatic NZB import:
+
+1. **Module Created** (src/folder_watcher.rs):
+   - Created new `folder_watcher` module with full implementation
+   - Added module to lib.rs exports
+   - Integrated with existing config and database layers
+
+2. **FolderWatcher Structure:**
+   - Uses `notify::RecommendedWatcher` for cross-platform filesystem event monitoring
+   - Async event handling with tokio unbounded channels
+   - Supports multiple watch folder configurations
+   - Automatic directory creation on startup
+   - Non-recursive watching (only monitors top-level folder)
+
+3. **Core Methods Implemented:**
+   - `new()` - Initialize watcher with downloader reference and configs
+   - `start()` - Register all folders and create missing directories
+   - `run()` - Main event loop that processes filesystem events
+   - `stop()` - Clean shutdown of the watcher
+   - `handle_event()` - Process Create and Modify events
+   - `is_nzb_file()` - Case-insensitive .nzb extension detection
+   - `process_nzb_file()` - Add NZB to queue with configured category
+   - `find_config_for_path()` - Match file to appropriate config
+   - `handle_after_import()` - Execute configured action (Delete/Move/Keep)
+
+4. **After-Import Actions:**
+   - **Delete**: Remove NZB file after successful queue addition
+   - **MoveToProcessed**: Move to "processed" subfolder (auto-created)
+   - **Keep**: Leave file in place, mark as processed in database
+
+5. **Database Integration:**
+   - Added `mark_nzb_processed()` to Database struct
+   - Added `is_nzb_processed()` to check if NZB already processed
+   - Supports WatchFolderAction::Keep workflow
+   - Uses processed_nzbs table for tracking
+
+6. **UsenetDownloader Integration:**
+   - Added `mark_nzb_processed()` public method
+   - Delegates to database layer for persistence
+   - Enables folder watcher to track processed files
+
+7. **Error Handling:**
+   - Added `Error::FolderWatch` variant to error enum
+   - Integrated into `IsRetryable` trait (non-retryable)
+   - Graceful error handling throughout the pipeline
+
+8. **Testing:**
+   - 4 comprehensive unit tests implemented:
+     - `test_folder_watcher_creation()` - Verify initialization
+     - `test_is_nzb_file()` - Test extension detection (case-insensitive)
+     - `test_folder_watcher_start()` - Verify directory auto-creation
+     - `test_find_config_for_path()` - Test config matching logic
+   - All tests passing
+   - Uses tempfile for isolated test environments
+
+9. **Features:**
+   - Debounced event handling (via notify crate default config)
+   - 100ms delay after file detection to ensure complete write
+   - Proper async/await throughout
+   - Structured logging with tracing
+   - Clean shutdown support
+
+**Implementation Notes:**
 
 1. **Test Implementation** (src/api/mod.rs:4564-4718):
    - Created `test_rate_limiting_returns_429_when_exceeded()` integration test
@@ -442,10 +506,10 @@ The implementation will require these major dependencies:
 
 ### Phase 4: Automation (Steps 24-28)
 
-- [ ] Task 24.1: Add notify crate dependency
-- [ ] Task 24.2: Create WatchFolderConfig with path, after_import, category, scan_interval
-- [ ] Task 24.3: Implement WatchFolderAction enum (Delete, MoveToProcessed, Keep)
-- [ ] Task 24.4: Create FolderWatcher struct with notify::Watcher
+- [x] Task 24.1: Add notify crate dependency
+- [x] Task 24.2: Create WatchFolderConfig with path, after_import, category, scan_interval
+- [x] Task 24.3: Implement WatchFolderAction enum (Delete, MoveToProcessed, Keep)
+- [x] Task 24.4: Create FolderWatcher struct with notify::Watcher
 - [ ] Task 24.5: Implement watch_folder() task that monitors directory
 - [ ] Task 24.6: Process .nzb files found in folder (call add_nzb)
 - [ ] Task 24.7: Handle after_import action (delete, move, or track in processed_nzbs table)
