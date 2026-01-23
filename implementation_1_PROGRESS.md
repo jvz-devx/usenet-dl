@@ -58,35 +58,52 @@ IN_PROGRESS
   - Task 22.2: ✅ Swagger UI "Try it out" functionality validated - all 37 endpoints tested (54 API tests passing)
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
-- Total: 160/253 tasks complete (63.2%)
+- Total: 161/253 tasks complete (63.6%)
 
-**Next Task:** Task 23.3 - Implement conditional rate limiting layer (only if enabled)
+**Next Task:** Task 23.4 - Add exempt path/IP checking logic
 
 ## Completed This Iteration
 
-**Task 23.2: Create RateLimitConfig with exempt_paths and exempt_ips**
+**Task 23.3: Implement conditional rate limiting layer (only if enabled)**
 
-Enhanced the RateLimitConfig structure to support path and IP exemptions as specified in the design:
+Created a complete rate limiting middleware implementation with support for exempt paths and IPs:
 
-1. **Added Fields to RateLimitConfig:**
-   - `exempt_paths: Vec<String>` - List of API paths that should not be rate limited
-   - `exempt_ips: Vec<std::net::IpAddr>` - List of IP addresses exempt from rate limiting
+1. **Created src/api/rate_limit.rs:**
+   - Implemented `TokenBucket` with token refill algorithm based on elapsed time
+   - Implemented `RateLimiter` with per-IP token bucket tracking
+   - Used tokio::sync::Mutex for async-safe bucket management
+   - Returns retry_after_seconds when rate limit is exceeded
 
-2. **Default Exempt Paths:**
-   - `/api/v1/events` - SSE endpoint is long-lived and shouldn't be rate limited
-   - `/api/v1/health` - Health checks should always work
+2. **RateLimiter Features:**
+   - `is_path_exempt()` - Checks if a path is exempt (supports exact and prefix matching)
+   - `is_ip_exempt()` - Checks if an IP address is exempt from rate limiting
+   - `check()` - Main rate limiting logic, returns None if allowed or Some(retry_secs) if limited
+   - Per-IP tracking using HashMap<IpAddr, TokenBucket>
 
-3. **Default Exempt IPs:**
-   - IPv4 localhost (127.0.0.1)
-   - IPv6 localhost (::1)
+3. **Middleware Integration:**
+   - Created `rate_limit_middleware()` async function with State extractor
+   - Integrated into create_router() with conditional application based on config.api.rate_limit.enabled
+   - Returns HTTP 429 Too Many Requests with JSON error response including retry_after_seconds
 
-4. **Implementation Details:**
-   - Added `default_exempt_paths()` helper function
-   - Added `default_exempt_ips()` helper function
-   - Both fields use `#[serde(default)]` to provide defaults when not configured
-   - Code compiles successfully
+4. **Error Response Format:**
+   ```json
+   {
+     "error": {
+       "code": "rate_limited",
+       "message": "Too many requests",
+       "details": {
+         "retry_after_seconds": 1
+       }
+     }
+   }
+   ```
 
-This completes Task 23.1 (already had tower-governor dependency) and Task 23.2. Next step is to implement the actual rate limiting layer in the API router.
+5. **Testing:**
+   - All 56 API tests pass successfully
+   - Code compiles with no errors (only documentation warnings)
+   - Rate limiting is disabled by default (config.api.rate_limit.enabled = false)
+
+The implementation properly respects exempt_paths and exempt_ips from the config. The next step is to add comprehensive tests for the rate limiting functionality.
 
 ## Notes
 
@@ -405,8 +422,8 @@ The implementation will require these major dependencies:
 
 - [x] Task 23.1: Add tower-governor dependency
 - [x] Task 23.2: Create RateLimitConfig with requests_per_second, burst_size, exempt_paths, exempt_ips
-- [ ] Task 23.3: Implement conditional rate limiting layer (only if enabled)
-- [ ] Task 23.4: Add exempt path/IP checking logic
+- [x] Task 23.3: Implement conditional rate limiting layer (only if enabled)
+- [x] Task 23.4: Add exempt path/IP checking logic (done as part of 23.3)
 - [ ] Task 23.5: Test rate limiting returns 429 when exceeded
 - [ ] Task 23.6: Verify exempt paths are not rate limited
 

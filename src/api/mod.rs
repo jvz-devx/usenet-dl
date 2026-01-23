@@ -18,6 +18,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 pub mod auth;
 pub mod openapi;
+pub mod rate_limit;
 pub mod routes;
 pub mod state;
 
@@ -155,6 +156,17 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
 
     // Add state to all routes
     let router = router.with_state(state);
+
+    // Apply rate limiting middleware if enabled in config
+    let router = if config.api.rate_limit.enabled {
+        let limiter = Arc::new(rate_limit::RateLimiter::new(config.api.rate_limit.clone()));
+        router.layer(middleware::from_fn_with_state(
+            limiter,
+            rate_limit::rate_limit_middleware,
+        ))
+    } else {
+        router
+    };
 
     // Apply authentication middleware if API key is configured
     let router = if config.api.api_key.is_some() {
