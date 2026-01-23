@@ -328,23 +328,26 @@ Priority 3 (Future optimization):
     - Clone protection: decode_tx cloned into async closure
     - Shutdown handling: decode_tx dropped, all workers awaited before post-processing
 
-- [ ] Task 4.2: Integrate decoder into download loop
-  - File: `src/lib.rs:3335-3338`
+- [x] Task 4.2: Integrate decoder into download loop
+  - File: `src/lib.rs:3555-3568`
   - Instead of writing raw data, send to decoder channel
   - Decoder writes decoded data to temp files
   - Keep same file naming: article_{segment_number}.dat
+  - COMPLETED: Integrated as part of Task 4.1 implementation
 
-- [ ] Task 4.3: Add decoder shutdown handling
-  - File: `src/lib.rs:3385-3390` (after download loop)
+- [x] Task 4.3: Add decoder shutdown handling
+  - File: `src/lib.rs:3618-3626` (after download loop)
   - Close decoder channel
   - Wait for all decoder tasks to complete
   - Verify all articles decoded before continuing
+  - COMPLETED: Integrated as part of Task 4.1 implementation
 
-- [ ] Task 4.4: Add decoding tests
-  - File: `tests/` (add to existing test file)
+- [x] Task 4.4: Add decoding tests
+  - File: `tests/parallel_yenc_decoder.rs` (new file)
   - Verify parallel decoding produces correct output
   - Test CRC32 validation
   - Test multi-part assembly
+  - COMPLETED: Created comprehensive test suite with 14 test cases, all passing
 
 - [ ] Task 4.5: Run performance test with parallel decoding
   - Run: TEST_NZB_PATH="./Fallout.S02E06.nzb" NNTP_CONNECTIONS=50 cargo test --release --test e2e_real_nzb test_real_nzb_download -- --ignored --nocapture
@@ -507,6 +510,25 @@ Test files:
 - `/home/jens/Documents/source/usenet-dl/tests/parallel_downloads.rs` - Parallel tests
 
 ## Completed This Iteration
+
+### Task 4.4: Add decoding tests ✓
+
+**Location:** `tests/parallel_yenc_decoder.rs`
+
+**What was done:**
+- Created new test file with 14 comprehensive test cases for parallel yEnc decoder
+- Tests cover: single/multiple articles, large articles, error handling, channel capacity, worker count, concurrent decoding, CRC32 validation, multi-part support, shutdown, temp file writing, error recovery, segment ordering, and empty data
+- All 14 tests passing in 0.03s
+- Validates that parallel decoder implementation is correct and ready for integration
+
+**Build Status:** ✓ All tests compile and pass cleanly
+
+**Next Steps:**
+- Task 4.5: Run performance test with parallel decoding
+
+---
+
+## Previous Iterations
 
 ### Task 3.4: Add batching tests ✓
 
@@ -1153,3 +1175,61 @@ Created a parallel yEnc decoder task pool that decodes articles in the backgroun
 **Commit:** b941f9f "feat(lib): Add parallel yEnc decoder task pool for improved throughput"
 
 **Note:** Tasks 4.2 and 4.3 were naturally completed as part of implementing 4.1 since they're tightly coupled with the decoder task pool implementation.
+
+---
+
+## Latest Iteration (Task 4.4)
+
+### Task 4.4: Add decoding tests ✓
+
+**Location:** `tests/parallel_yenc_decoder.rs`
+
+**Implementation Details:**
+
+Created comprehensive test suite for parallel yEnc decoder functionality with 14 test cases:
+
+**1. Test Coverage:**
+- `test_parallel_decoder_single_article` - Verifies single article decode
+- `test_parallel_decoder_multiple_articles` - Tests multiple articles (5 items)
+- `test_parallel_decoder_large_article` - Tests 1MB article decoding
+- `test_parallel_decoder_invalid_article_fallback` - Tests error handling
+- `test_parallel_decoder_channel_capacity` - Validates channel capacity (100)
+- `test_parallel_decoder_worker_count` - Verifies worker count = CPU cores
+- `test_parallel_decoder_concurrent_decoding` - Tests parallel decoding
+- `test_parallel_decoder_crc32_validation` - Tests CRC32 validation
+- `test_parallel_decoder_multipart_support` - Tests multi-part articles
+- `test_parallel_decoder_shutdown_cleanup` - Tests worker shutdown
+- `test_parallel_decoder_temp_file_write` - Tests file writing
+- `test_parallel_decoder_error_recovery` - Tests recovery from decode errors
+- `test_parallel_decoder_preserves_segment_ordering` - Tests segment numbering
+- `test_parallel_decoder_handles_empty_data` - Tests empty data handling
+
+**2. Test Results:**
+- **All 14 tests passing** ✓
+- Total test time: 0.03s (very fast)
+- No compilation errors or warnings in test code
+
+**3. Validation Coverage:**
+- Single and multi-part yEnc decoding
+- CRC32 validation
+- Error handling and graceful fallback
+- Channel capacity and backpressure
+- Worker pool sizing (num_cpus)
+- Concurrent decoding performance
+- Clean shutdown and cleanup
+- Segment ordering preservation
+- Empty/edge case handling
+
+**4. Helper Functions:**
+- `create_yenc_encoded_article()` - Creates valid yEnc test data
+- `create_invalid_yenc_article()` - Creates invalid yEnc for error testing
+
+**Build Status:** ✓ All tests compile and pass cleanly
+
+**Test Execution:**
+```bash
+cargo test --test parallel_yenc_decoder
+```
+
+**Next Steps:**
+- Task 4.5: Run performance test with parallel decoding to measure real-world improvement
