@@ -236,7 +236,7 @@ Priority 3 (Future optimization):
   - Add: socket2 = "0.5"
   - COMPLETED: Added socket2 = "0.5" to dependencies section
 
-- [ ] Task 2.2: Implement socket buffer configuration
+- [x] Task 2.2: Implement socket buffer configuration
   - File: `nntp-rs/src/client.rs:189-200`
   - Use socket2::Socket instead of TcpStream::connect()
   - Set SO_RCVBUF to 4MB (4 * 1024 * 1024)
@@ -244,6 +244,7 @@ Priority 3 (Future optimization):
   - Convert socket2::Socket to tokio::net::TcpStream
   - Log actual buffer sizes (may differ from requested)
   - Handle errors gracefully (continue with defaults)
+  - COMPLETED: Implemented in connect() method at line 189-288
 
 - [ ] Task 2.3: Add socket tuning tests
   - File: `nntp-rs/tests/` (add to existing test file)
@@ -650,7 +651,7 @@ nix-shell --run "TEST_NZB_PATH='./Fallout.S02E06.nzb' NNTP_CONNECTIONS=50 cargo 
 
 ---
 
-## Latest Iteration (Task 2.1)
+## Latest Iteration (Task 2.2)
 
 ### Task 2.1: Add socket2 dependency ✓
 
@@ -663,7 +664,46 @@ nix-shell --run "TEST_NZB_PATH='./Fallout.S02E06.nzb' NNTP_CONNECTIONS=50 cargo 
 
 **Build Status:** ✓ Compiles cleanly with `cargo check -p nntp-rs`
 
+### Task 2.2: Implement socket buffer configuration ✓
+
+**Location:** `nntp-rs/src/client.rs:189-288`
+
+**Implementation Details:**
+- Replaced `TcpStream::connect()` with `socket2::Socket` for low-level control
+- Socket creation and configuration:
+  - Auto-detects IPv4 vs IPv6 from resolved address
+  - Creates TCP socket using `socket2::Socket::new()`
+  - Sets `TCP_NODELAY` for low-latency request/response pattern
+- Buffer configuration:
+  - **Receive buffer**: Set to 4MB (4 * 1024 * 1024 bytes)
+    - Allows OS to buffer more incoming data
+    - Reduces ACK frequency, improves throughput on high-latency connections
+  - **Send buffer**: Set to 1MB (1024 * 1024 bytes)
+    - Enables better command pipelining
+    - Allows multiple commands to queue without blocking
+- Error handling:
+  - Buffer size failures logged as warnings (non-fatal)
+  - Logs actual buffer sizes achieved (OS may adjust requested values)
+  - Gracefully continues with OS defaults if tuning fails
+- Connection process:
+  - Sets socket to non-blocking mode
+  - Connects using `spawn_blocking` (socket2's connect is blocking)
+  - Maintains 120-second timeout via tokio::time::timeout
+  - Converts to `tokio::net::TcpStream` for async operations
+
+**Architecture Decisions:**
+1. **Why socket2**: Provides low-level socket options not exposed by tokio's TcpStream
+2. **Why 4MB receive buffer**: Matches SABnzbd's high-throughput configuration
+3. **Why 1MB send buffer**: Sufficient for pipelining 10+ commands without blocking
+4. **Why spawn_blocking**: socket2::Socket::connect() is blocking, requires separate thread
+
+**Graceful Degradation:**
+- If OS limits buffer size (e.g., `/proc/sys/net/core/rmem_max`), continues with capped value
+- If socket2 operations fail entirely, code will fall back to OS defaults
+- All failures logged for debugging
+
+**Build Status:** ✓ Compiles cleanly with `cargo check -p nntp-rs` and `cargo check -p usenet-dl`
+
 **Next Steps:**
-- Task 2.2: Implement socket buffer configuration in client.rs
 - Task 2.3: Add socket tuning tests
 - Task 2.4: Run performance test with socket tuning
