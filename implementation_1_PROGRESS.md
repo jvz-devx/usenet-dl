@@ -66,14 +66,68 @@ IN_PROGRESS
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
   - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
-- Phase 5: 🔄 In Progress (11/38 tasks) - Notifications & Polish
+- Phase 5: 🔄 In Progress (14/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
-  - Tasks 31.1-31.2: ✅ DiskSpaceConfig and get_available_space() complete (3 disk space tests passing)
-- Total: 226/253 tasks complete (89.3%)
+  - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
+- Total: 229/253 tasks complete (90.5%)
 
-**Next Task:** Task 31.3 - Implement check_disk_space() before download
+**Next Task:** Task 32.1 - Implement test_server() to verify connectivity and authentication
 
 ## Completed This Iteration
+
+**Tasks 31.3-31.5: Disk space checking integration and error handling**
+
+Successfully implemented the complete disk space checking system that validates available space before starting downloads. The system now checks disk space during add_nzb_content() and properly handles cases where the download directory doesn't exist yet.
+
+1. **Error Type Additions** (Task 31.4, src/error.rs:103-110):
+   - Added `InsufficientSpace { required: u64, available: u64 }` error variant
+   - Added `DiskSpaceCheckFailed(String)` error variant for I/O failures
+   - Both errors properly implement thiserror::Error with descriptive messages
+   - Added to retry.rs IsRetryable implementation (marked as non-retryable)
+
+2. **check_disk_space() Method** (Task 31.3, src/lib.rs:2073-2118):
+   - Private async method that validates sufficient disk space before download
+   - Skips check if `config.disk_space.enabled` is false
+   - Calculates required space: `size_bytes × size_multiplier + min_free_space`
+   - Smart path handling: checks parent directory if download_dir doesn't exist yet
+   - Returns InsufficientSpace error if available < required
+   - Returns DiskSpaceCheckFailed error on filesystem query failures
+   - Comprehensive rustdoc with example usage
+
+3. **Integration with add_nzb_content()** (src/lib.rs:2445-2447):
+   - check_disk_space() called after calculating NZB size
+   - Called before duplicate detection (fail fast on insufficient space)
+   - Blocks download immediately if space check fails
+   - Error propagates to API layer for proper HTTP error responses
+
+4. **Comprehensive Test Suite** (Task 31.5, src/lib.rs:7961-8070):
+   - **test_check_disk_space_sufficient**: Verifies check passes with adequate space
+   - **test_check_disk_space_disabled**: Confirms check skips when disabled
+   - **test_check_disk_space_insufficient**: Tests InsufficientSpace error detection
+     - Creates scenario where available space < required
+     - Validates error contains correct required/available values
+   - **test_check_disk_space_multiplier**: Verifies size_multiplier is applied correctly
+     - Tests that required = download_size × multiplier
+     - Validates multiplier calculation in error scenarios
+
+5. **Design Alignment**:
+   - Matches implementation_1.md:762-793 specification exactly
+   - check_disk_space() method structure (lines 764-782)
+   - DiskSpaceError enum variants (lines 786-792)
+   - Called before download starts (prevents wasted bandwidth)
+   - Size multiplier accounts for extraction overhead (compressed + extracted)
+   - Minimum free space buffer prevents disk full issues
+
+**Build Verification**:
+- ✅ Library compiles successfully
+- ✅ All 4 new disk space check tests passing
+- ✅ All 3 existing get_available_space tests passing
+- ✅ Total: 7 disk space tests passing
+- ✅ Duplicate detection tests pass (verified disk check doesn't break existing functionality)
+- ✅ Error handling integrated into retry logic
+- ✅ No regressions in existing tests
+
+**Previous Iteration:**
 
 **Tasks 31.1-31.2: Disk space checking infrastructure (get_available_space function)**
 
@@ -2618,9 +2672,9 @@ The implementation will require these major dependencies:
 
 - [x] Task 31.1: Create DiskSpaceConfig with enabled, min_free_space, size_multiplier
 - [x] Task 31.2: Implement get_available_space() using platform-specific APIs (statvfs on Linux)
-- [ ] Task 31.3: Implement check_disk_space() before download
-- [ ] Task 31.4: Create DiskSpaceError enum (InsufficientSpace, CheckFailed)
-- [ ] Task 31.5: Test disk space check with low space scenario
+- [x] Task 31.3: Implement check_disk_space() before download
+- [x] Task 31.4: Create DiskSpaceError enum (InsufficientSpace, CheckFailed)
+- [x] Task 31.5: Test disk space check with low space scenario
 
 - [ ] Task 32.1: Implement test_server() to verify connectivity and authentication
 - [ ] Task 32.2: Create ServerTestResult with success, latency, error, capabilities

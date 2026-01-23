@@ -98,6 +98,17 @@ pub enum Error {
     #[error("duplicate download: {0}")]
     Duplicate(String),
 
+    /// Insufficient disk space
+    #[error("insufficient disk space: need {required} bytes, have {available} bytes")]
+    InsufficientSpace {
+        required: u64,
+        available: u64,
+    },
+
+    /// Failed to check disk space
+    #[error("failed to check disk space: {0}")]
+    DiskSpaceCheckFailed(String),
+
     /// Other error
     #[error("{0}")]
     Other(String),

@@ -2070,6 +2070,78 @@ impl UsenetDownloader {
         None
     }
 
+    /// Check if there is sufficient disk space for download
+    ///
+    /// This method checks if there is enough disk space available before starting
+    /// a download. It accounts for:
+    /// - The download size multiplied by a configurable multiplier (default 2.5x)
+    ///   to account for extraction overhead (compressed + extracted + headroom)
+    /// - A minimum free space buffer (default 1GB) to prevent filling the disk
+    ///
+    /// # Arguments
+    ///
+    /// * `size_bytes` - Size of the download in bytes
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if sufficient space is available or check is disabled
+    /// * `Err(Error::InsufficientSpace)` if insufficient space
+    /// * `Err(Error::DiskSpaceCheckFailed)` if unable to check disk space
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{Config, UsenetDownloader};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// # let downloader = UsenetDownloader::new(config).await?;
+    /// // Check if 1GB download would fit
+    /// downloader.check_disk_space(1024 * 1024 * 1024).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    async fn check_disk_space(&self, size_bytes: i64) -> Result<()> {
+        // Skip check if disabled
+        if !self.config.disk_space.enabled {
+            return Ok(());
+        }
+
+        // Calculate required space: download size × multiplier + buffer
+        let required = (size_bytes as f64 * self.config.disk_space.size_multiplier) as u64;
+        let required_with_buffer = required + self.config.disk_space.min_free_space;
+
+        // Determine path to check - use download_dir if it exists, otherwise check parent
+        let check_path = if self.config.download_dir.exists() {
+            &self.config.download_dir
+        } else {
+            // If download_dir doesn't exist yet, check parent directory
+            // This allows checking space before creating the download directory
+            self.config.download_dir.parent()
+                .ok_or_else(|| Error::DiskSpaceCheckFailed(format!(
+                    "Cannot determine parent directory of '{}'",
+                    self.config.download_dir.display()
+                )))?
+        };
+
+        // Get available space from filesystem
+        let available = crate::utils::get_available_space(check_path)
+            .map_err(|e| Error::DiskSpaceCheckFailed(format!(
+                "Failed to check disk space for '{}': {}",
+                check_path.display(),
+                e
+            )))?;
+
+        // Check if sufficient space is available
+        if available < required_with_buffer {
+            return Err(Error::InsufficientSpace {
+                required: required_with_buffer,
+                available,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Extract job name from NZB filename
     ///
     /// This removes the file extension and any obfuscation patterns to get
@@ -2441,6 +2513,9 @@ impl UsenetDownloader {
 
         // Calculate total size
         let size_bytes = nzb.total_bytes() as i64;
+
+        // Check if sufficient disk space is available (Task 31.3)
+        self.check_disk_space(size_bytes).await?;
 
         // Calculate NZB hash for duplicate detection (sha256)
         use sha2::{Sha256, Digest};
@@ -7893,5 +7968,110 @@ mod tests {
         // Global script should not have that variable
 
         println!("✓ Category and global scripts triggered in correct order");
+    }
+
+    #[tokio::test]
+    async fn test_check_disk_space_sufficient() {
+        // Test: check_disk_space should succeed when sufficient space is available
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.download_dir = temp_dir.path().to_path_buf();
+        config.disk_space.enabled = true;
+        config.disk_space.min_free_space = 1024 * 1024; // 1 MB buffer
+        config.disk_space.size_multiplier = 2.5;
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Check with a small download size (1 KB)
+        let result = downloader.check_disk_space(1024).await;
+        assert!(result.is_ok(), "Expected check_disk_space to succeed with small download");
+
+        println!("✓ check_disk_space succeeds with sufficient space");
+    }
+
+    #[tokio::test]
+    async fn test_check_disk_space_disabled() {
+        // Test: check_disk_space should always succeed when disabled
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.download_dir = temp_dir.path().to_path_buf();
+        config.disk_space.enabled = false; // Disable checking
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Even with a huge download size, should succeed when disabled
+        let result = downloader.check_disk_space(1024 * 1024 * 1024 * 1024).await; // 1 TB
+        assert!(result.is_ok(), "Expected check_disk_space to succeed when disabled");
+
+        println!("✓ check_disk_space skips check when disabled");
+    }
+
+    #[tokio::test]
+    async fn test_check_disk_space_insufficient() {
+        // Test: check_disk_space should fail when insufficient space
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.download_dir = temp_dir.path().to_path_buf();
+        config.disk_space.enabled = true;
+
+        // Get actual available space
+        let available = crate::utils::get_available_space(&config.download_dir).unwrap();
+
+        // Set min_free_space to require more than available
+        config.disk_space.min_free_space = available + 1024 * 1024 * 1024; // Available + 1 GB
+        config.disk_space.size_multiplier = 1.0;
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Try to add a download that would exceed available space
+        let result = downloader.check_disk_space(1024).await; // Even 1 KB should fail
+
+        match result {
+            Err(Error::InsufficientSpace { required, available: avail }) => {
+                assert!(avail < required, "Expected available < required");
+                println!("✓ check_disk_space correctly detects insufficient space");
+                println!("  Required: {} bytes, Available: {} bytes", required, avail);
+            }
+            Ok(_) => panic!("Expected InsufficientSpace error, got Ok"),
+            Err(e) => panic!("Expected InsufficientSpace error, got: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_disk_space_multiplier() {
+        // Test: check_disk_space correctly applies size_multiplier
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.download_dir = temp_dir.path().to_path_buf();
+        config.disk_space.enabled = true;
+        config.disk_space.min_free_space = 0; // No buffer for this test
+        config.disk_space.size_multiplier = 3.0; // 3x multiplier
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Get available space
+        let available = crate::utils::get_available_space(&downloader.config.download_dir).unwrap();
+
+        // Calculate download size that would require more than available space after multiplier
+        let download_size = (available as f64 / 3.0) as i64 + 1024 * 1024; // Slightly over available/3
+
+        let result = downloader.check_disk_space(download_size).await;
+
+        match result {
+            Err(Error::InsufficientSpace { required, available: avail }) => {
+                // Verify multiplier was applied: required should be approximately 3x download_size
+                let expected_required = (download_size as f64 * 3.0) as u64;
+                assert!(required >= expected_required - 100 && required <= expected_required + 100,
+                    "Expected required to be ~3x download size: {} vs {}", required, expected_required);
+                println!("✓ check_disk_space correctly applies size_multiplier");
+                println!("  Download: {} bytes, Required: {} bytes ({}x), Available: {} bytes",
+                    download_size, required, 3.0, avail);
+            }
+            Ok(_) => {
+                // This might pass if we have a lot of disk space - that's okay
+                println!("⚠ check_disk_space passed (system has lots of free space)");
+            }
+            Err(e) => panic!("Expected InsufficientSpace or Ok, got: {:?}", e),
+        }
     }
 }

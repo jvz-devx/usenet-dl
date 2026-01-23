@@ -120,6 +120,10 @@ impl IsRetryable for Error {
             },
             // Duplicate errors are permanent (not retryable)
             Error::Duplicate(_) => false,
+            // Disk space errors are permanent (need user action to free space)
+            Error::InsufficientSpace { .. } => false,
+            // Disk space check errors are permanent (file system issues)
+            Error::DiskSpaceCheckFailed(_) => false,
             // Unknown errors - be conservative and don't retry
             Error::Other(_) => false,
         }
