@@ -13,7 +13,7 @@ IN_PROGRESS
 - [x] Create `tests/manual/` directory
 
 ### 2. Move Documentation Files
-- [ ] Move `CONFIGURATION.md` to `docs/configuration.md`
+- [x] Move `CONFIGURATION.md` to `docs/configuration.md`
 - [ ] Move `API_USAGE.md` to `docs/api-reference.md`
 - [ ] Move `CONTRIBUTING.md` to `docs/contributing.md`
 - [ ] Move `API_TESTING.md` to `tests/manual/api-testing.md`
@@ -57,7 +57,7 @@ IN_PROGRESS
 
 ## Completed This Iteration
 
-- Created `tests/manual/` directory for manual testing documentation
+- Moved `CONFIGURATION.md` to `docs/configuration.md` using git mv
 
 ## Notes
 
