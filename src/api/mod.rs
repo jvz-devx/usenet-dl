@@ -3221,6 +3221,7 @@ mod tests {
             password: Some("testpass".to_string()),
             connections: 10,
             priority: 0,
+            pipeline_depth: 10,
         };
 
         let request = Request::builder()
@@ -3277,6 +3278,7 @@ mod tests {
             password: Some("pass1".to_string()),
             connections: 10,
             priority: 0,
+            pipeline_depth: 10,
         });
         config.servers.push(crate::config::ServerConfig {
             host: "news2.example.com".to_string(),
@@ -3286,6 +3288,7 @@ mod tests {
             password: None,
             connections: 5,
             priority: 1,
+            pipeline_depth: 10,
         });
 
         // Create a new downloader with the modified config
@@ -3362,6 +3365,7 @@ mod tests {
             password: Some("super_secret_password".to_string()),
             connections: 10,
             priority: 0,
+            pipeline_depth: 10,
         });
 
         // DO NOT add an API key - we want to test without authentication

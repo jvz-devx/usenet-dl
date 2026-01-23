@@ -8617,6 +8617,7 @@ mod tests {
             password: None,
             connections: 1,
             priority: 0,
+            pipeline_depth: 10,
         };
 
         let result = downloader.test_server(&server).await;
@@ -8650,6 +8651,7 @@ mod tests {
             password: Some("testpass".to_string()),
             connections: 1,
             priority: 0,
+            pipeline_depth: 10,
         };
 
         let result = downloader.test_server(&server).await;
@@ -8704,6 +8706,7 @@ mod tests {
                 password: None,
                 connections: 1,
                 priority: 0,
+                pipeline_depth: 10,
             },
             crate::config::ServerConfig {
                 host: "server2.invalid".to_string(),
@@ -8713,6 +8716,7 @@ mod tests {
                 password: Some("pass".to_string()),
                 connections: 1,
                 priority: 1,
+                pipeline_depth: 10,
             },
             crate::config::ServerConfig {
                 host: "server3.invalid".to_string(),
@@ -8722,6 +8726,7 @@ mod tests {
                 password: None,
                 connections: 1,
                 priority: 2,
+                pipeline_depth: 10,
             },
         ];
 
