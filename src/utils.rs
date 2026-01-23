@@ -259,7 +259,11 @@ pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
         let c_path = CString::new(path.as_os_str().as_bytes())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
-        // Call statvfs to get filesystem statistics
+        // SAFETY: This is safe because:
+        // 1. c_path is a valid, null-terminated C string created from the input path
+        // 2. stat is properly initialized with zeroed memory before the call
+        // 3. We check the return value and propagate any OS errors
+        // 4. The statvfs struct is only read after a successful call
         unsafe {
             let mut stat: libc::statvfs = std::mem::zeroed();
             if libc::statvfs(c_path.as_ptr(), &mut stat) != 0 {
@@ -286,6 +290,11 @@ pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
             .chain(std::iter::once(0)) // null terminator
             .collect();
 
+        // SAFETY: This is safe because:
+        // 1. wide_path is a valid, null-terminated wide string
+        // 2. All output pointers point to valid, properly aligned u64 variables
+        // 3. We check the return value and propagate any OS errors
+        // 4. The output variables are only read after a successful call
         unsafe {
             let mut free_bytes_available: u64 = 0;
             let mut _total_bytes: u64 = 0;
