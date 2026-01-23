@@ -475,6 +475,28 @@ Test files:
 
 ## Completed This Iteration
 
+### Task 2.2: Implement socket buffer configuration ✓
+
+**Location:** `nntp-rs/src/client.rs:189-288`
+
+Successfully implemented TCP socket buffer tuning:
+- Replaced `TcpStream::connect()` with `socket2::Socket` for low-level control
+- Set SO_RCVBUF to 4MB for high-bandwidth downloads
+- Set SO_SNDBUF to 1MB for command pipelining
+- Added graceful error handling with warnings (non-fatal)
+- Logs actual buffer sizes achieved by OS
+- Maintains connection timeout and non-blocking behavior
+
+**Build Status:** ✓ Both nntp-rs and usenet-dl compile cleanly
+
+**Commits:**
+- nntp-rs: ca64a06 "feat(client): Add TCP socket buffer tuning for high-throughput downloads"
+- usenet-dl: 84fb133 "docs: Update progress for Task 2.2 - TCP socket buffer tuning complete"
+
+---
+
+## Previous Iterations
+
 ### Task 1.1: Add fetch_articles_pipelined() method to NntpClient ✓
 
 **Location:** `nntp-rs/src/client.rs:2757-2866`
