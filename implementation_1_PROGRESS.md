@@ -59,15 +59,85 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (22/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (23/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Tasks 26.1-26.7: ✅ RSS feed filtering with regex matching complete (14 tests passing)
-- Total: 185/253 tasks complete (73.1%)
+  - Tasks 26.1-26.8: ✅ RSS feed filtering and seen tracking complete (19 tests passing)
+- Total: 186/253 tasks complete (73.5%)
 
-**Next Task:** Task 26.8 - Track seen items in rss_seen table (guid or link)
+**Next Task:** Task 26.9 - Auto-download matching items if auto_download=true
 
 ## Completed This Iteration
+
+**Task 26.8: Track seen items in rss_seen table (guid or link)**
+
+Successfully implemented RSS seen item tracking with comprehensive database methods and tests:
+
+1. **is_rss_item_seen() Method** (src/db.rs:1359-1379):
+   - Checks if an RSS feed item has been seen before
+   - Parameters: `feed_id` (i64) and `guid` (string)
+   - Returns bool - true if seen, false otherwise
+   - Uses COUNT query for efficient checking
+   - Comprehensive documentation with parameters and returns
+   - Follows same pattern as is_nzb_processed()
+
+2. **mark_rss_item_seen() Method** (src/db.rs:1381-1414):
+   - Marks an RSS feed item as seen in the database
+   - Parameters: `feed_id` (i64) and `guid` (string)
+   - Returns Result<()> on success
+   - Uses INSERT with ON CONFLICT to handle duplicates
+   - Updates seen_at timestamp on conflict (idempotent)
+   - Records current UTC timestamp for tracking
+
+3. **Composite Primary Key Support**:
+   - Uses (feed_id, guid) as composite primary key
+   - Same GUID can exist in different feeds
+   - Each feed tracks its own seen items independently
+   - ON CONFLICT DO UPDATE ensures idempotent marking
+
+4. **Comprehensive Test Suite** (5 new tests, src/db.rs:2937-3144):
+   - `test_is_rss_item_seen_returns_false_for_new_item()`: Validates new items return false
+     - Creates feed and checks unseen GUID
+     - Confirms proper false return for new items
+   - `test_mark_rss_item_seen_and_check()`: Tests marking and verification
+     - Checks before marking (false)
+     - Marks item as seen
+     - Checks after marking (true)
+   - `test_mark_rss_item_seen_idempotent()`: Tests duplicate marking
+     - Marks same item 3 times
+     - Confirms no errors on duplicates
+     - Verifies only 1 record exists in database
+   - `test_rss_item_seen_different_feeds()`: Tests feed isolation
+     - Same GUID in two different feeds
+     - Marking in feed1 doesn't affect feed2
+     - Each feed tracks independently
+   - `test_rss_item_seen_with_different_guids()`: Tests multiple GUIDs
+     - Marks 2 out of 3 items
+     - Validates correct seen/unseen status for each
+
+5. **Deadlock Prevention**:
+   - Tests use scoped blocks to drop connections
+   - Prevents holding pool connections while calling db methods
+   - Connection acquired in block, dropped before db method calls
+   - Ensures tests don't hang on connection pool exhaustion
+
+6. **Design Alignment**:
+   - Follows implementation_1.md:2069-2104 specification
+   - Methods match planned interface exactly
+   - Uses (feed_id, guid) composite key as designed
+   - ON CONFLICT handling for idempotent marking
+   - Timestamp tracking for seen_at field
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 44 database tests pass (5 new RSS seen tests)
+- ✅ Tests complete in 1.47 seconds
+- ✅ No deadlocks or connection pool issues
+- ✅ Idempotent marking verified (ON CONFLICT works)
+- ✅ Feed isolation verified (composite key works)
+- ✅ Multiple GUID tracking verified
+
+**Previous Iteration:**
 
 **Task 26.7: Implement matches_filters() using regex for include/exclude**
 
@@ -1064,7 +1134,7 @@ The implementation will require these major dependencies:
 - [x] Task 26.5: Implement RssManager struct
 - [x] Task 26.6: Implement check_feed() to fetch and parse RSS/Atom
 - [x] Task 26.7: Implement matches_filters() using regex for include/exclude
-- [ ] Task 26.8: Track seen items in rss_seen table (guid or link)
+- [x] Task 26.8: Track seen items in rss_seen table (guid or link)
 - [ ] Task 26.9: Auto-download matching items if auto_download=true
 - [ ] Task 26.10: Implement scheduled feed checking task
 - [ ] Task 26.11: Add API endpoints for RSS management (GET/POST/PUT/DELETE /rss, POST /rss/:id/check)

@@ -1353,6 +1353,62 @@ impl Database {
 
         Ok(count > 0)
     }
+
+    /// Check if an RSS feed item has been seen before
+    ///
+    /// # Arguments
+    ///
+    /// * `feed_id` - RSS feed ID
+    /// * `guid` - Unique identifier for the RSS item (GUID or link)
+    ///
+    /// # Returns
+    ///
+    /// Returns true if the item has been seen before, false otherwise.
+    pub async fn is_rss_item_seen(&self, feed_id: i64, guid: &str) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM rss_seen WHERE feed_id = ? AND guid = ?
+            "#
+        )
+        .bind(feed_id)
+        .bind(guid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to check if RSS item is seen: {}", e)))?;
+
+        Ok(count > 0)
+    }
+
+    /// Mark an RSS feed item as seen
+    ///
+    /// # Arguments
+    ///
+    /// * `feed_id` - RSS feed ID
+    /// * `guid` - Unique identifier for the RSS item (GUID or link)
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) on success.
+    pub async fn mark_rss_item_seen(&self, feed_id: i64, guid: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO rss_seen (feed_id, guid, seen_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(feed_id, guid) DO UPDATE SET seen_at = ?
+            "#
+        )
+        .bind(feed_id)
+        .bind(guid)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark RSS item as seen: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2873,6 +2929,248 @@ mod tests {
         assert_eq!(auto_download, 1, "Default auto_download should be 1 (true)");
         assert_eq!(priority, 0, "Default priority should be 0");
         assert_eq!(enabled, 1, "Default enabled should be 1 (true)");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_is_rss_item_seen_returns_false_for_new_item() {
+        // Task 26.8: Test is_rss_item_seen returns false for new items
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Insert a feed
+        let feed_id = {
+            let mut conn = db.pool.acquire().await.unwrap();
+            sqlx::query(
+                r#"
+                INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+                VALUES (?, ?, ?, ?)
+                "#
+            )
+            .bind("Test Feed")
+            .bind("https://example.com/rss")
+            .bind(900)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid()
+        }; // Drop connection here
+
+        // Check a GUID that hasn't been seen
+        let seen = db.is_rss_item_seen(feed_id, "new-item-guid").await.unwrap();
+        assert!(!seen, "New item should not be marked as seen");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_mark_rss_item_seen_and_check() {
+        // Task 26.8: Test marking an item as seen and checking it
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Insert a feed
+        let feed_id = {
+            let mut conn = db.pool.acquire().await.unwrap();
+            sqlx::query(
+                r#"
+                INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+                VALUES (?, ?, ?, ?)
+                "#
+            )
+            .bind("Test Feed")
+            .bind("https://example.com/rss")
+            .bind(900)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid()
+        }; // Drop connection here
+
+        let guid = "item-guid-456";
+
+        // Initially not seen
+        let seen_before = db.is_rss_item_seen(feed_id, guid).await.unwrap();
+        assert!(!seen_before, "Item should not be seen before marking");
+
+        // Mark as seen
+        db.mark_rss_item_seen(feed_id, guid).await.unwrap();
+
+        // Now should be seen
+        let seen_after = db.is_rss_item_seen(feed_id, guid).await.unwrap();
+        assert!(seen_after, "Item should be marked as seen after marking");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_mark_rss_item_seen_idempotent() {
+        // Task 26.8: Test that marking the same item multiple times is idempotent
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Insert a feed
+        let feed_id = {
+            let mut conn = db.pool.acquire().await.unwrap();
+            sqlx::query(
+                r#"
+                INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+                VALUES (?, ?, ?, ?)
+                "#
+            )
+            .bind("Test Feed")
+            .bind("https://example.com/rss")
+            .bind(900)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid()
+        }; // Drop connection here
+
+        let guid = "duplicate-test-guid";
+
+        // Mark first time
+        db.mark_rss_item_seen(feed_id, guid).await.unwrap();
+
+        // Mark second time (should not error)
+        db.mark_rss_item_seen(feed_id, guid).await.unwrap();
+
+        // Mark third time (should not error)
+        db.mark_rss_item_seen(feed_id, guid).await.unwrap();
+
+        // Still should be seen
+        let seen = db.is_rss_item_seen(feed_id, guid).await.unwrap();
+        assert!(seen, "Item should still be marked as seen");
+
+        // Verify only one record exists
+        let count: i64 = {
+            let mut conn = db.pool.acquire().await.unwrap();
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM rss_seen WHERE feed_id = ? AND guid = ?"
+            )
+            .bind(feed_id)
+            .bind(guid)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap()
+        };
+
+        assert_eq!(count, 1, "Should have exactly one record even after multiple marks");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_rss_item_seen_different_feeds() {
+        // Task 26.8: Test that same GUID in different feeds are tracked separately
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Insert two feeds
+        let (feed1_id, feed2_id) = {
+            let mut conn = db.pool.acquire().await.unwrap();
+
+            let feed1_id = sqlx::query(
+                r#"
+                INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+                VALUES (?, ?, ?, ?)
+                "#
+            )
+            .bind("Feed 1")
+            .bind("https://example.com/rss1")
+            .bind(900)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+
+            let feed2_id = sqlx::query(
+                r#"
+                INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+                VALUES (?, ?, ?, ?)
+                "#
+            )
+            .bind("Feed 2")
+            .bind("https://example.com/rss2")
+            .bind(900)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+
+            (feed1_id, feed2_id)
+        }; // Drop connection here
+
+        let same_guid = "shared-guid";
+
+        // Mark seen in feed1
+        db.mark_rss_item_seen(feed1_id, same_guid).await.unwrap();
+
+        // Should be seen in feed1
+        let seen_feed1 = db.is_rss_item_seen(feed1_id, same_guid).await.unwrap();
+        assert!(seen_feed1, "Item should be seen in feed1");
+
+        // Should NOT be seen in feed2
+        let seen_feed2 = db.is_rss_item_seen(feed2_id, same_guid).await.unwrap();
+        assert!(!seen_feed2, "Same GUID should not be seen in feed2");
+
+        // Mark seen in feed2
+        db.mark_rss_item_seen(feed2_id, same_guid).await.unwrap();
+
+        // Now should be seen in both
+        let seen_feed2_after = db.is_rss_item_seen(feed2_id, same_guid).await.unwrap();
+        assert!(seen_feed2_after, "Item should now be seen in feed2");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_rss_item_seen_with_different_guids() {
+        // Task 26.8: Test tracking multiple different items in same feed
+        let temp_file = NamedTempFile::new().unwrap();
+        let db = Database::new(temp_file.path()).await.unwrap();
+
+        // Insert a feed
+        let feed_id = {
+            let mut conn = db.pool.acquire().await.unwrap();
+            sqlx::query(
+                r#"
+                INSERT INTO rss_feeds (name, url, check_interval_secs, created_at)
+                VALUES (?, ?, ?, ?)
+                "#
+            )
+            .bind("Test Feed")
+            .bind("https://example.com/rss")
+            .bind(900)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *conn)
+            .await
+            .unwrap()
+            .last_insert_rowid()
+        }; // Drop connection here
+
+        let guid1 = "item-1";
+        let guid2 = "item-2";
+        let guid3 = "item-3";
+
+        // Mark guid1 and guid2 as seen
+        db.mark_rss_item_seen(feed_id, guid1).await.unwrap();
+        db.mark_rss_item_seen(feed_id, guid2).await.unwrap();
+
+        // Check all three
+        let seen1 = db.is_rss_item_seen(feed_id, guid1).await.unwrap();
+        let seen2 = db.is_rss_item_seen(feed_id, guid2).await.unwrap();
+        let seen3 = db.is_rss_item_seen(feed_id, guid3).await.unwrap();
+
+        assert!(seen1, "Item 1 should be seen");
+        assert!(seen2, "Item 2 should be seen");
+        assert!(!seen3, "Item 3 should not be seen");
 
         db.close().await;
     }
