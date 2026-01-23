@@ -73,11 +73,99 @@ IN_PROGRESS
   - Tasks 33.1-33.5: ✅ Re-processing API complete with reprocess() and reextract() methods (2 API tests passing)
   - Tasks 34.1-34.6: ✅ Comprehensive error types with HTTP status mapping and 11 error response tests passing
   - Tasks 35.1-35.4: ✅ Comprehensive documentation complete (README, examples, API usage, configuration)
-- Total: 250/253 tasks complete (98.8%)
+- Total: 251/253 tasks complete (99.2%)
 
-**Next Task:** Task 35.5 - Create CHANGELOG.md
+**Next Task:** Task 35.6 - Write CONTRIBUTING.md with development guidelines
+
 
 ## Completed This Iteration
+
+**Task 35.5: Create CHANGELOG.md**
+
+Successfully created comprehensive CHANGELOG.md documenting all phases of development and project history.
+
+**Implementation Details:**
+
+1. **Keep a Changelog Format**:
+   - Following https://keepachangelog.com/en/1.0.0/ conventions
+   - Semantic versioning notes (major.minor.patch)
+   - Category structure: Added, Changed, Deprecated, Removed, Fixed, Security
+
+2. **Comprehensive Unreleased Section**:
+   - Documented all 5 implementation phases
+   - Phase 0: Project structure (5 tasks)
+   - Phase 1: Core library with 137 tests (61 tasks)
+   - Phase 2: Post-processing with 240 tests (42 tasks)
+   - Phase 3: REST API with 297 tests (40 tasks)
+   - Phase 4: Automation with 50 tests (47 tasks)
+   - Phase 5: Notifications & Polish with 14 tests (38 tasks)
+
+3. **Detailed Feature Documentation**:
+   - Core types and configuration
+   - SQLite persistence with article tracking
+   - Event system with tokio::broadcast
+   - Download manager and priority queue
+   - Resume support and crash recovery
+   - Speed limiting with token bucket algorithm
+   - Retry logic with exponential backoff
+   - Graceful shutdown with signal handling
+
+4. **Post-Processing Pipeline**:
+   - Five-stage pipeline documentation
+   - RAR, 7-Zip, ZIP, TAR extraction support
+   - Password management across multiple sources
+   - Nested archive extraction (configurable depth)
+   - Obfuscated filename detection and deobfuscation
+   - File organization with collision handling
+   - Cleanup with sample folder removal
+
+5. **REST API Documentation**:
+   - 37 endpoints fully documented
+   - OpenAPI 3.1 spec with Swagger UI
+   - Server-Sent Events for real-time updates
+   - Runtime configuration management
+   - Rate limiting with token bucket
+
+6. **Automation Features**:
+   - Folder watching (8 tests)
+   - URL fetching (7 tests)
+   - RSS feed support (38 tests)
+   - Scheduler with time-based rules (50 tests)
+   - Duplicate detection (13 tests)
+
+7. **Notifications & Polish**:
+   - Webhook notifications (3 tests)
+   - Script execution with env vars (2 tests)
+   - Disk space checking (7 tests)
+   - Server health check (5 tests)
+   - Re-processing API (2 tests)
+   - Comprehensive error types (11 tests)
+
+8. **Testing Summary**:
+   - 297 total unit and integration tests
+   - Manual testing tools and guides
+   - Postman collection for API testing
+
+9. **Dependencies Section**:
+   - All major dependencies listed (tokio, sqlx, axum, utoipa, etc.)
+   - Version numbers documented
+
+10. **Architecture Overview**:
+    - Event-driven design principles
+    - SQLite persistence strategy
+    - Article-level granularity
+    - Token bucket speed limiting
+    - Five-stage post-processing
+
+11. **Known Limitations**:
+    - nntp-rs mock implementation note
+    - External tool requirements (unrar, 7z)
+    - Password trial-and-error approach
+    - Heuristic-based sample detection
+
+## Previous Iteration
+
+**Task 35.4: Document configuration file format (TOML or JSON)**
 
 **Task 35.4: Document configuration file format (TOML or JSON)**
 
@@ -3360,7 +3448,7 @@ The implementation will require these major dependencies:
 - [x] Task 35.2: Create examples/ directory with sample code
 - [x] Task 35.3: Write API usage documentation with curl examples
 - [x] Task 35.4: Document configuration file format (TOML or JSON)
-- [ ] Task 35.5: Create CHANGELOG.md
+- [x] Task 35.5: Create CHANGELOG.md
 - [ ] Task 35.6: Write CONTRIBUTING.md with development guidelines
 - [ ] Task 35.7: Add inline code documentation (rustdoc comments)
 - [ ] Task 35.8: Generate and verify cargo doc output
