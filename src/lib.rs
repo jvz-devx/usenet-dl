@@ -3319,7 +3319,8 @@ impl UsenetDownloader {
                                         format!("<{}>", article.message_id)
                                     };
 
-                                    let response = match conn.fetch_article(&message_id).await {
+                                    // Fetch article using binary API (avoids string allocations)
+                                    let response = match conn.fetch_article_binary(&message_id).await {
                                         Ok(r) => r,
                                         Err(e) => {
                                             tracing::error!(download_id = id, article_id = article.id, error = %e, "Article fetch failed");
@@ -3328,11 +3329,10 @@ impl UsenetDownloader {
                                         }
                                     };
 
-                                    // Save article content to temp directory
+                                    // Save article content directly to temp directory
                                     let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
-                                    let article_content = response.lines.join("\n");
 
-                                    if let Err(e) = tokio::fs::write(&article_file, article_content.as_bytes()).await {
+                                    if let Err(e) = tokio::fs::write(&article_file, &response.data).await {
                                         tracing::error!(download_id = id, error = %e, "Failed to write article file");
                                         return Err(format!("Failed to write article file: {}", e));
                                     }
@@ -3866,7 +3866,8 @@ impl UsenetDownloader {
                             format!("<{}>", article.message_id)
                         };
 
-                        let response = match conn.fetch_article(&message_id).await {
+                        // Fetch article using binary API (avoids string allocations)
+                        let response = match conn.fetch_article_binary(&message_id).await {
                             Ok(r) => r,
                             Err(e) => {
                                 tracing::warn!(
@@ -3880,13 +3881,11 @@ impl UsenetDownloader {
                             }
                         };
 
-                        // Save article content to temp directory
+                        // Save article content directly to temp directory
                         // Each article gets its own file: article_<segment_number>.dat
                         let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
 
-                        // Join response lines into single string for storage
-                        let article_content = response.lines.join("\n");
-                        if let Err(e) = tokio::fs::write(&article_file, article_content.as_bytes()).await {
+                        if let Err(e) = tokio::fs::write(&article_file, &response.data).await {
                             tracing::warn!(
                                 download_id = download_id,
                                 article_id = article.id,
