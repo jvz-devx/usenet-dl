@@ -3506,4 +3506,49 @@ mod tests {
         println!("   - Properly sets unlimited (null)");
         println!("   - Changes are immediately reflected in GET endpoint");
     }
+
+    #[tokio::test]
+    async fn test_list_categories() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use serde_json::Value;
+        use tower::ServiceExt;
+
+        println!("\n=== Testing GET /categories ===");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = downloader.get_config();
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Get categories (should be empty by default)
+        println!("\nTest 1: Getting empty categories list");
+        let request = Request::builder()
+            .method("GET")
+            .uri("/categories")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        println!("Categories response: {}", serde_json::to_string_pretty(&json).unwrap());
+
+        // Should be an empty object {}
+        assert!(json.is_object());
+        assert_eq!(json.as_object().unwrap().len(), 0);
+
+        println!("✅ GET /categories test passed!");
+        println!("   - Returns 200 OK");
+        println!("   - Returns empty object when no categories configured");
+        println!("   - Response is valid JSON object");
+    }
 }

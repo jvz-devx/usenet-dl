@@ -1241,8 +1241,12 @@ pub async fn set_speed_limit(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn list_categories(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn list_categories(State(state): State<AppState>) -> impl IntoResponse {
+    // Get the config from the downloader
+    let config = state.downloader.get_config();
+
+    // Clone and return the categories HashMap
+    (StatusCode::OK, Json(config.categories.clone()))
 }
 
 /// PUT /categories/:name - Create/update category
