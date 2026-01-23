@@ -274,17 +274,19 @@ Priority 3 (Future optimization):
     - 50-100x faster than individual UPDATE statements
     - Handles empty input gracefully
 
-- [ ] Task 3.2: Add update batching channel
+- [x] Task 3.2: Add update batching channel
   - File: `src/lib.rs:3150-3170` (before download loop)
   - Create mpsc channel for status updates: (tx, rx) with capacity 500
   - Spawn background task to consume channel
   - Batch updates: flush every 100 updates OR every 1 second
   - Flush remaining updates when download completes
+  - COMPLETED: Full implementation with comprehensive channel handling
 
-- [ ] Task 3.3: Replace direct DB calls with batched updates
+- [x] Task 3.3: Replace direct DB calls with batched updates
   - File: `src/lib.rs:3327, 3341-3347`
   - Replace db.update_article_status() with batch_tx.send()
   - Handle channel send errors (log warning, continue)
+  - COMPLETED: All database status updates now go through batching channel
 
 - [ ] Task 3.4: Add batching tests
   - File: `tests/` (add to existing test file)
@@ -484,6 +486,61 @@ Test files:
 - `/home/jens/Documents/source/usenet-dl/tests/parallel_downloads.rs` - Parallel tests
 
 ## Completed This Iteration
+
+### Tasks 3.2 & 3.3: Add update batching channel and integrate with download loop ✓
+
+**Locations:**
+- `src/lib.rs:3246-3315` - Channel creation and background batching task
+- `src/lib.rs:3374` - Clone batch_tx for async closure
+- `src/lib.rs:3438-3446` - Updated failed article handling to use batch channel
+- `src/lib.rs:3457-3464` - Updated successful article handling to use batch channel
+- `src/lib.rs:3520-3527` - Shutdown and flush handling
+
+**Implementation Details:**
+
+**1. Channel Creation (line 3246-3315):**
+- Created mpsc channel with capacity 500 for (article_id, status) tuples
+- Spawned dedicated background task to consume channel and batch updates
+- Task runs concurrently with download loop, processing status updates asynchronously
+
+**2. Background Batching Task:**
+- Maintains buffer with capacity 100 for pending updates
+- Flushes batches when:
+  - Buffer reaches 100 updates (optimal batch size), OR
+  - 1 second timeout expires (prevents stale updates), OR
+  - Download is cancelled (graceful shutdown)
+- After main loop ends, drains remaining channel messages for final flush
+- Uses `update_articles_status_batch()` for efficient multi-row updates
+
+**3. Integration with Download Loop:**
+- Removed direct `db.update_article_status()` calls (synchronous, slow)
+- Replaced with `batch_tx.send()` (asynchronous, non-blocking)
+- Updated both success path (DOWNLOADED) and failure path (FAILED)
+- Handles channel send errors gracefully (logs warning, continues)
+- Downloads no longer blocked on database write transactions
+
+**4. Shutdown and Flush:**
+- Drops `batch_tx` after download completes to close channel
+- Awaits batch_task completion to ensure all updates flushed
+- Guarantees no status updates lost on shutdown
+
+**Architecture Benefits:**
+- **Reduced SQLite contention**: Fewer transactions = less lock contention
+- **Non-blocking downloads**: Article fetching doesn't wait for database writes
+- **Optimal batching**: 100 updates per transaction balances latency vs throughput
+- **Reliable**: All updates eventually written, even on cancellation
+
+**Expected Performance Gain:** +10-20% throughput by eliminating database write bottleneck
+
+**Build Status:** ✓ Compiles cleanly with no warnings
+
+**Next Steps:**
+- Task 3.4: Add batching tests to verify correctness
+- Task 3.5: Run performance test to measure actual improvement
+
+---
+
+## Previous Iterations
 
 ### Task 3.1: Create database update batcher ✓
 

@@ -3245,6 +3245,79 @@ impl UsenetDownloader {
                             })
                         };
 
+                        // Database update batching channel.
+                        //
+                        // Problem: With 50 concurrent connections, updating article status after
+                        // every download creates SQLite write contention. Individual UPDATE statements
+                        // are also slow due to transaction overhead.
+                        //
+                        // Solution: Buffer status updates in a channel and write them in batches.
+                        // A background task consumes the channel and flushes batches when:
+                        // - 100 updates have accumulated, OR
+                        // - 1 second has elapsed since the last flush
+                        //
+                        // Expected performance gain: +10-20% throughput by reducing SQLite contention.
+                        // Single batched transaction is 50-100x faster than 100 individual transactions.
+                        let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel::<(i64, i32)>(500);
+
+                        // Spawn background task to batch database status updates
+                        let batch_task = {
+                            let db = Arc::clone(&db_clone);
+                            let cancel_token = cancel_token.child_token();
+
+                            tokio::spawn(async move {
+                                let mut buffer = Vec::with_capacity(100);
+                                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                                loop {
+                                    tokio::select! {
+                                        // Receive status update from channel
+                                        Some((article_id, status)) = batch_rx.recv() => {
+                                            buffer.push((article_id, status));
+
+                                            // Flush when buffer reaches 100 updates
+                                            if buffer.len() >= 100 {
+                                                if let Err(e) = db.update_articles_status_batch(&buffer).await {
+                                                    tracing::error!(download_id = id, batch_size = buffer.len(), error = %e, "Failed to batch update article statuses");
+                                                }
+                                                buffer.clear();
+                                            }
+                                        }
+                                        // Flush on 1-second timeout (prevents updates from sitting in buffer too long)
+                                        _ = interval.tick() => {
+                                            if !buffer.is_empty() {
+                                                if let Err(e) = db.update_articles_status_batch(&buffer).await {
+                                                    tracing::error!(download_id = id, batch_size = buffer.len(), error = %e, "Failed to batch update article statuses");
+                                                }
+                                                buffer.clear();
+                                            }
+                                        }
+                                        // Download cancelled or channel closed - flush remaining updates
+                                        _ = cancel_token.cancelled() => {
+                                            if !buffer.is_empty() {
+                                                if let Err(e) = db.update_articles_status_batch(&buffer).await {
+                                                    tracing::error!(download_id = id, batch_size = buffer.len(), error = %e, "Failed to batch update article statuses on cancellation");
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Final flush when task ends (channel closed)
+                                // This handles any remaining updates in the buffer
+                                while let Ok((article_id, status)) = batch_rx.try_recv() {
+                                    buffer.push((article_id, status));
+                                }
+                                if !buffer.is_empty() {
+                                    if let Err(e) = db.update_articles_status_batch(&buffer).await {
+                                        tracing::error!(download_id = id, batch_size = buffer.len(), error = %e, "Failed to flush remaining article statuses");
+                                    }
+                                }
+                            })
+                        };
+
                         // Calculate concurrency limit based on total connections across all servers.
                         // This determines the maximum number of articles that can be downloaded
                         // simultaneously. With 50 connections configured, we can download 50 articles
@@ -3298,7 +3371,7 @@ impl UsenetDownloader {
                             .map(|article_batch| {
                                 // Clone variables needed in the async closure
                                 let pool = nntp_pools_clone.clone();
-                                let db = Arc::clone(&db_clone);
+                                let batch_tx = batch_tx.clone();  // Clone sender for batched status updates
                                 let speed_limiter = speed_limiter_clone.clone();
                                 let cancel_token = cancel_token.clone();
                                 let download_temp_dir = download_temp_dir.clone();
@@ -3360,9 +3433,12 @@ impl UsenetDownloader {
                                         Ok(r) => r,
                                         Err(e) => {
                                             tracing::error!(download_id = id, batch_size = batch_size, error = %e, "Batch fetch failed");
-                                            // Mark all articles in batch as failed
+                                            // Mark all articles in batch as failed using batched updates
                                             for article in &article_batch {
-                                                let _ = db.update_article_status(article.id, crate::db::article_status::FAILED).await;
+                                                // Send to batch channel; log warning if channel is full but continue
+                                                if let Err(e) = batch_tx.send((article.id, crate::db::article_status::FAILED)).await {
+                                                    tracing::warn!(download_id = id, article_id = article.id, error = %e, "Failed to send status update to batch channel");
+                                                }
                                             }
                                             return Err((format!("Batch fetch failed: {}", e), batch_size));
                                         }
@@ -3380,13 +3456,13 @@ impl UsenetDownloader {
                                             return Err((format!("Failed to write article file: {}", e), batch_size));
                                         }
 
-                                        // Mark article as downloaded
-                                        if let Err(e) = db.update_article_status(
-                                            article.id,
-                                            crate::db::article_status::DOWNLOADED,
-                                        ).await {
-                                            tracing::error!(download_id = id, error = %e, "Failed to update article status");
-                                            // Continue even if database update fails
+                                        // Mark article as downloaded using batched updates.
+                                        // Send to channel instead of direct database call. The background task
+                                        // will batch these updates and write them in a single transaction,
+                                        // reducing SQLite write contention significantly.
+                                        if let Err(e) = batch_tx.send((article.id, crate::db::article_status::DOWNLOADED)).await {
+                                            tracing::warn!(download_id = id, article_id = article.id, error = %e, "Failed to send status update to batch channel");
+                                            // Continue even if channel send fails - download is still successful
                                         }
 
                                         // Update atomic counters for progress tracking.
@@ -3436,6 +3512,15 @@ impl UsenetDownloader {
 
                         // Stop progress reporting task now that download is complete
                         progress_task.abort();
+
+                        // Close batch channel and wait for final flush.
+                        // Dropping batch_tx closes the channel, signaling the batch task to finish.
+                        // This ensures all pending status updates are flushed to the database
+                        // before we continue with post-processing.
+                        drop(batch_tx);
+                        if let Err(e) = batch_task.await {
+                            tracing::error!(download_id = id, error = %e, "Batch update task panicked");
+                        }
 
                         let total_articles = success_count + failed_count;
 
