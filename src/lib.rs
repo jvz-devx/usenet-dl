@@ -3729,6 +3729,12 @@ impl UsenetDownloader {
             // Later we'll assemble these into the final file (post-processing phase)
             let mut article_data = Vec::new();
 
+            // Calculate concurrency limit from server connections
+            // This determines how many articles we can download in parallel
+            let concurrency: usize = config.servers.iter()
+                .map(|s| s.connections)
+                .sum();
+
             // Download each article
             for article in pending_articles {
                 // Get a connection from the first NNTP pool

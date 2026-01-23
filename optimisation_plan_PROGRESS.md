@@ -194,7 +194,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - In `download_nzb()` method, replace counters at lines 3674-3675 with `Arc<AtomicU64>`
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3674-3675`
 
-- [ ] Task 4.2: Calculate concurrency for direct download
+- [x] Task 4.2: Calculate concurrency for direct download
   - Same as Task 3.1, but using `config` reference (not `config_clone`)
   - Location: Around line 3690
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs`
@@ -367,6 +367,17 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
+- Task 4.2: Calculate concurrency for direct download
+  - Added concurrency calculation using same pattern as queue processor (Task 3.1)
+  - Calculates total connections across all configured servers: `config.servers.iter().map(|s| s.connections).sum()`
+  - Location: src/lib.rs:3731-3735 (right before "Download each article" comment)
+  - Added descriptive comments explaining what the calculation does
+  - Validated with `cargo check` - compiles successfully with only expected warnings
+  - Warning about unused `concurrency` variable is expected - will be used in Task 4.3 when converting to parallel stream
+  - Ready for parallel stream implementation in next task
+
+## Previously Completed
+
 - Task 4.1: Add atomic counters for direct download method
   - Replaced `let mut downloaded_articles = 0;` with `Arc::new(AtomicU64::new(0))` at line 3713
   - Replaced `let mut downloaded_bytes: u64 = 0;` with `Arc::new(AtomicU64::new(0))` at line 3714
@@ -379,8 +390,6 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
   - Location: src/lib.rs:3713-3714 (declaration), 3776-3781 (usage in loop)
   - Validated with `cargo build` - compiles successfully with only expected warnings
   - Atomic counters are now in place and ready for parallel downloads
-
-## Previously Completed
 
 - Tasks 3.2-3.7: Converted queue processor sequential loop to parallel stream
   - Replaced the sequential `for article in pending_articles` loop (lines 3221-3353) with parallel stream
