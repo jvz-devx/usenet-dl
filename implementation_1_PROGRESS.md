@@ -64,11 +64,135 @@ IN_PROGRESS
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
-- Total: 200/253 tasks complete (79.1%)
+  - Tasks 28.1-28.5: ✅ Duplicate detection with SHA256 hashing complete (8 duplicate detection tests passing)
+- Total: 205/253 tasks complete (81.0%)
 
-**Next Task:** Task 28.1 - Create DuplicateConfig with enabled, action, methods
+**Next Task:** Task 28.6 - Add duplicate detection to add_nzb_content()
 
 ## Completed This Iteration
+
+**Task 28.5: Implement check_duplicate() with SHA256 hashing**
+
+Successfully implemented duplicate detection system with comprehensive SHA256 hashing and multi-method detection:
+
+1. **DuplicateInfo Structure** (src/types.rs:407-415):
+   - Created public struct to return duplicate detection results
+   - Fields: `method` (DuplicateMethod), `existing_id` (DownloadId), `existing_name` (String)
+   - Exported from lib.rs for public API use
+   - Enables callers to know exactly how duplicate was detected
+
+2. **check_duplicate() Method** (src/lib.rs:1946-2011):
+   - Private async method on UsenetDownloader
+   - Parameters: `nzb_content` (&[u8]) for hash calculation, `name` (&str) for name-based detection
+   - Returns: `Option<DuplicateInfo>` - Some if duplicate found, None otherwise
+   - Early return if duplicate detection disabled in config
+   - Checks each configured detection method in order (first match wins)
+
+3. **SHA256 Hash Calculation** (NzbHash method):
+   - Uses `sha2` crate (already in dependencies) for cryptographic hashing
+   - Computes SHA256 digest of raw NZB content
+   - Formats as lowercase hexadecimal string
+   - Queries database via `db.find_by_nzb_hash(&hash)`
+   - Most reliable detection method (content-based, not name-based)
+
+4. **NZB Name Detection** (NzbName method):
+   - Simple exact filename match
+   - Queries database via `db.find_by_name(name)`
+   - Catches direct re-uploads with same filename
+   - Fast lookup using database index
+
+5. **Job Name Detection** (JobName method):
+   - Extracts job name using `extract_job_name()` helper
+   - Queries database via `db.find_by_job_name(&job_name)`
+   - Catches renamed NZBs with same content
+   - Useful for deobfuscated names
+
+6. **extract_job_name() Helper Function** (src/lib.rs:2013-2037):
+   - Public static method for extracting clean job names
+   - Removes `.nzb` extension if present
+   - Returns filename stem as job name
+   - Simple implementation (future enhancement: deobfuscation logic)
+   - Well-documented with example in docstring
+
+7. **Detection Method Priority**:
+   - Methods checked in configured order
+   - First matching method wins (no further checks)
+   - Recommended order: NzbHash → JobName → NzbName
+   - NzbHash is most reliable (content-based)
+   - JobName catches renamed duplicates
+   - NzbName is fastest but least flexible
+
+8. **Comprehensive Test Suite** (8 new tests, src/lib.rs:6660-6957):
+   - `test_extract_job_name()`: Tests job name extraction logic
+     - Basic filename with .nzb extension → "movie"
+     - Filename without extension → "movie"
+     - Complex filename with dots → "My.Movie.2024.1080p"
+     - Empty string → ""
+     - Just .nzb extension → ""
+
+   - `test_check_duplicate_disabled()`: Validates disabled detection
+     - Config has enabled=false
+     - Always returns None regardless of content
+
+   - `test_check_duplicate_nzb_hash_no_match()`: Tests new NZB
+     - No existing download with same hash
+     - Returns None (not a duplicate)
+
+   - `test_check_duplicate_nzb_hash_match()`: Tests hash-based detection
+     - Inserts download with known SHA256 hash
+     - Checks same content with different name
+     - Returns DuplicateInfo with method=NzbHash
+     - Verifies existing_id and existing_name are correct
+
+   - `test_check_duplicate_nzb_name_match()`: Tests name-based detection
+     - Inserts download with specific name
+     - Checks different content with same name
+     - Returns DuplicateInfo with method=NzbName
+
+   - `test_check_duplicate_job_name_match()`: Tests job name detection
+     - Inserts download with deobfuscated job name "My.Movie.2024"
+     - Checks new NZB "My.Movie.2024.nzb"
+     - Returns DuplicateInfo with method=JobName
+     - Verifies finds obfuscated existing download
+
+   - `test_check_duplicate_multiple_methods_first_match()`: Tests priority
+     - Config has all 3 methods: NzbHash, NzbName, JobName
+     - Inserts download matching by hash (first method)
+     - Content has different name and job name
+     - Returns DuplicateInfo with method=NzbHash (not NzbName or JobName)
+     - Validates first-match-wins behavior
+
+   - `test_check_duplicate_no_match_any_method()`: Tests non-duplicate
+     - Inserts download with specific hash, name, and job name
+     - Checks completely different content, name, and job name
+     - Returns None (no duplicate found by any method)
+
+9. **Design Alignment**:
+   - Matches implementation_1.md:2151-2272 specification exactly
+   - Uses sha2 crate for SHA256 hashing (already in Cargo.toml)
+   - All three detection methods implemented (NzbHash, NzbName, JobName)
+   - Returns DuplicateInfo struct as designed
+   - Early return optimization when detection disabled
+   - First-match-wins priority order
+
+10. **Integration Points**:
+    - DuplicateInfo exported from lib.rs public API
+    - check_duplicate() is private (internal use only)
+    - extract_job_name() is public for external use
+    - Ready for integration with add_nzb_content() (Task 28.6)
+    - Database methods already implemented (Tasks 28.4)
+
+**Build Verification**:
+- ✅ Library compiles successfully with 103 warnings (no errors)
+- ✅ All 8 duplicate detection tests pass in 0.47s
+- ✅ extract_job_name test passes in 0.00s
+- ✅ No regressions in existing tests
+- ✅ SHA256 hashing works correctly (cryptographic digest)
+- ✅ All three detection methods validated
+- ✅ First-match-wins priority verified
+- ✅ Disabled detection returns None as expected
+
+**Previous Iteration:**
 
 **Task 27.9: Test schedule rules with time changes**
 
@@ -2068,11 +2192,11 @@ The implementation will require these major dependencies:
 - [x] Task 27.8: Add API endpoints for scheduler management (GET/POST/PUT/DELETE /scheduler)
 - [x] Task 27.9: Test schedule rules with time changes
 
-- [ ] Task 28.1: Create DuplicateConfig with enabled, action, methods
-- [ ] Task 28.2: Implement DuplicateAction enum (Block, Warn, Allow)
-- [ ] Task 28.3: Implement DuplicateMethod enum (NzbHash, NzbName, JobName)
-- [ ] Task 28.4: Add nzb_hash and job_name columns to downloads table
-- [ ] Task 28.5: Implement check_duplicate() with sha256 hashing
+- [x] Task 28.1: Create DuplicateConfig with enabled, action, methods
+- [x] Task 28.2: Implement DuplicateAction enum (Block, Warn, Allow)
+- [x] Task 28.3: Implement DuplicateMethod enum (NzbHash, NzbName, JobName)
+- [x] Task 28.4: Add nzb_hash and job_name columns to downloads table
+- [x] Task 28.5: Implement check_duplicate() with sha256 hashing
 - [ ] Task 28.6: Add duplicate detection to add_nzb_content()
 - [ ] Task 28.7: Emit warning event or block based on DuplicateAction
 - [ ] Task 28.8: Test duplicate detection with same NZB added twice

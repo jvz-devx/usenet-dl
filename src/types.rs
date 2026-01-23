@@ -403,3 +403,16 @@ pub struct QueueStats {
     /// Whether queue is accepting new downloads
     pub accepting_new: bool,
 }
+
+/// Information about a detected duplicate download
+#[derive(Clone, Debug)]
+pub struct DuplicateInfo {
+    /// Detection method that found the duplicate
+    pub method: crate::config::DuplicateMethod,
+
+    /// ID of the existing download
+    pub existing_id: DownloadId,
+
+    /// Name of the existing download
+    pub existing_name: String,
+}

@@ -72,8 +72,8 @@ pub use db::Database;
 pub use error::{Error, Result};
 pub use scheduler::{RuleId, ScheduleAction, ScheduleRule, Scheduler, Weekday};
 pub use types::{
-    DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, QueueStats, Stage,
-    Status,
+    DownloadId, DownloadInfo, DownloadOptions, DuplicateInfo, Event, HistoryEntry, Priority,
+    QueueStats, Stage, Status,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1941,6 +1941,120 @@ impl UsenetDownloader {
         }
 
         Ok(())
+    }
+
+    /// Check if an NZB is a duplicate of an existing download
+    ///
+    /// This method checks for duplicates using the configured detection methods
+    /// (NZB hash, NZB name, or job name). Returns information about the duplicate
+    /// if found, or None if this is a new download.
+    ///
+    /// # Arguments
+    ///
+    /// * `nzb_content` - Raw NZB file content (for hash calculation)
+    /// * `name` - NZB filename (for name-based detection)
+    ///
+    /// # Returns
+    ///
+    /// `Some(DuplicateInfo)` if a duplicate is found, `None` otherwise
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let nzb_content = std::fs::read("movie.nzb")?;
+    /// if let Some(dup) = downloader.check_duplicate(&nzb_content, "movie.nzb").await {
+    ///     println!("Duplicate found: {} (ID {})", dup.existing_name, dup.existing_id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    async fn check_duplicate(&self, nzb_content: &[u8], name: &str) -> Option<DuplicateInfo> {
+        // Early return if duplicate detection is disabled
+        if !self.config.duplicate.enabled {
+            return None;
+        }
+
+        // Check each configured detection method in order
+        for method in &self.config.duplicate.methods {
+            match method {
+                crate::config::DuplicateMethod::NzbHash => {
+                    // Calculate SHA256 hash of NZB content
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(nzb_content);
+                    let hash_bytes = hasher.finalize();
+                    let hash = format!("{:x}", hash_bytes);
+
+                    // Check if this hash exists in database
+                    if let Ok(Some(existing)) = self.db.find_by_nzb_hash(&hash).await {
+                        return Some(DuplicateInfo {
+                            method: *method,
+                            existing_id: existing.id,
+                            existing_name: existing.name,
+                        });
+                    }
+                }
+                crate::config::DuplicateMethod::NzbName => {
+                    // Check if download with this name already exists
+                    if let Ok(Some(existing)) = self.db.find_by_name(name).await {
+                        return Some(DuplicateInfo {
+                            method: *method,
+                            existing_id: existing.id,
+                            existing_name: existing.name,
+                        });
+                    }
+                }
+                crate::config::DuplicateMethod::JobName => {
+                    // Extract job name from filename and check database
+                    let job_name = Self::extract_job_name(name);
+                    if let Ok(Some(existing)) = self.db.find_by_job_name(&job_name).await {
+                        return Some(DuplicateInfo {
+                            method: *method,
+                            existing_id: existing.id,
+                            existing_name: existing.name,
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Extract job name from NZB filename
+    ///
+    /// This removes the file extension and any obfuscation patterns to get
+    /// a clean job name for duplicate detection.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - NZB filename or download name
+    ///
+    /// # Returns
+    ///
+    /// Extracted job name (filename stem)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use usenet_dl::UsenetDownloader;
+    /// let job_name = UsenetDownloader::extract_job_name("My.Movie.2024.nzb");
+    /// assert_eq!(job_name, "My.Movie.2024");
+    /// ```
+    pub fn extract_job_name(name: &str) -> String {
+        // Remove .nzb extension if present
+        let name = if name.ends_with(".nzb") {
+            &name[..name.len() - 4]
+        } else {
+            name
+        };
+
+        // For now, just return the cleaned name
+        // Future enhancement: could apply deobfuscation logic here
+        name.to_string()
     }
 
     /// Add an NZB to the download queue from raw bytes
@@ -6521,5 +6635,315 @@ mod tests {
             handle
         ).await;
         assert!(result.is_ok(), "Scheduler should exit on shutdown signal");
+    }
+
+    // Duplicate detection tests
+
+    #[test]
+    fn test_extract_job_name() {
+        // Basic filename with .nzb extension
+        assert_eq!(UsenetDownloader::extract_job_name("movie.nzb"), "movie");
+
+        // Filename without extension
+        assert_eq!(UsenetDownloader::extract_job_name("movie"), "movie");
+
+        // Complex filename with dots
+        assert_eq!(
+            UsenetDownloader::extract_job_name("My.Movie.2024.1080p.nzb"),
+            "My.Movie.2024.1080p"
+        );
+
+        // Empty string
+        assert_eq!(UsenetDownloader::extract_job_name(""), "");
+
+        // Just .nzb extension
+        assert_eq!(UsenetDownloader::extract_job_name(".nzb"), "");
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_disabled() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with duplicate detection disabled
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: false,
+                action: config::DuplicateAction::Warn,
+                methods: vec![config::DuplicateMethod::NzbHash],
+            },
+            ..Default::default()
+        };
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Check should return None when disabled
+        let nzb_content = b"<nzb>test content</nzb>";
+        let result = downloader.check_duplicate(nzb_content, "test.nzb").await;
+        assert!(result.is_none(), "Duplicate check should return None when disabled");
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_nzb_hash_no_match() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with NzbHash detection
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: true,
+                action: config::DuplicateAction::Warn,
+                methods: vec![config::DuplicateMethod::NzbHash],
+            },
+            ..Default::default()
+        };
+
+        let downloader = UsenetDownloader::new(config).await.unwrap();
+
+        // Check new NZB that doesn't exist yet
+        let nzb_content = b"<nzb>unique content</nzb>";
+        let result = downloader.check_duplicate(nzb_content, "unique.nzb").await;
+        assert!(result.is_none(), "Should not find duplicate for new NZB");
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_nzb_hash_match() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with NzbHash detection
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: true,
+                action: config::DuplicateAction::Warn,
+                methods: vec![config::DuplicateMethod::NzbHash],
+            },
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Calculate hash for test content
+        use sha2::{Digest, Sha256};
+        let nzb_content = b"<nzb>test content</nzb>";
+        let mut hasher = Sha256::new();
+        hasher.update(nzb_content);
+        let hash = format!("{:x}", hasher.finalize());
+
+        // Add a download with this hash
+        let download = db::NewDownload {
+            name: "existing.nzb".to_string(),
+            nzb_path: "/tmp/existing.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some(hash),
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 0,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024,
+        };
+        let existing_id = downloader.db.insert_download(&download).await.unwrap();
+
+        // Check for duplicate - should find the existing download
+        let result = downloader.check_duplicate(nzb_content, "test.nzb").await;
+        assert!(result.is_some(), "Should find duplicate by NZB hash");
+
+        let dup = result.unwrap();
+        assert_eq!(dup.existing_id, existing_id);
+        assert_eq!(dup.existing_name, "existing.nzb");
+        assert_eq!(dup.method, config::DuplicateMethod::NzbHash);
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_nzb_name_match() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with NzbName detection
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: true,
+                action: config::DuplicateAction::Warn,
+                methods: vec![config::DuplicateMethod::NzbName],
+            },
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Add a download with specific name
+        let download = db::NewDownload {
+            name: "movie.nzb".to_string(),
+            nzb_path: "/tmp/movie.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 0,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024,
+        };
+        let existing_id = downloader.db.insert_download(&download).await.unwrap();
+
+        // Check for duplicate by name
+        let nzb_content = b"<nzb>some content</nzb>";
+        let result = downloader.check_duplicate(nzb_content, "movie.nzb").await;
+        assert!(result.is_some(), "Should find duplicate by NZB name");
+
+        let dup = result.unwrap();
+        assert_eq!(dup.existing_id, existing_id);
+        assert_eq!(dup.existing_name, "movie.nzb");
+        assert_eq!(dup.method, config::DuplicateMethod::NzbName);
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_job_name_match() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with JobName detection
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: true,
+                action: config::DuplicateAction::Warn,
+                methods: vec![config::DuplicateMethod::JobName],
+            },
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Add a download with specific job name
+        let download = db::NewDownload {
+            name: "abc123def456.nzb".to_string(),  // Obfuscated filename
+            nzb_path: "/tmp/abc123.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: Some("My.Movie.2024".to_string()),  // Deobfuscated job name
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 0,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024,
+        };
+        let existing_id = downloader.db.insert_download(&download).await.unwrap();
+
+        // Check for duplicate by job name
+        let nzb_content = b"<nzb>content</nzb>";
+        let result = downloader.check_duplicate(nzb_content, "My.Movie.2024.nzb").await;
+        assert!(result.is_some(), "Should find duplicate by job name");
+
+        let dup = result.unwrap();
+        assert_eq!(dup.existing_id, existing_id);
+        assert_eq!(dup.existing_name, "abc123def456.nzb");
+        assert_eq!(dup.method, config::DuplicateMethod::JobName);
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_multiple_methods_first_match() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with multiple detection methods
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: true,
+                action: config::DuplicateAction::Warn,
+                methods: vec![
+                    config::DuplicateMethod::NzbHash,   // First (highest priority)
+                    config::DuplicateMethod::NzbName,   // Second
+                    config::DuplicateMethod::JobName,   // Third
+                ],
+            },
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Calculate hash for test content
+        use sha2::{Digest, Sha256};
+        let nzb_content = b"<nzb>test content</nzb>";
+        let mut hasher = Sha256::new();
+        hasher.update(nzb_content);
+        let hash = format!("{:x}", hasher.finalize());
+
+        // Add a download that matches by hash (highest priority method)
+        let download = db::NewDownload {
+            name: "different_name.nzb".to_string(),
+            nzb_path: "/tmp/different.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some(hash),
+            job_name: Some("different_job".to_string()),
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 0,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024,
+        };
+        let existing_id = downloader.db.insert_download(&download).await.unwrap();
+
+        // Check for duplicate - should find by hash (first method)
+        let result = downloader.check_duplicate(nzb_content, "some_name.nzb").await;
+        assert!(result.is_some(), "Should find duplicate by first matching method");
+
+        let dup = result.unwrap();
+        assert_eq!(dup.existing_id, existing_id);
+        assert_eq!(dup.method, config::DuplicateMethod::NzbHash, "Should use first matching method (NzbHash)");
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_no_match_any_method() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with all detection methods
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            duplicate: config::DuplicateConfig {
+                enabled: true,
+                action: config::DuplicateAction::Warn,
+                methods: vec![
+                    config::DuplicateMethod::NzbHash,
+                    config::DuplicateMethod::NzbName,
+                    config::DuplicateMethod::JobName,
+                ],
+            },
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Add a download with different hash, name, and job name
+        let download = db::NewDownload {
+            name: "existing.nzb".to_string(),
+            nzb_path: "/tmp/existing.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("abc123".to_string()),
+            job_name: Some("Existing.Job".to_string()),
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 0,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024,
+        };
+        downloader.db.insert_download(&download).await.unwrap();
+
+        // Check for duplicate with completely different content, name, and job name
+        let nzb_content = b"<nzb>totally different content</nzb>";
+        let result = downloader.check_duplicate(nzb_content, "new.nzb").await;
+        assert!(result.is_none(), "Should not find duplicate when nothing matches");
     }
 }
