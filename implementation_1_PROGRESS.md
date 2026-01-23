@@ -2445,13 +2445,13 @@ The implementation will require these major dependencies:
 
 ### Phase 5: Notifications & Polish (Steps 29-35)
 
-- [ ] Task 29.1: Create WebhookConfig with url, events, auth_header, timeout
-- [ ] Task 29.2: Implement WebhookEvent enum (OnComplete, OnFailed, OnQueued)
-- [ ] Task 29.3: Create WebhookPayload struct (event, download_id, name, category, status, destination, error, timestamp)
-- [ ] Task 29.4: Implement trigger_webhooks() to POST to configured URLs
-- [ ] Task 29.5: Add timeout and error handling (don't fail download on webhook failure)
-- [ ] Task 29.6: Emit WebhookFailed event on error
-- [ ] Task 29.7: Test webhook with httpbin.org/post
+- [x] Task 29.1: Create WebhookConfig with url, events, auth_header, timeout
+- [x] Task 29.2: Implement WebhookEvent enum (OnComplete, OnFailed, OnQueued)
+- [x] Task 29.3: Create WebhookPayload struct (event, download_id, name, category, status, destination, error, timestamp)
+- [x] Task 29.4: Implement trigger_webhooks() to POST to configured URLs
+- [x] Task 29.5: Add timeout and error handling (don't fail download on webhook failure)
+- [x] Task 29.6: Emit WebhookFailed event on error
+- [x] Task 29.7: Test webhook with httpbin.org/post
 
 - [ ] Task 30.1: Create ScriptConfig with path, events, timeout
 - [ ] Task 30.2: Implement ScriptEvent enum (OnComplete, OnFailed, OnPostProcessComplete)
