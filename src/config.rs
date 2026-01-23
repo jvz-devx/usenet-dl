@@ -510,6 +510,14 @@ pub struct RateLimitConfig {
     /// Burst size (default: 200)
     #[serde(default = "default_burst_size")]
     pub burst_size: u32,
+
+    /// Endpoints exempt from rate limiting
+    #[serde(default = "default_exempt_paths")]
+    pub exempt_paths: Vec<String>,
+
+    /// IPs exempt from rate limiting (e.g., localhost)
+    #[serde(default = "default_exempt_ips")]
+    pub exempt_ips: Vec<std::net::IpAddr>,
 }
 
 impl Default for RateLimitConfig {
@@ -518,6 +526,8 @@ impl Default for RateLimitConfig {
             enabled: false,
             requests_per_second: 100,
             burst_size: 200,
+            exempt_paths: default_exempt_paths(),
+            exempt_ips: default_exempt_ips(),
         }
     }
 }
@@ -760,6 +770,21 @@ fn default_requests_per_second() -> u32 {
 
 fn default_burst_size() -> u32 {
     200
+}
+
+fn default_exempt_paths() -> Vec<String> {
+    vec![
+        "/api/v1/events".to_string(),  // SSE is long-lived
+        "/api/v1/health".to_string(),  // Health checks should always work
+    ]
+}
+
+fn default_exempt_ips() -> Vec<std::net::IpAddr> {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    vec![
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(Ipv6Addr::LOCALHOST),
+    ]
 }
 
 fn default_scan_interval() -> Duration {

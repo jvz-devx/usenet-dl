@@ -58,41 +58,35 @@ IN_PROGRESS
   - Task 22.2: ✅ Swagger UI "Try it out" functionality validated - all 37 endpoints tested (54 API tests passing)
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
-- Total: 158/253 tasks complete (62.5%)
+- Total: 160/253 tasks complete (63.2%)
 
-**Next Task:** Task 23.1 - Add tower-governor dependency
+**Next Task:** Task 23.3 - Implement conditional rate limiting layer (only if enabled)
 
 ## Completed This Iteration
 
-**Task 22.4: API Documentation Completeness Test**
+**Task 23.2: Create RateLimitConfig with exempt_paths and exempt_ips**
 
-Implemented a comprehensive test that validates the completeness and quality of the API documentation:
+Enhanced the RateLimitConfig structure to support path and IP exemptions as specified in the design:
 
-1. **test_api_documentation_completeness()** - New test function that performs 10 validation checks:
-   - ✅ All 37 endpoints have descriptions or summaries
-   - ✅ All 37 endpoints have operation IDs (required for client generation)
-   - ✅ All 37 endpoints have tags for organization
-   - ✅ All 37 endpoints have response definitions
-   - ✅ POST/PUT/PATCH endpoints have request body schemas (with exceptions for action endpoints)
-   - ✅ All 34 component schemas are documented
-   - ✅ 11 required core schemas are present (DownloadInfo, DownloadOptions, Status, Priority, etc.)
-   - ✅ 11 major API endpoints are covered (downloads, queue, history, config, categories)
-   - ✅ Security scheme (API key authentication) is documented
-   - ✅ API info section is complete with title and version
+1. **Added Fields to RateLimitConfig:**
+   - `exempt_paths: Vec<String>` - List of API paths that should not be rate limited
+   - `exempt_ips: Vec<std::net::IpAddr>` - List of IP addresses exempt from rate limiting
 
-2. **Test Results:**
-   - All validation checks pass
-   - Confirms API documentation is production-ready
-   - 56 API tests now passing (up from 55)
+2. **Default Exempt Paths:**
+   - `/api/v1/events` - SSE endpoint is long-lived and shouldn't be rate limited
+   - `/api/v1/health` - Health checks should always work
 
-3. **Documentation Quality Verified:**
-   - 37 endpoints fully documented across 9 categories
-   - 34 component schemas defined
-   - All endpoints have operation IDs for client SDK generation
-   - Security scheme properly documented
-   - API info complete with title "usenet-dl REST API" and version "0.1.0"
+3. **Default Exempt IPs:**
+   - IPv4 localhost (127.0.0.1)
+   - IPv6 localhost (::1)
 
-This completes Task 22 (OpenAPI Integration and Documentation), which validates that the API is self-documenting and ready for client code generation using tools like openapi-generator-cli.
+4. **Implementation Details:**
+   - Added `default_exempt_paths()` helper function
+   - Added `default_exempt_ips()` helper function
+   - Both fields use `#[serde(default)]` to provide defaults when not configured
+   - Code compiles successfully
+
+This completes Task 23.1 (already had tower-governor dependency) and Task 23.2. Next step is to implement the actual rate limiting layer in the API router.
 
 ## Notes
 
@@ -409,8 +403,8 @@ The implementation will require these major dependencies:
 - [x] Task 22.3: Verify OpenAPI spec is valid (use openapi-generator validate)
 - [x] Task 22.4: Test API documentation completeness
 
-- [ ] Task 23.1: Add tower-governor dependency
-- [ ] Task 23.2: Create RateLimitConfig with requests_per_second, burst_size, exempt_paths, exempt_ips
+- [x] Task 23.1: Add tower-governor dependency
+- [x] Task 23.2: Create RateLimitConfig with requests_per_second, burst_size, exempt_paths, exempt_ips
 - [ ] Task 23.3: Implement conditional rate limiting layer (only if enabled)
 - [ ] Task 23.4: Add exempt path/IP checking logic
 - [ ] Task 23.5: Test rate limiting returns 429 when exceeded
