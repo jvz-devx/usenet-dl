@@ -3725,37 +3725,44 @@ impl UsenetDownloader {
                 ))
             })?;
 
-            // Store article data in temp directory
-            // Later we'll assemble these into the final file (post-processing phase)
-            let mut article_data = Vec::new();
-
             // Calculate concurrency limit from server connections
             // This determines how many articles we can download in parallel
             let concurrency: usize = config.servers.iter()
                 .map(|s| s.connections)
                 .sum();
 
-            // Download each article
-            for article in pending_articles {
-                // Get a connection from the first NNTP pool
-                // TODO: Add multi-server failover in future tasks
-                let pool = nntp_pools
-                    .first()
-                    .ok_or_else(|| Error::Nntp("No NNTP pools configured".to_string()))?;
+            // Download articles in parallel using buffered stream
+            // This allows utilizing all configured NNTP connections concurrently
+            let results: Vec<std::result::Result<(i32, u64), String>> = stream::iter(pending_articles)
+                .map(|article| {
+                    let nntp_pools = nntp_pools.clone();
+                    let db = db.clone();
+                    let download_temp_dir = download_temp_dir.clone();
+                    let downloaded_articles = downloaded_articles.clone();
+                    let downloaded_bytes = downloaded_bytes.clone();
 
-                let mut conn = pool.get().await.map_err(|e| {
-                    Error::Nntp(format!("Failed to get NNTP connection: {}", e))
-                })?;
+                    async move {
+                        // Get a connection from the first NNTP pool
+                        // TODO: Add multi-server failover in future tasks
+                        let pool = nntp_pools
+                            .first()
+                            .ok_or_else(|| "No NNTP pools configured".to_string())?;
 
-                // Fetch the article from the server
-                // NNTP requires angle brackets around message-ids for ARTICLE command
-                let message_id = if article.message_id.starts_with('<') {
-                    article.message_id.clone()
-                } else {
-                    format!("<{}>", article.message_id)
-                };
-                match conn.fetch_article(&message_id).await {
-                    Ok(response) => {
+                        let mut conn = pool.get().await.map_err(|e| {
+                            format!("Failed to get NNTP connection: {}", e)
+                        })?;
+
+                        // Fetch the article from the server
+                        // NNTP requires angle brackets around message-ids for ARTICLE command
+                        let message_id = if article.message_id.starts_with('<') {
+                            article.message_id.clone()
+                        } else {
+                            format!("<{}>", article.message_id)
+                        };
+
+                        let response = conn.fetch_article(&message_id).await
+                            .map_err(|e| format!("Article fetch failed: {}", e))?;
+
                         // Save article content to temp directory
                         // Each article gets its own file: article_<segment_number>.dat
                         let article_file = download_temp_dir.join(format!("article_{}.dat", article.segment_number));
@@ -3763,82 +3770,94 @@ impl UsenetDownloader {
                         // Join response lines into single string for storage
                         let article_content = response.lines.join("\n");
                         tokio::fs::write(&article_file, article_content.as_bytes()).await.map_err(|e| {
-                            Error::Io(std::io::Error::new(
-                                e.kind(),
-                                format!("Failed to write article file: {}", e),
-                            ))
+                            format!("Failed to write article file: {}", e)
                         })?;
-
-                        // Track article data for later assembly
-                        article_data.push((article.segment_number, response.lines));
 
                         // Mark article as downloaded
                         db.update_article_status(
                             article.id,
                             crate::db::article_status::DOWNLOADED,
                         )
-                        .await?;
+                        .await
+                        .map_err(|e| format!("Failed to update article status: {}", e))?;
 
+                        // Update atomic counters for progress tracking
                         downloaded_articles.fetch_add(1, Ordering::Relaxed);
                         downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
 
-                        // Calculate progress percentage
-                        let current_bytes = downloaded_bytes.load(Ordering::Relaxed);
-                        let current_articles = downloaded_articles.load(Ordering::Relaxed);
-                        let progress_percent = if total_size_bytes > 0 {
-                            (current_bytes as f32 / total_size_bytes as f32) * 100.0
-                        } else {
-                            (current_articles as f32 / total_articles as f32) * 100.0
-                        };
-
-                        // Calculate download speed (bytes per second)
-                        let elapsed_secs = download_start.elapsed().as_secs_f64();
-                        let speed_bps = if elapsed_secs > 0.0 {
-                            (current_bytes as f64 / elapsed_secs) as u64
-                        } else {
-                            0
-                        };
-
-                        // Update progress in database
-                        db.update_progress(
-                            download_id,
-                            progress_percent,
-                            speed_bps,
-                            current_bytes,
-                        )
-                        .await?;
-
-                        // Emit progress event
-                        event_tx
-                            .send(Event::Downloading {
-                                id: download_id,
-                                percent: progress_percent,
-                                speed_bps,
-                            })
-                            .ok();
+                        // Return segment number and size for result processing
+                        Ok::<(i32, u64), String>((article.segment_number, article.size_bytes as u64))
                     }
+                })
+                .buffer_unordered(concurrency)
+                .collect()
+                .await;
+
+            // Process results and check for failures
+            let mut successes = 0;
+            let mut failures = 0;
+            let mut first_error: Option<String> = None;
+
+            for result in results {
+                match result {
+                    Ok(_) => successes += 1,
                     Err(e) => {
-                        // Mark article as failed
-                        db.update_article_status(article.id, crate::db::article_status::FAILED)
-                            .await?;
-
-                        // For now, fail the entire download on first article failure
-                        // TODO: Add retry logic in Tasks 8.1-8.6
-                        db.update_status(download_id, Status::Failed.to_i32()).await?;
-                        db.set_error(download_id, &format!("Article fetch failed: {}", e))
-                            .await?;
-
-                        event_tx
-                            .send(Event::DownloadFailed {
-                                id: download_id,
-                                error: format!("Article fetch failed: {}", e),
-                            })
-                            .ok();
-
-                        return Err(Error::Nntp(format!("Article fetch failed: {}", e)));
+                        failures += 1;
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
                     }
                 }
             }
+
+            // If any articles failed, mark download as failed
+            if failures > 0 {
+                let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
+
+                db.update_status(download_id, Status::Failed.to_i32()).await?;
+                db.set_error(download_id, &error_msg).await?;
+
+                event_tx
+                    .send(Event::DownloadFailed {
+                        id: download_id,
+                        error: error_msg.clone(),
+                    })
+                    .ok();
+
+                return Err(Error::Nntp(format!("Download failed: {} of {} articles failed. First error: {}",
+                    failures, total_articles, error_msg)));
+            }
+
+            // Emit final progress event
+            let final_bytes = downloaded_bytes.load(Ordering::Relaxed);
+            let final_articles = downloaded_articles.load(Ordering::Relaxed);
+            let final_percent = if total_size_bytes > 0 {
+                (final_bytes as f32 / total_size_bytes as f32) * 100.0
+            } else {
+                (final_articles as f32 / total_articles as f32) * 100.0
+            };
+            let elapsed_secs = download_start.elapsed().as_secs_f64();
+            let final_speed_bps = if elapsed_secs > 0.0 {
+                (final_bytes as f64 / elapsed_secs) as u64
+            } else {
+                0
+            };
+
+            db.update_progress(
+                download_id,
+                final_percent,
+                final_speed_bps,
+                final_bytes,
+            )
+            .await?;
+
+            event_tx
+                .send(Event::Downloading {
+                    id: download_id,
+                    percent: final_percent,
+                    speed_bps: final_speed_bps,
+                })
+                .ok();
 
             // All articles downloaded successfully
             db.update_status(download_id, Status::Complete.to_i32()).await?;

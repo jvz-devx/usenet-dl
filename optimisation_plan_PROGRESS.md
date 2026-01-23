@@ -199,19 +199,19 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - Location: Around line 3690
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs`
 
-- [ ] Task 4.3: Convert direct download sequential loop to parallel stream
+- [x] Task 4.3: Convert direct download sequential loop to parallel stream
   - Replace `for article in pending_articles` (line 3694)
   - Same pattern as Task 3.2-3.4: `stream::iter().map().buffer_unordered().collect()`
   - Move article fetch logic (lines 3695-3793) into async closure
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3694-3794`
 
-- [ ] Task 4.4: Add result processing for direct download
+- [x] Task 4.4: Add result processing for direct download
   - Process collected results
   - Handle errors appropriately (currently returns error, may want to collect partial failures)
   - Update atomic counters in map closure
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (after line 3794)
 
-- [ ] Task 4.5: Remove unused `article_data` vector in direct download
+- [x] Task 4.5: Remove unused `article_data` vector in direct download
   - Line 3691: `let mut article_data = Vec::new();` - no longer needed
   - Line 3728: `article_data.push(...)` - remove (articles already saved to disk)
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs:3691,3728`
@@ -367,14 +367,19 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
-- Task 4.2: Calculate concurrency for direct download
-  - Added concurrency calculation using same pattern as queue processor (Task 3.1)
-  - Calculates total connections across all configured servers: `config.servers.iter().map(|s| s.connections).sum()`
-  - Location: src/lib.rs:3731-3735 (right before "Download each article" comment)
-  - Added descriptive comments explaining what the calculation does
-  - Validated with `cargo check` - compiles successfully with only expected warnings
-  - Warning about unused `concurrency` variable is expected - will be used in Task 4.3 when converting to parallel stream
-  - Ready for parallel stream implementation in next task
+- Tasks 4.3, 4.4, 4.5: Converted direct download loop to parallel stream (full Phase 4 complete)
+  - Replaced sequential `for article in pending_articles` loop (lines 3738-3841) with parallel buffered stream
+  - Created stream using `stream::iter(pending_articles)` with `.map()` async closure and `.buffer_unordered(concurrency)`
+  - Moved all article download logic into async closure that runs concurrently
+  - Implemented result processing: collect all results, count successes/failures, emit final progress
+  - Error handling: fails entire download if any articles fail (consistent with current behavior)
+  - Atomic counters updated inside map closure: `downloaded_bytes.fetch_add()`, `downloaded_articles.fetch_add()`
+  - Removed unused `article_data` vector (line 3730) - articles are written directly to disk, no in-memory collection needed
+  - Final progress event emitted after all downloads complete with accurate byte counts and speed
+  - Location: src/lib.rs:3738-3855 (entire parallel download implementation)
+  - Validated with `cargo check` - compiles successfully with only expected warnings (pre-existing unused imports/variables)
+  - Direct downloads will now use all configured connections concurrently instead of sequentially
+  - Phase 4 complete: Both download methods (queue processor and direct download) now parallelized
 
 ## Previously Completed
 
@@ -421,24 +426,26 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Current Status Summary
 
-**Phase 3 Queue Processor Parallelization: COMPLETE**
-- All Phase 3 tasks (3.1-3.7) are now complete
-- The queue processor now downloads articles in parallel using buffered streams
+**Phase 4 Direct Download Parallelization: COMPLETE**
+- All Phase 4 tasks (4.1-4.5) are now complete
+- Both download methods now parallelized:
+  - Queue processor (Phase 3): Uses parallel buffered streams ✓
+  - Direct download (Phase 4): Uses parallel buffered streams ✓
 - Downloads will utilize all configured NNTP connections concurrently
-- Next phase: Parallelize the direct download loop (Phase 4)
+- Next phase: Error handling improvements (Phase 5)
 
 **What's Working:**
-- Parallel article downloads in queue processor using buffer_unordered()
-- Atomic counter-based progress tracking with dedicated reporting task
-- Cancellation support in parallel downloads
-- Error collection and result processing
-- Global speed limiting across concurrent downloads
+- ✓ Parallel article downloads in BOTH queue processor and direct download using buffer_unordered()
+- ✓ Atomic counter-based progress tracking (with dedicated reporting task for queue processor)
+- ✓ Cancellation support in parallel downloads (queue processor)
+- ✓ Error collection and result processing in both methods
+- ✓ Global speed limiting across concurrent downloads
 
 **What's Next:**
-- Phase 4: Apply same pattern to direct download method (download_nzb)
-- Phase 5: Improve error handling (currently fails on first error)
-- Phase 6: Add comprehensive tests
+- Phase 5: Improve error handling (currently fails if any article fails - may want partial success)
+- Phase 6: Add comprehensive tests (unit, integration, stress, cancellation)
 - Phase 7: Update documentation
+- Phase 8: Optional enhancements (multi-server failover, retry logic, etc.)
 
 ## Notes
 
