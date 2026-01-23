@@ -3151,8 +3151,18 @@ impl UsenetDownloader {
                             return;
                         }
 
-                        // Spawn progress reporting task to periodically emit progress events
-                        // This prevents event spam when downloads complete out of order
+                        // Spawn progress reporting task to periodically emit progress events.
+                        //
+                        // Why a separate task?
+                        // With parallel downloads, articles complete out of order and at different
+                        // times. If we emit a progress event after each article completion, we'd
+                        // spam the event channel with hundreds/thousands of events. Instead, this
+                        // task reads the atomic counters every 500ms and emits a single progress
+                        // update, providing smooth progress reporting without overwhelming the system.
+                        //
+                        // The task automatically stops when:
+                        // 1. The download is cancelled (cancel_token)
+                        // 2. The download completes (progress_task.abort() called below)
                         let progress_task = {
                             let downloaded_articles = Arc::clone(&downloaded_articles);
                             let downloaded_bytes = Arc::clone(&downloaded_bytes);
@@ -3212,13 +3222,31 @@ impl UsenetDownloader {
                             })
                         };
 
-                        // Calculate concurrency limit based on total connections across all servers
+                        // Calculate concurrency limit based on total connections across all servers.
+                        // This determines the maximum number of articles that can be downloaded
+                        // simultaneously. With 50 connections configured, we can download 50 articles
+                        // in parallel instead of sequentially, providing ~50x speedup.
                         let concurrency: usize = config_clone.servers.iter()
                             .map(|s| s.connections)
                             .sum();
 
-                        // Download articles in parallel using buffered stream
-                        // This allows concurrent downloads up to the connection pool size
+                        // Download articles in parallel using buffered stream (futures::stream).
+                        //
+                        // Architecture:
+                        // - stream::iter() creates a lazy stream over pending_articles
+                        // - .map() wraps each article in an async closure that fetches it
+                        // - .buffer_unordered(concurrency) runs up to N futures concurrently
+                        // - .collect() gathers all results into a Vec
+                        //
+                        // Why buffer_unordered?
+                        // 1. Automatic backpressure: Won't create more futures than concurrency limit
+                        // 2. Out-of-order completion: Fast articles don't wait for slow ones
+                        // 3. Natural cancellation: Dropping the stream cancels in-flight requests
+                        // 4. Memory efficient: Lazy iteration, only N futures active at once
+                        //
+                        // This approach mirrors SABnzbd's architecture but uses Rust async instead
+                        // of Python threads. The connection pool manages actual NNTP connections,
+                        // while buffer_unordered manages concurrent article fetch operations.
                         let results: Vec<std::result::Result<(i32, u64), String>> = stream::iter(pending_articles)
                             .map(|article| {
                                 // Clone variables needed in the async closure
@@ -3254,8 +3282,10 @@ impl UsenetDownloader {
                                         }
                                     };
 
-                                    // Acquire bandwidth tokens before downloading
-                                    // This enforces the global speed limit across all concurrent downloads
+                                    // Acquire bandwidth tokens before downloading.
+                                    // The speed limiter uses a token bucket algorithm to enforce global
+                                    // bandwidth limits across ALL concurrent downloads. This prevents
+                                    // parallel downloads from exceeding the configured speed limit.
                                     speed_limiter.acquire(article.size_bytes as u64).await;
 
                                     // Fetch the article from the server
@@ -3293,7 +3323,13 @@ impl UsenetDownloader {
                                         // Continue even if database update fails
                                     }
 
-                                    // Update atomic counters (progress reporting task reads these)
+                                    // Update atomic counters for progress tracking.
+                                    // These counters are read by the progress reporting task (spawned above)
+                                    // which periodically emits progress events. This prevents event spam
+                                    // that would occur if each article completion emitted an event,
+                                    // since articles complete out of order in parallel downloads.
+                                    // Using Relaxed ordering is safe because we don't need strict ordering
+                                    // guarantees - approximate progress is acceptable.
                                     downloaded_articles.fetch_add(1, Ordering::Relaxed);
                                     downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
 
@@ -3304,7 +3340,10 @@ impl UsenetDownloader {
                             .collect()
                             .await;
 
-                        // Process results and check for failures
+                        // Process results and check for failures.
+                        // With parallel downloads, some articles may fail while others succeed.
+                        // We collect all results first, then decide whether the download as a
+                        // whole should be marked as failed or if partial success is acceptable.
                         let mut failed_count = 0;
                         let mut success_count = 0;
                         let mut first_error: Option<String> = None;
@@ -3321,12 +3360,17 @@ impl UsenetDownloader {
                             }
                         }
 
-                        // Stop progress reporting task
+                        // Stop progress reporting task now that download is complete
                         progress_task.abort();
 
                         let total_articles = success_count + failed_count;
 
-                        // Handle download result - allow partial success
+                        // Handle download result - allow partial success.
+                        // Strategy: Only fail the download if ALL articles fail or >50% fail.
+                        // This is important for parallel downloads because transient network
+                        // errors or missing articles shouldn't fail the entire download if most
+                        // articles downloaded successfully. Failed articles are already marked
+                        // as FAILED in the database (done during download in the map closure).
                         if failed_count > 0 {
                             // Log warning about failed articles
                             tracing::warn!(
@@ -3746,14 +3790,32 @@ impl UsenetDownloader {
                 ))
             })?;
 
-            // Calculate concurrency limit from server connections
-            // This determines how many articles we can download in parallel
+            // Calculate concurrency limit from server connections.
+            // This determines how many articles we can download in parallel.
+            // Example: With 50 connections configured across all servers, we can
+            // download 50 articles simultaneously instead of sequentially,
+            // providing ~50x speedup (network/server permitting).
             let concurrency: usize = config.servers.iter()
                 .map(|s| s.connections)
                 .sum();
 
-            // Download articles in parallel using buffered stream
-            // This allows utilizing all configured NNTP connections concurrently
+            // Download articles in parallel using buffered stream (futures::stream).
+            //
+            // Architecture:
+            // - stream::iter() creates a lazy stream over pending_articles
+            // - .map() wraps each article in an async closure that fetches it
+            // - .buffer_unordered(concurrency) runs up to N futures concurrently
+            // - .collect() gathers all results into a Vec
+            //
+            // Why buffer_unordered?
+            // 1. Automatic backpressure: Won't create more futures than concurrency limit
+            // 2. Out-of-order completion: Fast articles don't wait for slow ones
+            // 3. Natural cancellation: Dropping the stream cancels in-flight requests
+            // 4. Memory efficient: Lazy iteration, only N futures active at once
+            //
+            // Memory usage: Article content goes to disk (temp files), not memory.
+            // Only the futures themselves are in memory (~1KB each), so 50 concurrent
+            // downloads = ~50KB RAM overhead, regardless of article sizes.
             let results: Vec<std::result::Result<(i32, u64), String>> = stream::iter(pending_articles)
                 .map(|article| {
                     let nntp_pools = nntp_pools.clone();
@@ -3826,11 +3888,14 @@ impl UsenetDownloader {
                             return Err(format!("Failed to update article status: {}", e));
                         }
 
-                        // Update atomic counters for progress tracking
+                        // Update atomic counters for progress tracking.
+                        // These are used for progress calculation and event emission.
+                        // Using Relaxed ordering is safe because we don't need strict ordering
+                        // guarantees - approximate progress values are acceptable.
                         downloaded_articles.fetch_add(1, Ordering::Relaxed);
                         downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
 
-                        // Return segment number and size for result processing
+                        // Return segment number and size for result processing.
                         Ok::<(i32, u64), String>((article.segment_number, article.size_bytes as u64))
                     }
                 })
@@ -3838,7 +3903,10 @@ impl UsenetDownloader {
                 .collect()
                 .await;
 
-            // Process results and check for failures
+            // Process results and check for failures.
+            // With parallel downloads, some articles may fail while others succeed.
+            // We collect all results first, then decide whether the download as a
+            // whole should be marked as failed or if partial success is acceptable.
             let mut successes = 0;
             let mut failures = 0;
             let mut first_error: Option<String> = None;
@@ -3855,7 +3923,12 @@ impl UsenetDownloader {
                 }
             }
 
-            // Handle download result - allow partial success
+            // Handle download result - allow partial success.
+            // Strategy: Only fail the download if ALL articles fail or >50% fail.
+            // This is important for parallel downloads because transient network
+            // errors or missing articles shouldn't fail the entire download if most
+            // articles downloaded successfully. Failed articles are already marked
+            // as FAILED in the database (done during download in the map closure).
             if failures > 0 {
                 tracing::warn!(
                     download_id = download_id,

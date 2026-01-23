@@ -286,7 +286,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
 
 ### Phase 7: Documentation and Cleanup
 
-- [ ] Task 7.1: Update inline comments for parallel download sections
+- [x] Task 7.1: Update inline comments for parallel download sections
   - Document: Why `buffer_unordered` is used
   - Document: Concurrency calculation rationale
   - Document: Atomic counter usage for progress
@@ -371,6 +371,46 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 **Parallel Work Possible**: Phases 3 and 4 can be worked on simultaneously after Phase 2
 
 ## Completed This Iteration
+
+- Task 7.1: Updated inline comments for parallel download sections
+  - **Files Modified**: `src/lib.rs` - Enhanced documentation for parallel download sections
+  - **Queue Processor Comments** (lines ~3215-3240):
+    - Added detailed explanation of concurrency calculation (why sum of all server connections)
+    - Documented buffer_unordered architecture: stream::iter → map → buffer_unordered → collect
+    - Explained 4 key benefits: automatic backpressure, out-of-order completion, natural cancellation, memory efficiency
+    - Added context about SABnzbd-inspired architecture using Rust async instead of Python threads
+  - **Progress Reporting Task Comments** (lines ~3154-3165):
+    - Explained why separate task is needed (prevents event spam from out-of-order completions)
+    - Documented automatic stopping conditions (cancellation + download completion)
+    - Clarified 500ms update interval rationale
+  - **Speed Limiter Comments** (lines ~3258-3262):
+    - Explained token bucket algorithm for global bandwidth enforcement
+    - Documented how parallel downloads don't exceed configured speed limit
+  - **Atomic Counter Comments** (lines ~3296-3303):
+    - Explained why Relaxed ordering is safe (approximate progress acceptable)
+    - Documented relationship with progress reporting task
+    - Clarified purpose: prevent event spam from parallel completions
+  - **Result Processing Comments** (lines ~3307-3330):
+    - Documented partial success strategy (only fail if ALL fail or >50% fail)
+    - Explained importance for parallel downloads (transient errors shouldn't kill entire download)
+    - Noted that failed articles already marked in database during download
+  - **Direct Download Comments** (lines ~3749-3775):
+    - Added same architectural documentation as queue processor
+    - Included memory usage notes: articles → disk, only futures in RAM (~50KB for 50 connections)
+    - Documented concurrency calculation with example (50 connections = ~50x speedup)
+  - **Direct Download Atomic Counters** (lines ~3879-3885):
+    - Same documentation as queue processor for consistency
+  - **Direct Download Result Processing** (lines ~3896-3920):
+    - Same partial success documentation as queue processor
+  - **Compilation**: Code compiles successfully with only pre-existing warnings
+  - **Documentation Quality**:
+    - Comments are comprehensive but not verbose
+    - Explain "why" not just "what"
+    - Include concrete examples (50 connections = ~50x speedup)
+    - Reference related code sections (progress reporting task, atomic counters)
+  - **Next**: Task 7.2 - Update rustdoc for affected methods
+
+## Previously Completed This Iteration
 
 - Task 6.5: Implemented stress test with large NZB (1200 segments)
   - **File Modified**: `tests/parallel_downloads.rs` - Added `test_stress_large_nzb_download()` function (lines 585-782)
