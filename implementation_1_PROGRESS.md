@@ -59,16 +59,114 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (35/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (36/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
-  - Tasks 27.1-27.7: ✅ Scheduler with action application complete (42 tests passing)
-- Total: 198/253 tasks complete (78.3%)
+  - Tasks 27.1-27.8: ✅ Scheduler with full API endpoint management complete (42 tests passing + 1 scheduler API test)
+- Total: 199/253 tasks complete (78.7%)
 
-**Next Task:** Task 27.8 - Add API endpoints for scheduler management (GET/POST/PUT/DELETE /scheduler)
+**Next Task:** Task 27.9 - Test schedule rules with time changes
 
 ## Completed This Iteration
+
+**Task 27.8: Add API endpoints for scheduler management (GET/POST/PUT/DELETE /scheduler)**
+
+Successfully implemented complete REST API for scheduler management with runtime rule manipulation:
+
+1. **Runtime Storage Fields Added to UsenetDownloader**:
+   - `schedule_rules: Arc<RwLock<Vec<config::ScheduleRule>>>` - runtime-mutable list
+   - `next_schedule_rule_id: Arc<AtomicI64>` - auto-incrementing ID counter
+   - Initialized in constructor from config.schedule_rules
+   - Separate from static config for dynamic runtime updates
+
+2. **CRUD Methods Implemented** (src/lib.rs:1377-1525):
+   - `get_schedule_rules()` - returns cloned Vec of all rules
+   - `add_schedule_rule(rule)` - adds rule, returns assigned ID
+   - `update_schedule_rule(id, rule)` - updates rule at index, returns bool
+   - `remove_schedule_rule(id)` - removes rule at index, returns bool
+   - All methods use RwLock for safe concurrent access
+   - IDs are array indices (0-based)
+
+3. **GET /scheduler Endpoint** (src/api/routes.rs:1787-1812):
+   - Lists all schedule rules with assigned IDs
+   - Returns Vec<ScheduleRuleResponse> (rule + id)
+   - Status: 200 OK with JSON array
+   - Empty array when no rules configured
+
+4. **POST /scheduler Endpoint** (src/api/routes.rs:1814-1863):
+   - Adds new schedule rule
+   - Validates start_time and end_time formats (HH:MM)
+   - Returns 201 Created with {"id": <assigned_id>}
+   - Returns 400 Bad Request for invalid time formats
+   - Auto-assigns sequential ID from counter
+
+5. **PUT /scheduler/:id Endpoint** (src/api/routes.rs:1865-1913):
+   - Updates existing rule at given index
+   - Validates start_time and end_time formats
+   - Returns 204 No Content on success
+   - Returns 404 Not Found if index invalid
+   - Returns 400 Bad Request for invalid time formats
+
+6. **DELETE /scheduler/:id Endpoint** (src/api/routes.rs:1915-1939):
+   - Deletes rule at given index
+   - Returns 204 No Content on success
+   - Returns 404 Not Found if index invalid
+   - Array automatically shifts after deletion
+
+7. **ScheduleRuleResponse Type** (src/api/routes.rs:1784-1789):
+   - Wraps config::ScheduleRule with ID field
+   - Flattens rule fields into response
+   - Used by GET /scheduler endpoint
+   - Added to OpenAPI schema components
+
+8. **Time Format Validation**:
+   - Uses `chrono::NaiveTime::parse_from_str(&time, "%H:%M")`
+   - Validates both start_time and end_time on POST and PUT
+   - Returns clear error messages: "Invalid start_time format: '25:00'. Expected HH:MM"
+   - Prevents invalid rules from being added
+
+9. **OpenAPI Documentation** (src/api/openapi.rs):
+   - All 4 endpoints fully documented with utoipa
+   - ScheduleRuleResponse added to components/schemas
+   - Request/response examples for all operations
+   - Error response documentation (400, 404, 500)
+
+10. **Comprehensive Test Suite** (src/api/mod.rs:4724-5003):
+    - Test 1: GET /scheduler (empty) - verifies initial state
+    - Test 2: POST /scheduler (night rule) - adds Unlimited action
+    - Test 3: POST /scheduler (work rule) - adds SpeedLimit action with weekdays
+    - Test 4: GET /scheduler (with rules) - verifies 2 rules with correct IDs
+    - Test 5: PUT /scheduler/0 (update) - changes rule properties
+    - Test 6: GET /scheduler (verify update) - confirms changes persisted
+    - Test 7: PUT /scheduler/999 (not found) - tests 404 response
+    - Test 8: POST /scheduler (invalid time) - tests 400 validation
+    - Test 9: DELETE /scheduler/0 - removes first rule
+    - Test 10: GET /scheduler (verify deletion) - confirms 1 rule left
+    - Test 11: DELETE /scheduler/999 (not found) - tests 404 response
+
+11. **Design Decisions**:
+    - IDs are array indices (not stored in config::ScheduleRule)
+    - Counter tracks next ID but indices may have gaps after deletion
+    - RwLock allows multiple readers, single writer
+    - Rules stored separately from Config for runtime updates
+    - Deletion shifts array - index 1 becomes 0 after deleting 0
+    - Compatible with existing scheduler::ScheduleRule (converts at startup)
+
+**Test Results**:
+- ✅ All 11 test cases pass in 0.18s
+- ✅ Library builds successfully with 118 warnings (no errors)
+- ✅ Empty list returned initially
+- ✅ Rules added with correct auto-incremented IDs
+- ✅ GET returns rules with IDs in correct format
+- ✅ UPDATE modifies rule properties correctly
+- ✅ DELETE removes rules and shifts array
+- ✅ 404 returned for non-existent indices
+- ✅ 400 returned for invalid time formats
+- ✅ Time validation works (25:00 rejected, 09:00 accepted)
+- ✅ All action types supported (Unlimited, SpeedLimit, Pause)
+
+**Previous Iteration:**
 
 **Task 27.7: Apply actions (set speed limit or pause queue)**
 
@@ -1861,7 +1959,7 @@ The implementation will require these major dependencies:
 - [x] Task 27.5: Implement get_current_action() to evaluate rules for current time
 - [x] Task 27.6: Create scheduler task that checks rules every minute
 - [x] Task 27.7: Apply actions (set speed limit or pause queue)
-- [ ] Task 27.8: Add API endpoints for scheduler management (GET/POST/PUT/DELETE /scheduler)
+- [x] Task 27.8: Add API endpoints for scheduler management (GET/POST/PUT/DELETE /scheduler)
 - [ ] Task 27.9: Test schedule rules with time changes
 
 - [ ] Task 28.1: Create DuplicateConfig with enabled, action, methods
