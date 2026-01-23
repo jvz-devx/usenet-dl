@@ -2,7 +2,7 @@
 //!
 //! Handles SQLite persistence for downloads, articles, passwords, and history.
 
-use crate::{types::{DownloadId, HistoryEntry, Status}, Error, Result};
+use crate::{error::DatabaseError, types::{DownloadId, HistoryEntry, Status}, Error, Result};
 use sqlx::{sqlite::SqlitePool, FromRow, SqliteConnection};
 use std::path::{Path, PathBuf};
 
@@ -160,14 +160,14 @@ impl Database {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| Error::Database(format!("Failed to create database directory: {}", e)))?;
+                .map_err(|e| Error::Database(DatabaseError::ConnectionFailed(format!("Failed to create database directory: {}", e))))?;
         }
 
         // Connect to database
         let connection_string = format!("sqlite:{}?mode=rwc", path.display());
         let pool = SqlitePool::connect(&connection_string)
             .await
-            .map_err(|e| Error::Database(format!("Failed to connect to database: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::ConnectionFailed(format!("Failed to connect to database: {}", e))))?;
 
         let db = Self { pool };
 
@@ -180,7 +180,7 @@ impl Database {
     /// Run database migrations
     async fn run_migrations(&self) -> Result<()> {
         let mut conn = self.pool.acquire().await
-            .map_err(|e| Error::Database(format!("Failed to acquire connection: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::ConnectionFailed(format!("Failed to acquire connection: {}", e))))?;
 
         // Create schema version table
         sqlx::query(
@@ -193,7 +193,7 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create schema_version table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create schema_version table: {}", e))))?;
 
         // Check current version
         let current_version: Option<i64> = sqlx::query_scalar(
@@ -201,7 +201,7 @@ impl Database {
         )
         .fetch_optional(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to query schema version: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to query schema version: {}", e))))?;
 
         let current_version = current_version.unwrap_or(0);
 
@@ -251,28 +251,28 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create downloads table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create downloads table: {}", e))))?;
 
         // Indexes for downloads
         sqlx::query("CREATE INDEX idx_downloads_status ON downloads(status)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         sqlx::query("CREATE INDEX idx_downloads_priority ON downloads(priority DESC, created_at ASC)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         sqlx::query("CREATE INDEX idx_downloads_nzb_hash ON downloads(nzb_hash)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         sqlx::query("CREATE INDEX idx_downloads_job_name ON downloads(job_name)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         // Download articles table (for resume support)
         sqlx::query(
@@ -291,18 +291,18 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create download_articles table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create download_articles table: {}", e))))?;
 
         // Indexes for download_articles
         sqlx::query("CREATE INDEX idx_articles_download ON download_articles(download_id)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         sqlx::query("CREATE INDEX idx_articles_status ON download_articles(download_id, status)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         // Password cache table
         sqlx::query(
@@ -315,7 +315,7 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create passwords table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create passwords table: {}", e))))?;
 
         // Processed NZBs table (for watch folder tracking)
         sqlx::query(
@@ -328,7 +328,7 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create processed_nzbs table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create processed_nzbs table: {}", e))))?;
 
         // History table
         sqlx::query(
@@ -347,13 +347,13 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create history table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create history table: {}", e))))?;
 
         // Index for history
         sqlx::query("CREATE INDEX idx_history_completed ON history(completed_at DESC)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         // Record migration
         let now = chrono::Utc::now().timestamp();
@@ -361,7 +361,7 @@ impl Database {
             .bind(now)
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to record migration: {}", e))))?;
 
         tracing::info!("Database migration v1 complete");
 
@@ -384,7 +384,7 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create runtime_state table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create runtime_state table: {}", e))))?;
 
         // Initialize shutdown state as unclean (will be set to clean on proper startup)
         let now = chrono::Utc::now().timestamp();
@@ -397,14 +397,14 @@ impl Database {
         .bind(now)
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to initialize runtime_state: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to initialize runtime_state: {}", e))))?;
 
         // Record migration
         sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (2, ?)")
             .bind(now)
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to record migration: {}", e))))?;
 
         tracing::info!("Database migration v2 complete");
 
@@ -435,7 +435,7 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create rss_feeds table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create rss_feeds table: {}", e))))?;
 
         // RSS filters table (per feed)
         sqlx::query(
@@ -454,7 +454,7 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create rss_filters table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create rss_filters table: {}", e))))?;
 
         // RSS seen items table (prevent re-downloading)
         sqlx::query(
@@ -469,13 +469,13 @@ impl Database {
         )
         .execute(&mut *conn)
         .await
-        .map_err(|e| Error::Database(format!("Failed to create rss_seen table: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create rss_seen table: {}", e))))?;
 
         // Index for rss_seen
         sqlx::query("CREATE INDEX idx_rss_seen_feed ON rss_seen(feed_id)")
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to create index: {}", e))))?;
 
         // Record migration
         let now = chrono::Utc::now().timestamp();
@@ -483,7 +483,7 @@ impl Database {
             .bind(now)
             .execute(&mut *conn)
             .await
-            .map_err(|e| Error::Database(format!("Failed to record migration: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::MigrationFailed(format!("Failed to record migration: {}", e))))?;
 
         tracing::info!("Database migration v3 complete");
 
@@ -533,7 +533,7 @@ impl Database {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to insert download: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to insert download: {}", e))))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -554,7 +554,7 @@ impl Database {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get download: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get download: {}", e))))?;
 
         Ok(row)
     }
@@ -574,7 +574,7 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to list downloads: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to list downloads: {}", e))))?;
 
         Ok(rows)
     }
@@ -596,7 +596,7 @@ impl Database {
         .bind(status)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to list downloads by status: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to list downloads by status: {}", e))))?;
 
         Ok(rows)
     }
@@ -608,7 +608,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to update status: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update status: {}", e))))?;
 
         Ok(())
     }
@@ -630,7 +630,7 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to update progress: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update progress: {}", e))))?;
 
         Ok(())
     }
@@ -642,7 +642,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to update priority: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update priority: {}", e))))?;
 
         Ok(())
     }
@@ -654,7 +654,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to set error: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to set error: {}", e))))?;
 
         Ok(())
     }
@@ -667,7 +667,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to set started timestamp: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to set started timestamp: {}", e))))?;
 
         Ok(())
     }
@@ -680,7 +680,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to set completed timestamp: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to set completed timestamp: {}", e))))?;
 
         Ok(())
     }
@@ -691,7 +691,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to delete download: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to delete download: {}", e))))?;
 
         Ok(())
     }
@@ -712,7 +712,7 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get incomplete downloads: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get incomplete downloads: {}", e))))?;
 
         Ok(rows)
     }
@@ -732,7 +732,7 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get all downloads: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get all downloads: {}", e))))?;
 
         Ok(rows)
     }
@@ -754,7 +754,7 @@ impl Database {
         .bind(article.size_bytes)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to insert article: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to insert article: {}", e))))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -781,7 +781,7 @@ impl Database {
         let query = query_builder.build();
         query.execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to insert articles batch: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to insert articles batch: {}", e))))?;
 
         Ok(())
     }
@@ -802,7 +802,7 @@ impl Database {
         .bind(article_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to update article status: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update article status: {}", e))))?;
 
         Ok(())
     }
@@ -829,7 +829,7 @@ impl Database {
         .bind(message_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to update article status: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update article status: {}", e))))?;
 
         Ok(())
     }
@@ -847,7 +847,7 @@ impl Database {
         .bind(download_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get articles: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get articles: {}", e))))?;
 
         Ok(rows)
     }
@@ -865,7 +865,7 @@ impl Database {
         .bind(download_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get pending articles: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get pending articles: {}", e))))?;
 
         Ok(rows)
     }
@@ -887,7 +887,7 @@ impl Database {
         .bind(message_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get article: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get article: {}", e))))?;
 
         Ok(row)
     }
@@ -905,7 +905,7 @@ impl Database {
         .bind(status)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to count articles: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to count articles: {}", e))))?;
 
         Ok(count)
     }
@@ -918,7 +918,7 @@ impl Database {
         .bind(download_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to count articles: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to count articles: {}", e))))?;
 
         Ok(count)
     }
@@ -929,7 +929,7 @@ impl Database {
             .bind(download_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to delete articles: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to delete articles: {}", e))))?;
 
         Ok(())
     }
@@ -952,7 +952,7 @@ impl Database {
         .bind(password)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to set correct password: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to set correct password: {}", e))))?;
 
         Ok(())
     }
@@ -967,7 +967,7 @@ impl Database {
         .bind(download_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get cached password: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get cached password: {}", e))))?;
 
         Ok(password)
     }
@@ -980,7 +980,7 @@ impl Database {
             .bind(download_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to delete cached password: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to delete cached password: {}", e))))?;
 
         Ok(())
     }
@@ -1007,7 +1007,7 @@ impl Database {
         .bind(nzb_hash)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to find download by nzb_hash: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to find download by nzb_hash: {}", e))))?;
 
         Ok(row)
     }
@@ -1032,7 +1032,7 @@ impl Database {
         .bind(name)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to find download by name: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to find download by name: {}", e))))?;
 
         Ok(row)
     }
@@ -1057,7 +1057,7 @@ impl Database {
         .bind(job_name)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to find download by job_name: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to find download by job_name: {}", e))))?;
 
         Ok(row)
     }
@@ -1273,7 +1273,7 @@ impl Database {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to check shutdown state: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to check shutdown state: {}", e))))?;
 
         // If the value is missing or "false", it was an unclean shutdown
         Ok(value.map_or(true, |v| v != "true"))
@@ -1297,7 +1297,7 @@ impl Database {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to set clean start: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to set clean start: {}", e))))?;
 
         Ok(())
     }
@@ -1320,7 +1320,7 @@ impl Database {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to set clean shutdown: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to set clean shutdown: {}", e))))?;
 
         Ok(())
     }
@@ -1353,7 +1353,7 @@ impl Database {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to mark NZB as processed: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to mark NZB as processed: {}", e))))?;
 
         Ok(())
     }
@@ -1378,7 +1378,7 @@ impl Database {
         .bind(&path_str)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to check if NZB is processed: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to check if NZB is processed: {}", e))))?;
 
         Ok(count > 0)
     }
@@ -1403,7 +1403,7 @@ impl Database {
         .bind(guid)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to check if RSS item is seen: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to check if RSS item is seen: {}", e))))?;
 
         Ok(count > 0)
     }
@@ -1434,7 +1434,7 @@ impl Database {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to mark RSS item as seen: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to mark RSS item as seen: {}", e))))?;
 
         Ok(())
     }
@@ -1455,7 +1455,7 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get RSS feeds: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get RSS feeds: {}", e))))?;
 
         Ok(feeds)
     }
@@ -1473,7 +1473,7 @@ impl Database {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get RSS feed: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get RSS feed: {}", e))))?;
 
         Ok(feed)
     }
@@ -1508,7 +1508,7 @@ impl Database {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to insert RSS feed: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to insert RSS feed: {}", e))))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -1543,7 +1543,7 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to update RSS feed: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update RSS feed: {}", e))))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -1554,7 +1554,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to delete RSS feed: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to delete RSS feed: {}", e))))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -1573,7 +1573,7 @@ impl Database {
         .bind(feed_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to get RSS filters: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to get RSS filters: {}", e))))?;
 
         Ok(filters)
     }
@@ -1605,7 +1605,7 @@ impl Database {
         .bind(max_age_secs)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to insert RSS filter: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to insert RSS filter: {}", e))))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -1616,7 +1616,7 @@ impl Database {
             .bind(feed_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to delete RSS filters: {}", e)))?;
+            .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to delete RSS filters: {}", e))))?;
 
         Ok(())
     }
@@ -1641,7 +1641,7 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to update RSS feed status: {}", e)))?;
+        .map_err(|e| Error::Database(DatabaseError::QueryFailed(format!("Failed to update RSS feed status: {}", e))))?;
 
         Ok(())
     }

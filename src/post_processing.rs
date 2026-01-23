@@ -8,7 +8,7 @@
 //! 5. Cleanup - Remove intermediate files (.par2, .nzb, archives, samples)
 
 use crate::config::{Config, PostProcess};
-use crate::error::Result;
+use crate::error::{PostProcessError, Result};
 use crate::types::{DownloadId, Event};
 use crate::utils::get_unique_path;
 use std::path::PathBuf;
@@ -285,10 +285,10 @@ impl PostProcessor {
 
         // Check if source exists
         if !source_path.exists() {
-            return Err(crate::error::Error::InvalidPath {
+            return Err(crate::error::Error::PostProcess(PostProcessError::InvalidPath {
                 path: source_path.clone(),
                 reason: "Source path does not exist".to_string(),
-            });
+            }));
         }
 
         // Ensure destination parent directory exists
@@ -318,10 +318,10 @@ impl PostProcessor {
         }
 
         // If we get here, source is neither file nor directory
-        Err(crate::error::Error::InvalidPath {
+        Err(crate::error::Error::PostProcess(PostProcessError::InvalidPath {
             path: source_path.clone(),
             reason: "Source is neither a file nor a directory".to_string(),
-        })
+        }))
     }
 
     /// Move a single file to destination with collision handling

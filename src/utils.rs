@@ -1,7 +1,7 @@
 //! Utility functions for file operations and path manipulation
 
 use crate::config::FileCollisionAction;
-use crate::error::{Error, Result};
+use crate::error::{Error, PostProcessError, Result};
 use std::path::{Path, PathBuf};
 
 /// Get a unique path for a file, handling collisions according to the specified action
@@ -38,10 +38,10 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
         FileCollisionAction::Skip => {
             // Return error if file exists
             if path.exists() {
-                return Err(Error::FileCollision {
+                return Err(Error::PostProcess(PostProcessError::FileCollision {
                     path: path.to_path_buf(),
                     reason: "File already exists and collision action is Skip".to_string(),
-                });
+                }));
             }
             Ok(path.to_path_buf())
         }
@@ -55,17 +55,17 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
             let stem = path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .ok_or_else(|| Error::InvalidPath {
+                .ok_or_else(|| Error::PostProcess(PostProcessError::InvalidPath {
                     path: path.to_path_buf(),
                     reason: "Cannot extract file stem".to_string(),
-                })?;
+                }))?;
 
             let extension = path.extension().and_then(|e| e.to_str());
 
-            let parent = path.parent().ok_or_else(|| Error::InvalidPath {
+            let parent = path.parent().ok_or_else(|| Error::PostProcess(PostProcessError::InvalidPath {
                 path: path.to_path_buf(),
                 reason: "Cannot extract parent directory".to_string(),
-            })?;
+            }))?;
 
             // Try adding (1), (2), (3), ... until we find a unique name
             for i in 1..=9999 {
@@ -80,10 +80,10 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
             }
 
             // If we've tried 9999 names and they all exist, give up
-            Err(Error::FileCollision {
+            Err(Error::PostProcess(PostProcessError::FileCollision {
                 path: path.to_path_buf(),
                 reason: "Could not find unique filename after 9999 attempts".to_string(),
-            })
+            }))
         }
     }
 }
@@ -397,7 +397,7 @@ mod tests {
         let result = get_unique_path(&path, FileCollisionAction::Skip);
         assert!(result.is_err());
         match result {
-            Err(Error::FileCollision { path: p, reason: _ }) => {
+            Err(Error::PostProcess(PostProcessError::FileCollision { path: p, reason: _ })) => {
                 assert_eq!(p, path);
             }
             _ => panic!("Expected FileCollision error"),

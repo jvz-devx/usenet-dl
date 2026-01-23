@@ -5,7 +5,7 @@
 
 use crate::config::ExtractionConfig;
 use crate::db::Database;
-use crate::error::{Error, Result};
+use crate::error::{Error, PostProcessError, Result};
 use crate::types::{ArchiveType, DownloadId};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
@@ -172,9 +172,14 @@ impl RarExtractor {
                 // Check if it's a password error
                 let err_str = e.to_string();
                 if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("ERAR_BAD_PASSWORD") {
-                    Error::WrongPassword
+                    Error::PostProcess(PostProcessError::WrongPassword {
+                        archive: archive_path.to_path_buf(),
+                    })
                 } else {
-                    Error::ExtractionFailed(format!("failed to open RAR archive: {}", e))
+                    Error::PostProcess(PostProcessError::ExtractionFailed {
+                        archive: archive_path.to_path_buf(),
+                        reason: format!("failed to open RAR archive: {}", e),
+                    })
                 }
             })?;
 
@@ -190,9 +195,14 @@ impl RarExtractor {
                 Err(e) => {
                     let err_str = e.to_string();
                     if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("ERAR_BAD_PASSWORD") {
-                        return Err(Error::WrongPassword);
+                        return Err(Error::PostProcess(PostProcessError::WrongPassword {
+                            archive: archive_path.to_path_buf(),
+                        }));
                     } else {
-                        return Err(Error::ExtractionFailed(format!("failed to read RAR header: {}", e)));
+                        return Err(Error::PostProcess(PostProcessError::ExtractionFailed {
+                            archive: archive_path.to_path_buf(),
+                            reason: format!("failed to read RAR header: {}", e),
+                        }));
                     }
                 }
             };
@@ -208,16 +218,24 @@ impl RarExtractor {
                     .map_err(|e| {
                         let err_str = e.to_string();
                         if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("ERAR_BAD_PASSWORD") {
-                            Error::WrongPassword
+                            Error::PostProcess(PostProcessError::WrongPassword {
+                                archive: archive_path.to_path_buf(),
+                            })
                         } else {
-                            Error::ExtractionFailed(format!("failed to extract file: {}", e))
+                            Error::PostProcess(PostProcessError::ExtractionFailed {
+                                archive: archive_path.to_path_buf(),
+                                reason: format!("failed to extract file: {}", e),
+                            })
                         }
                     })?;
                 extracted_files.push(file_path);
             } else {
                 // Skip directory entries - transitions back to BeforeHeader state
                 at_header = at_file.skip()
-                    .map_err(|e| Error::ExtractionFailed(format!("failed to skip directory: {}", e)))?;
+                    .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+                        archive: archive_path.to_path_buf(),
+                        reason: format!("failed to skip directory: {}", e),
+                    }))?;
             }
         }
 
@@ -247,7 +265,9 @@ impl RarExtractor {
                 ?archive_path,
                 "no passwords to try for RAR extraction"
             );
-            return Err(Error::NoPasswordsAvailable);
+            return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
+                archive: archive_path.to_path_buf(),
+            }));
         }
 
         info!(
@@ -291,7 +311,7 @@ impl RarExtractor {
 
                     return Ok(files);
                 }
-                Err(Error::WrongPassword) => {
+                Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
                     debug!(
                         download_id,
                         attempt = i + 1,
@@ -319,7 +339,10 @@ impl RarExtractor {
             attempted = passwords.len(),
             "all passwords failed for RAR extraction"
         );
-        Err(Error::AllPasswordsFailed)
+        Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
+            archive: archive_path.to_path_buf(),
+            count: passwords.len(),
+        }))
     }
 }
 
@@ -397,9 +420,14 @@ impl SevenZipExtractor {
                 let err_str = e.to_string();
                 // Check if it's a password error
                 if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("Wrong password") {
-                    Err(Error::WrongPassword)
+                    Err(Error::PostProcess(PostProcessError::WrongPassword {
+                        archive: archive_path.to_path_buf(),
+                    }))
                 } else {
-                    Err(Error::ExtractionFailed(format!("failed to extract 7z archive: {}", e)))
+                    Err(Error::PostProcess(PostProcessError::ExtractionFailed {
+                        archive: archive_path.to_path_buf(),
+                        reason: format!("failed to extract 7z archive: {}", e),
+                    }))
                 }
             }
         }
@@ -444,7 +472,9 @@ impl SevenZipExtractor {
                 ?archive_path,
                 "no passwords to try for 7z extraction"
             );
-            return Err(Error::NoPasswordsAvailable);
+            return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
+                archive: archive_path.to_path_buf(),
+            }));
         }
 
         info!(
@@ -488,7 +518,7 @@ impl SevenZipExtractor {
 
                     return Ok(files);
                 }
-                Err(Error::WrongPassword) => {
+                Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
                     debug!(
                         download_id,
                         attempt = i + 1,
@@ -516,7 +546,10 @@ impl SevenZipExtractor {
             attempted = passwords.len(),
             "all passwords failed for 7z extraction"
         );
-        Err(Error::AllPasswordsFailed)
+        Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
+            archive: archive_path.to_path_buf(),
+            count: passwords.len(),
+        }))
     }
 }
 
@@ -574,7 +607,10 @@ impl ZipExtractor {
             .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to open ZIP archive: {}", e))))?;
 
         let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| Error::ExtractionFailed(format!("failed to read ZIP archive: {}", e)))?;
+            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+                archive: archive_path.to_path_buf(),
+                reason: format!("failed to read ZIP archive: {}", e),
+            }))?;
 
         let mut extracted_files = Vec::new();
 
@@ -585,9 +621,14 @@ impl ZipExtractor {
                     .map_err(|e| {
                         let err_str = e.to_string();
                         if err_str.contains("password") || err_str.contains("encrypted") {
-                            Error::WrongPassword
+                            Error::PostProcess(PostProcessError::WrongPassword {
+                                archive: archive_path.to_path_buf(),
+                            })
                         } else {
-                            Error::ExtractionFailed(format!("failed to read ZIP entry: {}", e))
+                            Error::PostProcess(PostProcessError::ExtractionFailed {
+                                archive: archive_path.to_path_buf(),
+                                reason: format!("failed to read ZIP entry: {}", e),
+                            })
                         }
                     })?
             } else {
@@ -595,12 +636,19 @@ impl ZipExtractor {
                     .map_err(|e| {
                         let err_str = e.to_string();
                         if err_str.contains("password") || err_str.contains("encrypted") {
-                            Error::WrongPassword
+                            Error::PostProcess(PostProcessError::WrongPassword {
+                                archive: archive_path.to_path_buf(),
+                            })
                         } else {
-                            Error::ExtractionFailed(format!("failed to read ZIP entry: {}", e))
+                            Error::PostProcess(PostProcessError::ExtractionFailed {
+                                archive: archive_path.to_path_buf(),
+                                reason: format!("failed to read ZIP entry: {}", e),
+                            })
                         }
                     })?
-                    .map_err(|_| Error::WrongPassword)?
+                    .map_err(|_| Error::PostProcess(PostProcessError::WrongPassword {
+                        archive: archive_path.to_path_buf(),
+                    }))?
             };
 
             // Get the file path
@@ -632,7 +680,9 @@ impl ZipExtractor {
                     .map_err(|e| {
                         let err_str = e.to_string();
                         if err_str.contains("password") || err_str.contains("encrypted") {
-                            Error::WrongPassword
+                            Error::PostProcess(PostProcessError::WrongPassword {
+                                archive: archive_path.to_path_buf(),
+                            })
                         } else {
                             Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to extract file: {}", e)))
                         }
@@ -665,7 +715,9 @@ impl ZipExtractor {
                 ?archive_path,
                 "no passwords to try for ZIP extraction"
             );
-            return Err(Error::NoPasswordsAvailable);
+            return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
+                archive: archive_path.to_path_buf(),
+            }));
         }
 
         info!(
@@ -709,7 +761,7 @@ impl ZipExtractor {
 
                     return Ok(files);
                 }
-                Err(Error::WrongPassword) => {
+                Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
                     debug!(
                         download_id,
                         attempt = i + 1,
@@ -737,7 +789,10 @@ impl ZipExtractor {
             attempted = passwords.len(),
             "all passwords failed for ZIP extraction"
         );
-        Err(Error::AllPasswordsFailed)
+        Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
+            archive: archive_path.to_path_buf(),
+            count: passwords.len(),
+        }))
     }
 }
 
@@ -784,10 +839,10 @@ pub async fn extract_archive(
 ) -> Result<Vec<PathBuf>> {
     // Detect archive type by extension
     let archive_type = detect_archive_type(archive_path).ok_or_else(|| {
-        Error::ExtractionFailed(format!(
-            "unknown archive type for file: {}",
-            archive_path.display()
-        ))
+        Error::PostProcess(PostProcessError::ExtractionFailed {
+            archive: archive_path.to_path_buf(),
+            reason: format!("unknown archive type for file: {}", archive_path.display()),
+        })
     })?;
 
     info!(
@@ -1337,8 +1392,8 @@ mod tests {
         // Should fail with ExtractionFailed error
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ExtractionFailed(msg) => {
-                assert!(msg.contains("unknown archive type"));
+            Error::PostProcess(PostProcessError::ExtractionFailed { reason, .. }) => {
+                assert!(reason.contains("unknown archive type"));
             }
             _ => panic!("expected ExtractionFailed error"),
         }

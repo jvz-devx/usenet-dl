@@ -17,6 +17,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub mod auth;
+pub mod error_response;
 pub mod openapi;
 pub mod rate_limit;
 pub mod routes;
@@ -268,7 +269,7 @@ pub async fn start_api_server(
     // Bind TCP listener to the configured address
     let listener = TcpListener::bind(bind_address)
         .await
-        .map_err(|e| crate::error::Error::IoError(e))?;
+        .map_err(|e| crate::error::Error::Io(e))?;
 
     tracing::info!(
         address = %bind_address,

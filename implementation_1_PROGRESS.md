@@ -66,14 +66,124 @@ IN_PROGRESS
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
   - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
-- Phase 5: 🔄 In Progress (24/38 tasks) - Notifications & Polish
+- Phase 5: 🔄 In Progress (30/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
   - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
   - Tasks 32.1-32.6: ✅ Complete server health check with 5 integration tests and manual testing guide (61 API tests, 5 health check tests)
   - Tasks 33.1-33.5: ✅ Re-processing API complete with reprocess() and reextract() methods (2 API tests passing)
-- Total: 240/253 tasks complete (94.9%)
+  - Tasks 34.1-34.6: ✅ Comprehensive error types with HTTP status mapping and 11 error response tests passing
+- Total: 246/253 tasks complete (97.2%)
 
-**Next Task:** Task 34.1 - Create comprehensive error types
+**Next Task:** Task 35.1 - Write comprehensive README.md
+
+## Completed This Iteration
+
+**Tasks 34.1-34.6: Comprehensive Error Type System**
+
+Successfully implemented a comprehensive error handling system with structured error types, HTTP status code mapping, and API integration. The error system provides clear, contextual error information for debugging and API responses.
+
+**Implementation Details:**
+
+1. **Structured Error Types** (Task 34.1, src/error.rs:22-115):
+   - **Error enum**: Main error type with categorized variants
+   - **DatabaseError**: Database-specific errors (ConnectionFailed, MigrationFailed, QueryFailed, NotFound, ConstraintViolation)
+   - **DownloadError**: Download-specific errors with context (NotFound, FilesNotFound, AlreadyInState, InvalidState, InsufficientSpace, Failed, Timeout)
+   - **PostProcessError**: Post-processing errors with detailed context (VerificationFailed, RepairFailed, ExtractionFailed, WrongPassword, AllPasswordsFailed, NoPasswordsAvailable, MoveFailed, FileCollision, CleanupFailed, InvalidPath)
+   - Each error variant includes contextual fields (download ID, file paths, state information, etc.)
+
+2. **API Error Response Format** (Task 34.4, src/error.rs:224-277):
+   - **ApiError struct**: Standard JSON error response format
+   - **ErrorDetail struct**: Contains code (machine-readable), message (human-readable), and optional details (JSON context)
+   - Helper methods: `new()`, `with_details()`, `not_found()`, `validation()`, `conflict()`, `internal()`, `unauthorized()`, `service_unavailable()`
+   - Follows OpenAPI best practices for error responses
+
+3. **HTTP Status Code Mapping** (Task 34.5, src/error.rs:284-366):
+   - **ToHttpStatus trait**: Maps domain errors to HTTP status codes
+   - `status_code()` method returns appropriate HTTP codes:
+     - 400: Config errors
+     - 404: Not found errors
+     - 409: Conflict (already in state, invalid state)
+     - 422: Unprocessable entity (invalid NZB, post-processing failures, insufficient space)
+     - 500: Internal server errors (database, I/O)
+     - 502: Bad gateway (NNTP, network errors)
+     - 503: Service unavailable (shutdown, timeout)
+   - `error_code()` method returns machine-readable error codes
+
+4. **Error to ApiError Conversion** (src/error.rs:368-438):
+   - `From<Error> for ApiError` implementation
+   - Automatically extracts contextual details for specific error types
+   - Adds JSON details for download IDs, file paths, states, resource requirements, etc.
+   - Examples:
+     - DownloadError::NotFound → includes download_id in details
+     - InsufficientSpace → includes required_bytes and available_bytes
+     - PostProcessError::AllPasswordsFailed → includes archive path and password count
+
+5. **Axum Integration** (Task 34.5, src/api/error_response.rs:1-148):
+   - **IntoResponse for Error**: Automatically converts domain errors to HTTP responses
+   - **IntoResponse for ApiError**: Enables explicit error responses
+   - Uses ToHttpStatus to determine proper status codes
+   - Returns JSON body with ApiError format
+   - Seamless integration with Axum handlers
+
+6. **Comprehensive Test Suite** (Task 34.6, src/api/error_response.rs:43-148):
+   - **test_error_to_http_status_not_found**: 404 status code mapping
+   - **test_error_to_http_status_download_not_found**: Download-specific 404
+   - **test_error_to_http_status_conflict**: 409 conflict errors
+   - **test_error_to_http_status_unprocessable**: 422 unprocessable errors
+   - **test_error_to_http_status_service_unavailable**: 503 service errors
+   - **test_error_to_http_status_internal_server**: 500 internal errors
+   - **test_error_to_api_error_with_details**: Contextual detail extraction
+   - **test_error_to_api_error_insufficient_space**: Resource error details
+   - **test_error_to_api_error_post_process**: Post-processing error details
+   - **test_error_into_response**: Full HTTP response conversion
+   - **test_download_error_into_response**: Download error response with status and JSON body
+   - All 11 tests passing
+
+7. **Codebase Migration** (Tasks 34.2-34.3):
+   - Migrated 117 error usages across the codebase to use new structured types
+   - **Error::Database**: Changed from String to DatabaseError enum (65 occurrences in db.rs, 9 in lib.rs)
+   - **Error::Config**: Changed from String to struct with message and key fields
+   - **Post-processing errors**: Migrated to PostProcessError variants (extraction.rs, utils.rs, post_processing.rs)
+   - **Error::IoError**: Removed redundant variant, uses Error::Io instead
+   - Updated retry logic to handle new error types properly
+   - All error classifications preserved for retry logic
+
+8. **OpenAPI Documentation** (src/api/openapi.rs):
+   - Added ApiError and ErrorDetail to OpenAPI schema
+   - Both types derive ToSchema for automatic OpenAPI generation
+   - Error responses now properly documented in Swagger UI
+
+**Design Alignment:**
+- Matches implementation_1.md:1755-1792 specification exactly
+- ApiError structure (lines 1766-1775)
+- HTTP status code mapping (lines 1778-1791)
+- Machine-readable error codes for programmatic handling
+- Human-readable messages for display
+- Contextual details in JSON format
+- Comprehensive error classification by domain
+
+**Build Verification:**
+- ✅ Library compiles successfully with no errors
+- ✅ All 11 error response tests pass
+- ✅ Error handling integrated throughout codebase
+- ✅ HTTP responses use proper status codes
+- ✅ JSON error bodies follow standard format
+- ✅ OpenAPI documentation complete
+- ✅ Retry logic handles new error types correctly
+
+**Benefits:**
+- Clear error categorization by domain (download, post-process, database, etc.)
+- Contextual information for debugging (IDs, paths, states)
+- Proper HTTP status codes for REST API
+- Machine-readable error codes for client applications
+- Human-readable messages for end users
+- Structured JSON details for rich error information
+- Type-safe error handling throughout the codebase
+- Consistent error format across all API endpoints
+
+---
+
+**Previous Iteration:**
 
 ## Completed This Iteration
 
@@ -2929,12 +3039,12 @@ The implementation will require these major dependencies:
 - [x] Task 33.4: Implement reextract() to skip verify/repair
 - [x] Task 33.5: Test reprocessing on completed and failed downloads
 
-- [ ] Task 34.1: Create comprehensive error types (DownloadError, PostProcessError, ApiError)
-- [ ] Task 34.2: Implement Error trait and Display for all error types
-- [ ] Task 34.3: Add context to errors (which stage, which file, etc.)
-- [ ] Task 34.4: Implement ApiError JSON response format with code, message, details
-- [ ] Task 34.5: Add HTTP status code mapping for API errors
-- [ ] Task 34.6: Test error responses in API
+- [x] Task 34.1: Create comprehensive error types (DownloadError, PostProcessError, ApiError)
+- [x] Task 34.2: Implement Error trait and Display for all error types
+- [x] Task 34.3: Add context to errors (which stage, which file, etc.)
+- [x] Task 34.4: Implement ApiError JSON response format with code, message, details
+- [x] Task 34.5: Add HTTP status code mapping for API errors
+- [x] Task 34.6: Test error responses in API
 
 - [ ] Task 35.1: Write comprehensive README.md (features, installation, usage, configuration)
 - [ ] Task 35.2: Create examples/ directory with sample code

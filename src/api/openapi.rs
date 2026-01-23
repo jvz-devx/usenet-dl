@@ -132,6 +132,10 @@ use utoipa::OpenApi;
         crate::api::routes::RssFeedResponse,
         crate::api::routes::CheckRssFeedResponse,
         crate::api::routes::ScheduleRuleResponse,
+
+        // Error types from error.rs
+        crate::error::ApiError,
+        crate::error::ErrorDetail,
     )),
     tags(
         (name = "downloads", description = "Download queue management - Add, pause, resume, and monitor downloads"),

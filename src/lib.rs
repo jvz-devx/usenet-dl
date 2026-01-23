@@ -69,7 +69,10 @@ pub mod utils;
 // Re-export commonly used types
 pub use config::{Config, DuplicateAction, ServerConfig};
 pub use db::Database;
-pub use error::{Error, Result};
+pub use error::{
+    ApiError, DatabaseError, DownloadError, Error, ErrorDetail, PostProcessError, Result,
+    ToHttpStatus,
+};
 pub use scheduler::{RuleId, ScheduleAction, ScheduleRule, Scheduler, Weekday};
 pub use types::{
     DownloadId, DownloadInfo, DownloadOptions, DuplicateInfo, Event, HistoryEntry, Priority,
@@ -362,7 +365,7 @@ impl UsenetDownloader {
     async fn add_to_queue(&self, id: DownloadId) -> Result<()> {
         // Fetch download from database to get priority and created_at
         let download = self.db.get_download(id).await?
-            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::Database(DatabaseError::NotFound(format!("Download {} not found", id))))?;
 
         let queued_download = QueuedDownload {
             id,
@@ -469,7 +472,7 @@ impl UsenetDownloader {
     pub async fn pause(&self, id: DownloadId) -> Result<()> {
         // Fetch download from database
         let download = self.db.get_download(id).await?
-            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::Database(DatabaseError::NotFound(format!("Download {} not found", id))))?;
 
         let current_status = Status::from_i32(download.status);
 
@@ -480,10 +483,11 @@ impl UsenetDownloader {
                 return Ok(());
             }
             Status::Complete | Status::Failed => {
-                return Err(Error::Database(format!(
-                    "Cannot pause download {}: status is {:?}",
-                    id, current_status
-                )));
+                return Err(Error::Download(DownloadError::InvalidState {
+                    id,
+                    operation: "pause".to_string(),
+                    current_state: format!("{:?}", current_status),
+                }));
             }
             Status::Queued | Status::Downloading | Status::Processing => {
                 // Can be paused
@@ -547,7 +551,7 @@ impl UsenetDownloader {
     pub async fn resume(&self, id: DownloadId) -> Result<()> {
         // Fetch download from database
         let download = self.db.get_download(id).await?
-            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::Database(DatabaseError::NotFound(format!("Download {} not found", id))))?;
 
         let current_status = Status::from_i32(download.status);
 
@@ -561,10 +565,11 @@ impl UsenetDownloader {
                 return Ok(());
             }
             Status::Complete | Status::Failed => {
-                return Err(Error::Database(format!(
-                    "Cannot resume download {}: status is {:?}",
-                    id, current_status
-                )));
+                return Err(Error::Download(DownloadError::InvalidState {
+                    id,
+                    operation: "resume".to_string(),
+                    current_state: format!("{:?}", current_status),
+                }));
             }
         }
 
@@ -768,7 +773,7 @@ impl UsenetDownloader {
     pub async fn cancel(&self, id: DownloadId) -> Result<()> {
         // Verify download exists
         let _download = self.db.get_download(id).await?
-            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::Database(DatabaseError::NotFound(format!("Download {} not found", id))))?;
 
         // If download is actively running, cancel its task
         let mut active_downloads = self.active_downloads.lock().await;
@@ -837,7 +842,7 @@ impl UsenetDownloader {
     pub async fn set_priority(&self, id: DownloadId, priority: Priority) -> Result<()> {
         // Verify download exists
         let download = self.db.get_download(id).await?
-            .ok_or_else(|| Error::Database(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::Database(DatabaseError::NotFound(format!("Download {} not found", id))))?;
 
         let current_status = Status::from_i32(download.status);
 
@@ -3607,10 +3612,10 @@ impl UsenetDownloader {
             let download = match db.get_download(download_id).await? {
                 Some(d) => d,
                 None => {
-                    return Err(Error::Database(format!(
+                    return Err(Error::Database(DatabaseError::NotFound(format!(
                         "Download with ID {} not found",
                         download_id
-                    )))
+                    ))))
                 }
             };
 
@@ -3665,10 +3670,10 @@ impl UsenetDownloader {
                 // TODO: Add multi-server failover in future tasks
                 let pool = nntp_pools
                     .first()
-                    .ok_or_else(|| Error::Database("No NNTP pools configured".to_string()))?;
+                    .ok_or_else(|| Error::Nntp("No NNTP pools configured".to_string()))?;
 
                 let mut conn = pool.get().await.map_err(|e| {
-                    Error::Database(format!("Failed to get NNTP connection: {}", e))
+                    Error::Nntp(format!("Failed to get NNTP connection: {}", e))
                 })?;
 
                 // Fetch the article from the server
@@ -3751,7 +3756,7 @@ impl UsenetDownloader {
                             })
                             .ok();
 
-                        return Err(Error::Database(format!("Article fetch failed: {}", e)));
+                        return Err(Error::Nntp(format!("Article fetch failed: {}", e)));
                     }
                 }
             }

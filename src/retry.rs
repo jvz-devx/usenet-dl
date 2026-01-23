@@ -77,47 +77,26 @@ impl IsRetryable for Error {
                     || msg.contains("503") // Service unavailable
                     || msg.contains("400") // Server busy
             }
+            // Download errors - check if timeout (retryable)
+            Error::Download(e) => matches!(e, crate::error::DownloadError::Timeout { .. }),
+            // Post-processing errors are generally permanent
+            Error::PostProcess(_) => false,
             // Database errors should not be retried (likely permanent)
             Error::Database(_) | Error::Sqlx(_) => false,
             // Config errors are permanent
-            Error::Config(_) => false,
+            Error::Config { .. } => false,
             // Invalid NZB is permanent
             Error::InvalidNzb(_) => false,
             // Not found is permanent
             Error::NotFound(_) => false,
             // Shutdown in progress - not retryable
             Error::ShuttingDown => false,
-            // Extraction errors are permanent
-            Error::Extraction(_) => false,
-            // Wrong password - not retryable (need different password)
-            Error::WrongPassword => false,
-            // All passwords failed - not retryable
-            Error::AllPasswordsFailed => false,
-            // No passwords available - not retryable
-            Error::NoPasswordsAvailable => false,
-            // Extraction failed - permanent
-            Error::ExtractionFailed(_) => false,
             // Serialization errors are permanent
             Error::Serialization(_) => false,
-            // File collision errors are permanent (need user action)
-            Error::FileCollision { .. } => false,
-            // Invalid path errors are permanent
-            Error::InvalidPath { .. } => false,
             // API server errors are generally not retryable (application-level errors)
             Error::ApiServerError(_) => false,
             // Folder watch errors are generally not retryable (file system issues)
             Error::FolderWatch(_) => false,
-            // IoError is similar to Io but allows wrapping std::io::Error explicitly
-            Error::IoError(e) => match e.kind() {
-                std::io::ErrorKind::TimedOut
-                | std::io::ErrorKind::ConnectionRefused
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::NotConnected
-                | std::io::ErrorKind::BrokenPipe
-                | std::io::ErrorKind::Interrupted => true,
-                _ => false,
-            },
             // Duplicate errors are permanent (not retryable)
             Error::Duplicate(_) => false,
             // Disk space errors are permanent (need user action to free space)
@@ -515,10 +494,16 @@ mod tests {
 
     #[test]
     fn test_error_is_retryable_permanent() {
-        assert!(!Error::Config("bad config".to_string()).is_retryable());
-        assert!(!Error::Database("db error".to_string()).is_retryable());
+        use crate::error::{DatabaseError, DownloadError};
+
+        assert!(!Error::Config {
+            message: "bad config".to_string(),
+            key: None,
+        }
+        .is_retryable());
+        assert!(!Error::Database(DatabaseError::QueryFailed("db error".to_string())).is_retryable());
         assert!(!Error::InvalidNzb("bad nzb".to_string()).is_retryable());
         assert!(!Error::NotFound("not found".to_string()).is_retryable());
-        assert!(!Error::Extraction("failed to extract".to_string()).is_retryable());
+        assert!(!Error::Download(DownloadError::NotFound { id: 123 }).is_retryable());
     }
 }
