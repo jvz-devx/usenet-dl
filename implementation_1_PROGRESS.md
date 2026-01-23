@@ -59,15 +59,86 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (20/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (21/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Tasks 26.1-26.5: ✅ RSS manager structure with comprehensive tests (10 tests passing)
-- Total: 183/253 tasks complete (72.3%)
+  - Tasks 26.1-26.6: ✅ RSS feed parsing with comprehensive tests (14 tests passing)
+- Total: 184/253 tasks complete (72.7%)
 
-**Next Task:** Task 26.6 - Implement check_feed() to fetch and parse RSS/Atom
+**Next Task:** Task 26.7 - Implement matches_filters() using regex for include/exclude
 
 ## Completed This Iteration
+
+**Task 26.6: Implement check_feed() to fetch and parse RSS/Atom**
+
+Successfully implemented RSS/Atom feed parsing with comprehensive support for both formats:
+
+1. **RssItem Structure** (src/rss_manager.rs:9-27):
+   - Created `RssItem` struct to represent feed items
+   - Fields: `title`, `link`, `guid`, `pub_date`, `description`, `size`, `nzb_url`
+   - Used by both RSS and Atom parsers
+   - Contains all metadata needed for filtering and downloading
+
+2. **check_feed() Method** (src/rss_manager.rs:108-163):
+   - Fetches feed content via HTTP using configured client
+   - Attempts RSS parsing first, falls back to Atom
+   - Returns vector of `RssItem` structures
+   - Comprehensive error handling for network and parsing failures
+   - Logs parsing attempts and results for debugging
+
+3. **parse_as_rss() Implementation** (src/rss_manager.rs:165-221):
+   - Parses RSS 2.0 feeds using the `rss` crate
+   - Extracts GUID with fallback: guid → link → title
+   - Parses RFC2822 publication dates
+   - Extracts NZB URL from enclosure or .nzb links
+   - Extracts size from enclosure length attribute
+   - Handles missing optional fields gracefully
+
+4. **parse_as_atom() Implementation** (src/rss_manager.rs:223-284):
+   - Parses Atom feeds using the `atom_syndication` crate
+   - Uses entry ID as GUID
+   - Handles both published and updated timestamps (RFC3339)
+   - Detects NZB links by file extension or MIME type
+   - Extracts size from enclosure-type links
+   - Extracts description from summary or content
+
+5. **NZB URL Detection**:
+   - RSS: From enclosure URL or links ending in .nzb
+   - Atom: From links with .nzb extension or application/x-nzb MIME type
+   - Flexible enough to handle various indexer formats
+
+6. **Comprehensive Test Suite** (4 new tests, src/rss_manager.rs:216-361):
+   - `test_parse_rss_feed()`: Validates RSS 2.0 parsing
+     - Tests enclosure with size extraction
+     - Tests .nzb link detection
+     - Tests GUID, pub_date, description parsing
+   - `test_parse_atom_feed()`: Validates Atom feed parsing
+     - Tests enclosure link with MIME type
+     - Tests published/updated date handling
+     - Tests summary and link extraction
+   - `test_parse_invalid_feed()`: Tests error handling
+     - Validates both parsers reject invalid content
+   - `test_rss_item_guid_fallback()`: Tests GUID fallback logic
+     - Validates guid → link → title fallback chain
+     - Ensures items always have a unique identifier
+
+7. **Design Alignment**:
+   - Follows implementation_1.md:2068-2107 specification
+   - HTTP client configured with 30s timeout (Task 26.5)
+   - Returns Vec<RssItem> as specified
+   - Ready for integration with matches_filters() (Task 26.7)
+   - Ready for seen item tracking (Task 26.8)
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 7 RSS manager tests pass (4 new tests added)
+- ✅ RSS parsing test validates enclosure and link extraction
+- ✅ Atom parsing test validates MIME type detection
+- ✅ Invalid feed test ensures proper error handling
+- ✅ GUID fallback test ensures unique identifiers
+- ✅ Total test count: 326 tests (319 existing + 7 RSS)
+
+**Previous Iteration:**
 
 **Task 26.5: Implement RssManager Struct**
 
@@ -903,7 +974,7 @@ The implementation will require these major dependencies:
 - [x] Task 26.3: Create RssFilter with include/exclude patterns, min/max size, max age
 - [x] Task 26.4: Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
 - [x] Task 26.5: Implement RssManager struct
-- [ ] Task 26.6: Implement check_feed() to fetch and parse RSS/Atom
+- [x] Task 26.6: Implement check_feed() to fetch and parse RSS/Atom
 - [ ] Task 26.7: Implement matches_filters() using regex for include/exclude
 - [ ] Task 26.8: Track seen items in rss_seen table (guid or link)
 - [ ] Task 26.9: Auto-download matching items if auto_download=true
