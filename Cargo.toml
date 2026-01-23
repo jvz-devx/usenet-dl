@@ -82,10 +82,15 @@ docker-tests = []                                    # Docker-based tests
 tempfile = "3"
 tokio-test = "0.4"
 wiremock = "0.6"
+walkdir = "2"
 
 # E2E testing
 dotenvy = "0.15"                                     # Load .env files
 serial_test = "3"                                    # Sequential test execution
+
+[[example]]
+name = "speedtest"
+path = "examples/speedtest.rs"
 
 # Platform-specific dependencies for disk space checking
 [target.'cfg(unix)'.dependencies]

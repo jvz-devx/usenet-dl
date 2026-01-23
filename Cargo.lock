@@ -3322,6 +3322,7 @@ dependencies = [
  "urlencoding",
  "utoipa",
  "utoipa-swagger-ui",
+ "walkdir",
  "winapi",
  "wiremock",
  "zip",

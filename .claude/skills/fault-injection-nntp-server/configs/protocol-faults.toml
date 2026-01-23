@@ -1,0 +1,49 @@
+# Protocol violation faults configuration
+# Tests: A1-A15, D1-D10, I1-I10 from faults.md
+
+[server]
+port = 1190
+max_connections = 10
+greeting = "200 fault-nntp-server (protocol faults mode)"
+
+[faults.response]
+# A1-A15: Malformed status lines (10% chance)
+malformed_status_prob = 0.10
+
+# D4-D5: Invalid response codes (5% chance)
+invalid_code_prob = 0.05
+
+# D2: Embedded CRLF in status message (3% chance)
+embedded_crlf_prob = 0.03
+
+# D3: Multiple responses on one line (2% chance)
+multiple_responses_prob = 0.02
+
+# Specific malformation type (empty = random selection)
+# Options: "no_newline", "nul_bytes", "control_chars", "tab_space",
+#          "code_overflow", "long_line", "missing_code", "letter_o",
+#          "only_cr", "double_space"
+# malformation_type = "no_newline"
+
+[faults.multiline]
+# H1: Lone CR as terminator (5% chance)
+lone_cr_prob = 0.05
+
+# H2: Mixed line endings (5% chance)
+mixed_line_endings_prob = 0.05
+
+# H7: Double terminator (2% chance)
+double_terminator_prob = 0.02
+
+# H3: Very long line (0 = disabled, set to 1048576 for 1MB)
+very_long_line_bytes = 0
+
+[faults.article]
+# J1: Wrong message-id (5% chance)
+wrong_message_id_prob = 0.05
+
+# J2: Missing headers (3% chance)
+missing_headers_prob = 0.03
+
+# J3: Duplicate headers (5% chance)
+duplicate_headers_prob = 0.05

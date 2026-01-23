@@ -1,0 +1,37 @@
+# Encoding and character faults configuration
+# Tests: C1-C10, H4, H9-H10 from faults.md
+
+[server]
+port = 1190
+max_connections = 10
+greeting = "200 fault-nntp-server (encoding faults mode)"
+
+[faults.encoding]
+# C1-C7: Invalid UTF-8 sequences (10% chance)
+invalid_utf8_prob = 0.10
+
+# A2/H4: NUL bytes in responses (5% chance)
+nul_bytes_prob = 0.05
+
+# H2: Wrong line endings - LF instead of CRLF (10% chance)
+wrong_line_endings_prob = 0.10
+
+# C4: BOM prefix on responses (5% chance)
+bom_prefix_prob = 0.05
+
+# C9: Latin-1 instead of UTF-8 (3% chance)
+latin1_prob = 0.03
+
+[faults.multiline]
+# H4: NUL bytes in body (5% chance)
+nul_in_body_prob = 0.05
+
+# H2: Mixed line endings (10% chance)
+mixed_line_endings_prob = 0.10
+
+[faults.compression]
+# G3: COMPRESS marker but plaintext (5% chance)
+fake_marker_prob = 0.05
+
+# G4: Compressed without marker (3% chance)
+missing_marker_prob = 0.03
