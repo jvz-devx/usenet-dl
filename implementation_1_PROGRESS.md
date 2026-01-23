@@ -72,10 +72,10 @@ IN_PROGRESS
   - Tasks 32.1-32.6: ✅ Complete server health check with 5 integration tests and manual testing guide (61 API tests, 5 health check tests)
   - Tasks 33.1-33.5: ✅ Re-processing API complete with reprocess() and reextract() methods (2 API tests passing)
   - Tasks 34.1-34.6: ✅ Comprehensive error types with HTTP status mapping and 11 error response tests passing
-  - Tasks 35.1-35.4: ✅ Comprehensive documentation complete (README, examples, API usage, configuration)
-- Total: 251/253 tasks complete (99.2%)
+  - Tasks 35.1-35.6: ✅ Comprehensive documentation complete (README, examples, API usage, configuration, CHANGELOG, CONTRIBUTING)
+- Total: 252/253 tasks complete (99.6%)
 
-**Next Task:** Task 35.6 - Write CONTRIBUTING.md with development guidelines
+**Next Task:** Task 35.7 - Add inline code documentation (rustdoc comments)
 
 
 ## Completed This Iteration
@@ -3449,11 +3449,106 @@ The implementation will require these major dependencies:
 - [x] Task 35.3: Write API usage documentation with curl examples
 - [x] Task 35.4: Document configuration file format (TOML or JSON)
 - [x] Task 35.5: Create CHANGELOG.md
-- [ ] Task 35.6: Write CONTRIBUTING.md with development guidelines
+- [x] Task 35.6: Write CONTRIBUTING.md with development guidelines
 - [ ] Task 35.7: Add inline code documentation (rustdoc comments)
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 35.6: Write CONTRIBUTING.md with development guidelines**
+
+Successfully created comprehensive CONTRIBUTING.md with development guidelines, workflow, and best practices.
+
+**Implementation Details:**
+
+1. **Comprehensive Table of Contents** (689 lines total):
+   - Code of Conduct
+   - Getting Started (prerequisites, quick start)
+   - Development Setup (dependencies, tools, pre-commit hooks)
+   - Project Structure (directory layout, module responsibilities)
+   - Development Workflow (branching, changes, testing, quality checks)
+   - Testing Guidelines (organization, categories, coverage)
+   - Code Style (formatting, naming, error handling, async patterns)
+   - Documentation (rustdoc, examples, docs files)
+   - Submitting Changes (PR process, commit messages)
+   - Issue Reporting (bug reports, feature requests)
+   - Performance Considerations
+   - Security (reporting, guidelines, review checklist)
+
+2. **Getting Started Section**:
+   - Prerequisites: Rust 1.70+, SQLite 3, unrar, 7z
+   - Quick start commands (clone, build, test, doc)
+   - Platform-specific setup for Linux, macOS, Windows
+
+3. **Development Setup**:
+   - Install dependencies by platform
+   - Cargo tools (cargo-watch, cargo-tarpaulin, clippy, rustfmt)
+   - Optional pre-commit hooks script with format, lint, and test checks
+
+4. **Project Structure Documentation**:
+   - Complete directory tree with descriptions
+   - Module responsibilities for all 16+ source files
+   - Clear separation: core (lib.rs), database (db.rs), API (api/), automation (rss, scheduler, watcher)
+
+5. **Development Workflow**:
+   - Feature branch creation
+   - Change-making principles (focused, TDD, documentation, consistency)
+   - Testing commands (all, specific, with logging, release mode)
+   - Code quality checks (fmt, clippy, udeps, audit)
+   - Documentation building and verification
+
+6. **Testing Guidelines**:
+   - Test organization with #[cfg(test)] modules
+   - Best practices: descriptive names, AAA pattern, edge cases, cleanup
+   - Three test categories with examples:
+     - Unit tests (individual functions)
+     - Integration tests (component interactions)
+     - API tests (HTTP endpoints with Axum)
+   - Coverage targets: 80%+ for core, 100% for errors, all public APIs
+
+7. **Code Style Standards**:
+   - Formatting with rustfmt (100 char lines)
+   - Naming conventions: PascalCase, snake_case, SCREAMING_SNAKE_CASE
+   - Code organization: imports, types, impls, tests
+   - Error handling with thiserror
+   - Comments and documentation with examples
+   - Async best practices (avoid blocking, use tokio::spawn/select)
+
+8. **Documentation Requirements**:
+   - Rustdoc comments structure: summary, description, arguments, returns, errors, examples, panics
+   - Documentation files to update: README, API_USAGE, CONFIGURATION, CHANGELOG
+   - Examples for common use cases and new features
+
+9. **Pull Request Process**:
+   - 5-step process: update branch, checks, commit message, push, create PR
+   - Conventional Commits: feat, fix, docs, style, refactor, test, chore
+   - PR template checklist
+
+10. **Issue Reporting Templates**:
+    - Bug reports: description, steps, expected/actual, environment, logs, config
+    - Feature requests: description, use case, solution, alternatives, examples
+
+11. **Performance Considerations**:
+    - Benchmarking, avoiding allocations, data structures
+    - Database best practices: batch inserts, indexes, prepared statements, transactions
+    - Async best practices: no blocking, limit concurrency, cancellation, message passing
+
+12. **Security Section**:
+    - Private security reporting email
+    - Security guidelines: no logging sensitive data, input validation, secure defaults, dependency audits
+    - Code review security checklist (SQL injection, path traversal, etc.)
+
+13. **Development Tips**:
+    - Useful commands: cargo watch, examples, docs, tree, clean, update
+    - Debugging with RUST_LOG levels
+    - Working with SQLite directly
+
+14. **Questions Section**:
+    - Documentation pointers
+    - Examples directory
+    - GitHub issues and discussions
+
+## Previous Iteration
 
 **Task 35.1: Comprehensive README.md Documentation**
 
