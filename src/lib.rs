@@ -60,6 +60,7 @@ pub mod post_processing;
 pub mod retry;
 pub mod rss_manager;
 pub mod rss_scheduler;
+pub mod scheduler;
 pub mod speed_limiter;
 pub mod types;
 pub mod utils;
@@ -68,6 +69,7 @@ pub mod utils;
 pub use config::{Config, ServerConfig};
 pub use db::Database;
 pub use error::{Error, Result};
+pub use scheduler::{RuleId, ScheduleAction, ScheduleRule, Weekday};
 pub use types::{
     DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, QueueStats, Stage,
     Status,

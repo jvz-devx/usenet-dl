@@ -59,15 +59,106 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (27/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (31/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (21 tests passing)
-- Total: 190/253 tasks complete (75.1%)
+  - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
+  - Tasks 27.1-27.3: ✅ Scheduler types (ScheduleRule, ScheduleAction, Weekday) complete (9 tests passing)
+- Total: 194/253 tasks complete (76.7%)
 
-**Next Task:** Task 27.1 - Implement scheduler structures
+**Next Task:** Task 27.4 - Create Scheduler struct with rules list
 
 ## Completed This Iteration
+
+**Task 27.1: Create ScheduleRule with name, days, start_time, end_time, action, enabled**
+
+Successfully implemented complete scheduler type system with comprehensive serialization support and 9 passing tests:
+
+1. **New Module Created** (src/scheduler.rs):
+   - Complete scheduler type definitions
+   - Module-level documentation with usage examples
+   - Public API re-exports in lib.rs
+   - Follows existing code organization patterns
+
+2. **ScheduleRule Struct** (lines 45-66):
+   - Field: `id: RuleId` - unique identifier (i64)
+   - Field: `name: String` - human-readable rule name
+   - Field: `days: Vec<Weekday>` - days rule applies (empty = all days)
+   - Field: `start_time: NaiveTime` - start time in 24-hour format
+   - Field: `end_time: NaiveTime` - end time in 24-hour format
+   - Field: `action: ScheduleAction` - action to take during window
+   - Field: `enabled: bool` - whether rule is active
+   - Derives: Clone, Debug, Serialize, Deserialize, PartialEq
+   - Custom serde module for time formatting (HH:MM:SS)
+
+3. **ScheduleAction Enum** (lines 69-76):
+   - Variant: `SpeedLimit(u64)` - set speed limit in bytes/sec
+   - Variant: `Unlimited` - remove speed limit
+   - Variant: `Pause` - pause all downloads
+   - Derives: Clone, Debug, Serialize, Deserialize, PartialEq, Eq
+   - Tagged enum serialization with type and value fields
+
+4. **Weekday Enum** (lines 79-96):
+   - All 7 days: Monday through Sunday
+   - Documentation for each variant
+   - Derives: Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash
+   - Conversion methods to/from chrono::Weekday
+
+5. **Weekday Conversion Methods** (lines 98-126):
+   - `from_chrono(chrono::Weekday) -> Weekday` - convert from chrono
+   - `to_chrono(self) -> chrono::Weekday` - convert to chrono
+   - Complete bidirectional mapping for all 7 days
+   - Enables integration with chrono date/time operations
+
+6. **Time Serialization Module** (lines 128-145):
+   - Custom serde module `time_format`
+   - Serializes NaiveTime as "HH:MM:SS" strings
+   - Deserializes from same format
+   - Used via `#[serde(with = "time_format")]` attribute
+   - Follows chrono::NaiveTime format patterns
+
+7. **Comprehensive Test Suite** (9 tests, lines 147-329):
+   - `test_schedule_rule_creation()`: Validates struct construction
+   - `test_schedule_action_variants()`: Tests all action variants
+   - `test_weekday_conversion()`: Tests chrono conversion methods
+   - `test_weekday_round_trip()`: Verifies bidirectional conversion
+   - `test_schedule_rule_serialization()`: Tests JSON round-trip
+   - `test_time_format_serialization()`: Validates time formatting
+   - `test_schedule_action_serialization()`: Tests action JSON
+   - `test_empty_days_means_all_days()`: Validates empty days = all days
+   - `test_schedule_rule_with_all_weekdays()`: Tests 5-day work week
+
+8. **Module Documentation** (lines 1-42):
+   - Comprehensive module-level documentation
+   - Real-world use case examples
+   - Complete code examples with night/work rules
+   - Integration examples showing rule construction
+   - Follows Rust documentation best practices
+
+9. **Design Alignment**:
+   - Matches implementation_1.md specification (lines 1913-1988)
+   - Uses chrono::NaiveTime for time handling
+   - Supports empty days = all days pattern
+   - Tagged enum serialization for API compatibility
+   - Time format matches 24-hour HH:MM:SS standard
+
+10. **API Integration**:
+    - Types re-exported from lib.rs for public API
+    - RuleId, ScheduleAction, ScheduleRule, Weekday exported
+    - Ready for REST API endpoint usage
+    - Serialization compatible with JSON API responses
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 9 scheduler type tests pass
+- ✅ No warnings for scheduler module (documentation complete)
+- ✅ Serialization/deserialization tests validate JSON compatibility
+- ✅ Weekday conversion tests validate chrono integration
+- ✅ Time format serialization produces correct "HH:MM:SS" strings
+- ✅ All types properly exported from lib.rs
+- ✅ Total scheduler tests: 9 passing
+
+**Previous Iteration:**
 
 **Task 26.12: Test RSS feed with real indexer feed**
 
@@ -1434,11 +1525,11 @@ The implementation will require these major dependencies:
 - [x] Task 26.9: Auto-download matching items if auto_download=true
 - [x] Task 26.10: Implement scheduled feed checking task
 - [x] Task 26.11: Add API endpoints for RSS management (GET/POST/PUT/DELETE /rss, POST /rss/:id/check)
-- [ ] Task 26.12: Test RSS feed with real indexer feed
+- [x] Task 26.12: Test RSS feed with real indexer feed
 
-- [ ] Task 27.1: Create ScheduleRule with name, days, start_time, end_time, action, enabled
-- [ ] Task 27.2: Implement ScheduleAction enum (SpeedLimit, Unlimited, Pause)
-- [ ] Task 27.3: Implement Weekday enum
+- [x] Task 27.1: Create ScheduleRule with name, days, start_time, end_time, action, enabled
+- [x] Task 27.2: Implement ScheduleAction enum (SpeedLimit, Unlimited, Pause)
+- [x] Task 27.3: Implement Weekday enum
 - [ ] Task 27.4: Create Scheduler struct with rules list
 - [ ] Task 27.5: Implement get_current_action() to evaluate rules for current time
 - [ ] Task 27.6: Create scheduler task that checks rules every minute
