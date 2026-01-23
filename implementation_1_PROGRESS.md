@@ -59,16 +59,94 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (32/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (33/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
-  - Tasks 27.1-27.4: ✅ Scheduler struct with rule management complete (16 tests passing)
-- Total: 195/253 tasks complete (77.1%)
+  - Tasks 27.1-27.5: ✅ Scheduler with get_current_action() complete (33 tests passing)
+- Total: 196/253 tasks complete (77.5%)
 
-**Next Task:** Task 27.5 - Implement get_current_action() to evaluate rules for current time
+**Next Task:** Task 27.6 - Create scheduler task that checks rules every minute
 
 ## Completed This Iteration
+
+**Task 27.5: Implement get_current_action() to evaluate rules for current time**
+
+Successfully implemented the `get_current_action()` method with comprehensive rule evaluation logic and 17 new tests:
+
+1. **get_current_action() Method** (src/scheduler.rs:216-259):
+   - Parameters: `chrono::DateTime<chrono::Local>` - current date/time
+   - Returns: `Option<ScheduleAction>` - action of first matching rule or None
+   - Evaluates rules in order (first match wins)
+   - Filter 1: Rule must be enabled
+   - Filter 2: Rule must match current day (empty days = all days)
+   - Filter 3: Current time must be >= start_time and < end_time
+   - Returns cloned action from first matching rule
+   - Comprehensive documentation with usage example
+
+2. **Rule Evaluation Logic**:
+   - Converts current weekday using `Weekday::from_chrono()`
+   - Extracts time component with `now.time()`
+   - Chains three filters for efficient evaluation
+   - Maps matching rule to its action
+   - Returns first result with `.next()`
+   - Time boundaries: start_time inclusive (>=), end_time exclusive (<)
+
+3. **Required Imports Added** (src/scheduler.rs:39):
+   - Added `Datelike` trait for `.weekday()` method
+   - Added `Timelike` trait for `.with_hour()`, `.with_minute()`, `.with_second()` methods
+   - Maintains compatibility with chrono 0.4
+
+4. **Comprehensive Test Suite** (17 new tests, src/scheduler.rs:650-929):
+   - `test_get_current_action_no_rules()`: Validates empty scheduler returns None
+   - `test_get_current_action_disabled_rule()`: Ensures disabled rules are ignored
+   - `test_get_current_action_time_match()`: Tests time window matching (10:30 in 9:00-12:00)
+   - `test_get_current_action_time_no_match()`: Tests time outside window (14:00 vs 9:00-12:00)
+   - `test_get_current_action_day_match()`: Tests day filtering (current day matches)
+   - `test_get_current_action_day_no_match()`: Tests day filtering (different day)
+   - `test_get_current_action_empty_days_matches_all()`: Validates empty days = all days
+   - `test_get_current_action_first_match_wins()`: Tests priority (first rule wins)
+   - `test_get_current_action_boundary_start_inclusive()`: Tests start_time >= (inclusive)
+   - `test_get_current_action_boundary_end_exclusive()`: Tests end_time < (exclusive)
+   - `test_get_current_action_all_action_types()`: Tests all 3 action types (SpeedLimit, Unlimited, Pause)
+   - `test_get_current_action_complex_scenario()`: Complex test with 5 rules testing all filters
+
+5. **Edge Cases Validated**:
+   - No rules configured (returns None)
+   - All rules disabled (returns None)
+   - Time outside all windows (returns None)
+   - Day doesn't match any rule (returns None)
+   - Multiple matching rules (first wins)
+   - Boundary conditions (start inclusive, end exclusive)
+   - Empty days list (matches all days of week)
+   - All action variants (SpeedLimit, Unlimited, Pause)
+
+6. **Design Alignment**:
+   - Matches implementation_1.md:1993-2007 specification exactly
+   - Follows SABnzbd-style scheduler behavior
+   - First matching rule wins (order matters)
+   - Proper time boundary handling (>= start, < end)
+   - Empty days means all days (documented convention)
+   - Ready for integration with scheduler task (Task 27.6)
+
+7. **Performance Characteristics**:
+   - Lazy evaluation with iterator chains
+   - Short-circuits on first match
+   - No allocations for filtering
+   - Single clone for matched action
+   - O(n) complexity where n = number of rules
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 33 scheduler tests pass (16 existing + 17 new)
+- ✅ Tests complete in 1.45 seconds
+- ✅ Method properly exported and documented
+- ✅ All edge cases tested and validated
+- ✅ Boundary conditions verified (inclusive/exclusive)
+- ✅ Complex scenario with multiple filters tested
+- ✅ Total scheduler tests: 33 passing
+
+**Previous Iteration:**
 
 **Task 27.4: Create Scheduler struct with rules list**
 
@@ -1620,7 +1698,7 @@ The implementation will require these major dependencies:
 - [x] Task 27.2: Implement ScheduleAction enum (SpeedLimit, Unlimited, Pause)
 - [x] Task 27.3: Implement Weekday enum
 - [x] Task 27.4: Create Scheduler struct with rules list
-- [ ] Task 27.5: Implement get_current_action() to evaluate rules for current time
+- [x] Task 27.5: Implement get_current_action() to evaluate rules for current time
 - [ ] Task 27.6: Create scheduler task that checks rules every minute
 - [ ] Task 27.7: Apply actions (set speed limit or pause queue)
 - [ ] Task 27.8: Add API endpoints for scheduler management (GET/POST/PUT/DELETE /scheduler)

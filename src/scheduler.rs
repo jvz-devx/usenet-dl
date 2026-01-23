@@ -36,7 +36,7 @@
 //! };
 //! ```
 
-use chrono::NaiveTime;
+use chrono::{Datelike, NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a schedule rule
@@ -209,6 +209,54 @@ impl Scheduler {
         } else {
             false
         }
+    }
+
+    /// Get the current effective action based on the current time
+    ///
+    /// Evaluates all rules and returns the action of the first matching rule.
+    /// Returns None if no rules match the current time.
+    ///
+    /// Rules are evaluated in order:
+    /// 1. Rule must be enabled
+    /// 2. Rule must match the current day (empty days = all days)
+    /// 3. Current time must be >= start_time and < end_time
+    /// 4. First matching rule wins
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, Weekday};
+    /// use chrono::{NaiveTime, Local};
+    ///
+    /// let rules = vec![
+    ///     ScheduleRule {
+    ///         id: 1,
+    ///         name: "Work hours".into(),
+    ///         days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
+    ///                    Weekday::Thursday, Weekday::Friday],
+    ///         start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+    ///         end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+    ///         action: ScheduleAction::SpeedLimit(1_000_000),
+    ///         enabled: true,
+    ///     },
+    /// ];
+    ///
+    /// let scheduler = Scheduler::new(rules);
+    /// if let Some(action) = scheduler.get_current_action(Local::now()) {
+    ///     // Apply the action
+    /// }
+    /// ```
+    pub fn get_current_action(&self, now: chrono::DateTime<chrono::Local>) -> Option<ScheduleAction> {
+        let weekday = Weekday::from_chrono(now.weekday());
+        let time = now.time();
+
+        self.rules
+            .iter()
+            .filter(|r| r.enabled)
+            .filter(|r| r.days.is_empty() || r.days.contains(&weekday))
+            .filter(|r| time >= r.start_time && time < r.end_time)
+            .map(|r| r.action.clone())
+            .next()
     }
 }
 
@@ -642,5 +690,421 @@ mod tests {
 
         assert_eq!(scheduler.rules()[1].name, "Updated Rule 3");
         assert!(!scheduler.rules()[1].enabled);
+    }
+
+    #[test]
+    fn test_get_current_action_no_rules() {
+        use chrono::Local;
+
+        let scheduler = Scheduler::default();
+        let now = Local::now();
+
+        assert!(scheduler.get_current_action(now).is_none());
+    }
+
+    #[test]
+    fn test_get_current_action_disabled_rule() {
+        use chrono::Local;
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Disabled rule".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: false,  // Disabled
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let now = Local::now();
+
+        // Disabled rule should not match
+        assert!(scheduler.get_current_action(now).is_none());
+    }
+
+    #[test]
+    fn test_get_current_action_time_match() {
+        use chrono::Local;
+
+        // Create a specific time: 10:30 AM on a Monday
+        let now = Local::now()
+            .with_hour(10).unwrap()
+            .with_minute(30).unwrap()
+            .with_second(0).unwrap();
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Morning rule".into(),
+                days: vec![],  // All days
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(1_000_000),
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        assert!(action.is_some());
+        assert_eq!(action.unwrap(), ScheduleAction::SpeedLimit(1_000_000));
+    }
+
+    #[test]
+    fn test_get_current_action_time_no_match() {
+        use chrono::Local;
+
+        // Create a specific time: 2:00 PM
+        let now = Local::now()
+            .with_hour(14).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Morning rule".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(1_000_000),
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // 2:00 PM is outside 9:00-12:00 range
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_get_current_action_day_match() {
+        use chrono::Local;
+
+        let now = Local::now()
+            .with_hour(10).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let current_weekday = Weekday::from_chrono(now.weekday());
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Today only".into(),
+                days: vec![current_weekday],  // Only matches today
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        assert!(action.is_some());
+        assert_eq!(action.unwrap(), ScheduleAction::Unlimited);
+    }
+
+    #[test]
+    fn test_get_current_action_day_no_match() {
+        use chrono::Local;
+
+        let now = Local::now()
+            .with_hour(10).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let current_weekday = Weekday::from_chrono(now.weekday());
+
+        // Pick a different weekday
+        let different_weekday = match current_weekday {
+            Weekday::Monday => Weekday::Tuesday,
+            _ => Weekday::Monday,
+        };
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Different day".into(),
+                days: vec![different_weekday],  // Not today
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // Wrong day, should not match
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_get_current_action_empty_days_matches_all() {
+        use chrono::Local;
+
+        let now = Local::now()
+            .with_hour(10).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "All days".into(),
+                days: vec![],  // Empty = all days
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(5_000_000),
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // Empty days should match any day
+        assert!(action.is_some());
+        assert_eq!(action.unwrap(), ScheduleAction::SpeedLimit(5_000_000));
+    }
+
+    #[test]
+    fn test_get_current_action_first_match_wins() {
+        use chrono::Local;
+
+        let now = Local::now()
+            .with_hour(10).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "First rule".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(1_000_000),
+                enabled: true,
+            },
+            ScheduleRule {
+                id: 2,
+                name: "Second rule (should not match)".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // First matching rule should win
+        assert!(action.is_some());
+        assert_eq!(action.unwrap(), ScheduleAction::SpeedLimit(1_000_000));
+    }
+
+    #[test]
+    fn test_get_current_action_boundary_start_inclusive() {
+        use chrono::Local;
+
+        // Time exactly at start_time (9:00:00)
+        let now = Local::now()
+            .with_hour(9).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Boundary test".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // Start time is inclusive (>=)
+        assert!(action.is_some());
+        assert_eq!(action.unwrap(), ScheduleAction::Pause);
+    }
+
+    #[test]
+    fn test_get_current_action_boundary_end_exclusive() {
+        use chrono::Local;
+
+        // Time exactly at end_time (17:00:00)
+        let now = Local::now()
+            .with_hour(17).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Boundary test".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(1_000_000),
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // End time is exclusive (<)
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_get_current_action_all_action_types() {
+        use chrono::Local;
+
+        let now = Local::now()
+            .with_hour(10).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap();
+
+        // Test SpeedLimit
+        let scheduler = Scheduler::new(vec![
+            ScheduleRule {
+                id: 1,
+                name: "Speed limit".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(2_000_000),
+                enabled: true,
+            },
+        ]);
+        assert_eq!(
+            scheduler.get_current_action(now),
+            Some(ScheduleAction::SpeedLimit(2_000_000))
+        );
+
+        // Test Unlimited
+        let scheduler = Scheduler::new(vec![
+            ScheduleRule {
+                id: 2,
+                name: "Unlimited".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ]);
+        assert_eq!(
+            scheduler.get_current_action(now),
+            Some(ScheduleAction::Unlimited)
+        );
+
+        // Test Pause
+        let scheduler = Scheduler::new(vec![
+            ScheduleRule {
+                id: 3,
+                name: "Pause".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: true,
+            },
+        ]);
+        assert_eq!(
+            scheduler.get_current_action(now),
+            Some(ScheduleAction::Pause)
+        );
+    }
+
+    #[test]
+    fn test_get_current_action_complex_scenario() {
+        use chrono::Local;
+
+        let now = Local::now()
+            .with_hour(14).unwrap()  // 2 PM
+            .with_minute(30).unwrap()
+            .with_second(0).unwrap();
+
+        let current_weekday = Weekday::from_chrono(now.weekday());
+
+        let rules = vec![
+            // Rule 1: Disabled, should be ignored
+            ScheduleRule {
+                id: 1,
+                name: "Disabled".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: false,
+            },
+            // Rule 2: Wrong time window, should be ignored
+            ScheduleRule {
+                id: 2,
+                name: "Morning only".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+            // Rule 3: Wrong day, should be ignored
+            ScheduleRule {
+                id: 3,
+                name: "Wrong day".into(),
+                days: vec![Weekday::Sunday],  // Unlikely to match
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+                action: ScheduleAction::SpeedLimit(100),
+                enabled: true,
+            },
+            // Rule 4: Should match (all days, correct time)
+            ScheduleRule {
+                id: 4,
+                name: "Afternoon".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(3_000_000),
+                enabled: true,
+            },
+            // Rule 5: Also matches but should not be returned (first match wins)
+            ScheduleRule {
+                id: 5,
+                name: "Also matches".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules);
+        let action = scheduler.get_current_action(now);
+
+        // Should match Rule 4 (first enabled rule with matching time and day)
+        assert!(action.is_some());
+        assert_eq!(action.unwrap(), ScheduleAction::SpeedLimit(3_000_000));
     }
 }
