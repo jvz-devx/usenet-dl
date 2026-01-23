@@ -756,8 +756,22 @@ pub async fn reextract_download(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn pause_queue(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn pause_queue(State(state): State<AppState>) -> impl IntoResponse {
+    match state.downloader.pause_all().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to pause queue");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "pause_failed",
+                        "message": format!("Failed to pause queue: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// POST /queue/resume - Resume all downloads

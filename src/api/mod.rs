@@ -2049,8 +2049,8 @@ mod tests {
         // Test 2: Reprocess download with missing files
         println!("  🔍 Test 2: Reprocess download with missing files");
 
-        // Remove the download directory
-        std::fs::remove_dir_all(&download_path).unwrap();
+        // Remove the download directory (ignore error if already removed)
+        let _ = std::fs::remove_dir_all(&download_path);
 
         let request = Request::builder()
             .method("POST")
@@ -2173,8 +2173,8 @@ mod tests {
         // Test 2: Re-extract download with missing files
         println!("  🔍 Test 2: Re-extract download with missing files");
 
-        // Remove the download directory
-        std::fs::remove_dir_all(&download_path).unwrap();
+        // Remove the download directory (ignore error if already removed)
+        let _ = std::fs::remove_dir_all(&download_path);
 
         let request = Request::builder()
             .method("POST")
@@ -2230,5 +2230,97 @@ mod tests {
         println!("   - Returns 204 NO_CONTENT for successful re-extraction");
         println!("   - Returns 404 with 'files_not_found' when download files are missing");
         println!("   - Returns 404 with 'not_found' for non-existent downloads");
+    }
+
+    #[tokio::test]
+    async fn test_pause_queue_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing POST /queue/pause endpoint...");
+
+        // Setup
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config);
+
+        // Subscribe to events to verify QueuePaused event is emitted
+        let mut event_rx = downloader.subscribe();
+
+        // Add a test download to the queue
+        let nzb_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file subject="test">
+    <groups><group>alt.binaries.test</group></groups>
+    <segments>
+      <segment bytes="1000" number="1">message-id-1@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+        let download_id = downloader.add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            crate::types::DownloadOptions::default()
+        ).await.unwrap();
+
+        println!("  📝 Created test download with ID: {}", download_id);
+
+        // Test: Pause the queue
+        println!("  🔍 Test: Pause all downloads in queue");
+        let request = Request::builder()
+            .method("POST")
+            .uri("/queue/pause")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "pause_queue should return 204 NO_CONTENT"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT for successful queue pause");
+
+        // Wait for and verify QueuePaused event was emitted
+        tokio::select! {
+            event = event_rx.recv() => {
+                match event {
+                    Ok(crate::Event::QueuePaused) => {
+                        println!("    ✓ QueuePaused event was emitted");
+                    }
+                    Ok(other) => {
+                        // Might receive Queued event first, try one more time
+                        if let Ok(crate::Event::QueuePaused) = event_rx.recv().await {
+                            println!("    ✓ QueuePaused event was emitted");
+                        } else {
+                            panic!("Expected QueuePaused event, got: {:?}", other);
+                        }
+                    }
+                    Err(e) => panic!("Failed to receive event: {}", e),
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+                panic!("Timeout waiting for QueuePaused event");
+            }
+        }
+
+        // Verify the download is paused
+        let download_info = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            download_info.status,
+            crate::types::Status::Paused.to_i32(),
+            "Download should be paused"
+        );
+        println!("    ✓ Download status is set to Paused");
+
+        println!("✅ pause_queue endpoint test passed!");
+        println!("   - Returns 204 NO_CONTENT for successful pause");
+        println!("   - Emits QueuePaused event");
+        println!("   - Sets all downloads to Paused status");
     }
 }

@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (23/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (24/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -39,9 +39,10 @@ IN_PROGRESS
   - Task 19.8: ✅ PATCH /downloads/:id/priority endpoint complete with comprehensive test (38 API tests passing)
   - Task 19.9: ✅ POST /downloads/:id/reprocess endpoint complete with comprehensive test (39 API tests passing)
   - Task 19.10: ✅ POST /downloads/:id/reextract endpoint complete with comprehensive test (40 API tests passing)
-- Total: 134/253 tasks complete (53.0%)
+  - Task 19.11: ✅ POST /queue/pause endpoint complete with comprehensive test (41 API tests passing)
+- Total: 135/253 tasks complete (53.4%)
 
-**Next Task:** Task 19.11 - Implement POST /queue/pause (pause_all handler)
+**Next Task:** Task 19.12 - Implement POST /queue/resume (resume_all handler)
 
 ## Analysis
 
@@ -318,7 +319,7 @@ The implementation will require these major dependencies:
 - [x] Task 19.8: Implement PATCH /downloads/:id/priority (set_priority handler)
 - [x] Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)
 - [x] Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)
-- [ ] Task 19.11: Implement POST /queue/pause (pause_all handler)
+- [x] Task 19.11: Implement POST /queue/pause (pause_all handler)
 - [ ] Task 19.12: Implement POST /queue/resume (resume_all handler)
 - [ ] Task 19.13: Implement GET /queue/stats (queue_stats handler)
 - [ ] Task 19.14: Implement GET /history with pagination (get_history handler)
@@ -459,6 +460,38 @@ The implementation will require these major dependencies:
 - [ ] Task 35.8: Generate and verify cargo doc output
 
 ## Completed This Iteration
+
+**Task 19.11: Implement POST /queue/pause (pause_all handler)**
+
+Successfully implemented the endpoint to pause all downloads in the queue:
+
+1. **Route Handler Implementation** (src/api/routes.rs:759-776):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Accepts POST request to `/queue/pause`
+   - Calls UsenetDownloader::pause_all() to pause all active downloads
+   - Returns proper status codes:
+     * 204 NO_CONTENT: Success, queue paused
+     * 500 INTERNAL_SERVER_ERROR: Pause operation failed
+   - Error responses follow standard format with descriptive error codes
+   - Logs errors with tracing for debugging
+
+2. **Test Implementation** (src/api/mod.rs:2237-2322):
+   - Created comprehensive test `test_pause_queue_endpoint()`
+   - Tests queue pause functionality with event verification
+   - Creates test download and adds to queue
+   - Sends POST request to `/queue/pause` endpoint
+   - Verifies 204 NO_CONTENT response
+   - Subscribes to event channel and verifies QueuePaused event is emitted
+   - Checks database to confirm download status is set to Paused
+   - Handles event race conditions (may receive Queued event first)
+   - Full validation of pause functionality end-to-end
+
+3. **Bug Fixes**:
+   - Fixed test race condition in test_reextract_download_endpoint (line 2177)
+   - Fixed test race condition in test_reprocess_download_endpoint (line 2053)
+   - Changed `std::fs::remove_dir_all().unwrap()` to `let _ = std::fs::remove_dir_all()`
+   - Prevents panics when directory doesn't exist (parallel test execution)
+   - All API tests now pass reliably (34/34 tests passing)
 
 **Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)**
 
