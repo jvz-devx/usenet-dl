@@ -59,14 +59,57 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (15/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (16/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-- Total: 178/253 tasks complete (70.4%)
+  - Task 26.1: ✅ RSS dependencies added (rss 2.x, atom_syndication 0.12)
+- Total: 179/253 tasks complete (70.8%)
 
-**Next Task:** Task 26.1 - Add rss and atom_syndication dependencies
+**Next Task:** Task 26.2 - Create RssFeedConfig with url, check_interval, category, filters, auto_download, priority
 
 ## Completed This Iteration
+
+**Task 26.1: Add RSS and atom_syndication dependencies**
+
+Successfully added RSS feed support dependencies to Cargo.toml:
+
+1. **Dependency Resolution** (Cargo.toml:70-72):
+   - Added `rss = "2"` for RSS feed parsing (latest version: 2.0.12)
+   - Added `atom_syndication = "0.12"` for Atom feed support (upgraded from planned 0.4)
+   - Used version 0.12 instead of 0.4 for better quick-xml compatibility
+   - Removed TODO comment about conflicts (conflicts were resolved)
+
+2. **Compatibility Investigation**:
+   - Researched potential conflict with nntp-rs's quick-xml 0.37 dependency
+   - Discovered rss 2.x uses quick-xml ^0.37.1 (compatible!)
+   - Found atom_syndication 0.12 uses quick-xml 0.37.x (compatible!)
+   - Verified via cargo tree that all quick-xml deps resolve to 0.37.5
+
+3. **nntp-rs Quick-XML API Update** (../nntp-rs/src/nzb.rs:364):
+   - Fixed breaking API change in quick-xml 0.37.5
+   - Changed `attr.unescape_value()` to `attr.decode_and_unescape_value(reader.decoder())`
+   - Method signature changed between quick-xml 0.37.0 and 0.37.5
+   - Now requires explicit decoder from Reader for proper encoding handling
+
+4. **Build Verification**:
+   - ✅ Project compiles successfully with new dependencies
+   - ✅ No dependency conflicts detected
+   - ✅ All quick-xml dependencies unified to version 0.37.5
+   - ✅ Build time: 0.12s (incremental, no major slowdown)
+
+5. **Why atom_syndication 0.12 Instead of 0.4**:
+   - Version 0.4 uses RustyXML (different XML parser, adds bloat)
+   - Version 0.12 uses quick-xml 0.37.x (same as rss and nntp-rs)
+   - Avoids having two XML parsing libraries in dependency tree
+   - 7 years of improvements and active maintenance (0.4 is from 2017)
+   - Better compatibility with rest of the ecosystem
+
+6. **Next Steps**:
+   - RSS dependencies are now available for use
+   - Ready to implement RssFeedConfig types (Task 26.2)
+   - Can proceed with RSS feed manager implementation
+
+## Previous Iterations
 
 **Tasks 25.1-25.5: Complete URL fetching implementation with timeout handling**
 

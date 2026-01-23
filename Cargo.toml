@@ -67,10 +67,9 @@ utoipa-swagger-ui = { version = "6", features = ["axum"] }
 # Server-Sent Events
 tokio-stream = { version = "0.1", features = ["sync"] }
 
-# RSS feed support (temporarily disabled until Phase 4 - conflicts with nntp-rs quick-xml)
-# TODO: Enable in Phase 4 and fix nntp-rs compatibility with quick-xml encoding feature
-# rss = "2"
-# atom_syndication = "0.4"
+# RSS feed support
+rss = "2"
+atom_syndication = "0.12"  # Using 0.12 for better quick-xml compatibility
 
 [dev-dependencies]
 # Testing utilities
