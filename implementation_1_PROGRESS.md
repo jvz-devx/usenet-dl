@@ -59,17 +59,96 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (37/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (39/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
-  - Tasks 28.1-28.5: ✅ Duplicate detection with SHA256 hashing complete (8 duplicate detection tests passing)
-- Total: 205/253 tasks complete (81.0%)
+  - Tasks 28.1-28.7: ✅ Duplicate detection integration complete (11 duplicate detection tests passing)
+- Total: 207/253 tasks complete (81.8%)
 
-**Next Task:** Task 28.6 - Add duplicate detection to add_nzb_content()
+**Next Task:** Task 28.8 - Test duplicate detection with same NZB added twice
 
 ## Completed This Iteration
+
+**Tasks 28.6-28.7: Add duplicate detection to add_nzb_content() and emit warning events**
+
+Successfully integrated duplicate detection into the main NZB upload flow with comprehensive event handling and action-based behavior:
+
+1. **DuplicateDetected Event** (src/types.rs:274-285):
+   - Added new event variant to Event enum
+   - Fields: `id` (existing download), `name` (new attempt), `method` (detection method), `existing_name`
+   - Emitted before taking action (allows UI to show warning before block/allow)
+   - Properly integrated into SSE stream as "duplicate_detected" event type
+
+2. **Duplicate Error** (src/error.rs:99-101):
+   - Added `Duplicate(String)` variant to Error enum
+   - Contains descriptive message with detection details
+   - Marked as non-retryable in retry.rs IsRetryable trait
+   - Used when DuplicateAction::Block is configured
+
+3. **add_nzb_content() Integration** (src/lib.rs:2144-2173):
+   - Calls `check_duplicate()` after calculating hash and job name
+   - Emits `DuplicateDetected` event when duplicate found (all actions)
+   - Implements action-based behavior:
+     - **Block**: Emits event, then returns `Error::Duplicate` (prevents download)
+     - **Warn**: Emits event, then continues normally (allows download)
+     - **Allow**: Emits event, then continues normally (allows download, informational)
+   - Event includes all detection details for UI display
+
+4. **SSE Event Type** (src/api/routes.rs:1457):
+   - Added "duplicate_detected" event type to SSE stream
+   - Enables real-time duplicate notifications to connected clients
+   - Matches pattern of other event types
+
+5. **Import Updates**:
+   - Added `DuplicateMethod` import to src/types.rs (for Event enum)
+   - Added `DuplicateAction` import to src/lib.rs (for public re-export)
+   - Both types exported from config module
+
+6. **Comprehensive Test Suite** (3 new tests, src/lib.rs:6980-7154):
+   - `test_add_nzb_content_duplicate_warn`: Tests Warn action
+     - Adds same NZB twice with different names
+     - Verifies second download succeeds (gets new ID)
+     - Verifies DuplicateDetected event is emitted with correct details
+     - Validates event contains: existing ID, new name, NzbHash method, existing name
+
+   - `test_add_nzb_content_duplicate_block`: Tests Block action
+     - Adds same NZB twice with different names
+     - Verifies first download succeeds
+     - Verifies second download fails with Error::Duplicate
+     - Validates error message contains: "Duplicate download detected", new file name, detection method
+     - Verifies DuplicateDetected event is emitted before blocking
+     - Confirms event has all correct fields
+
+   - `test_add_nzb_content_duplicate_allow`: Tests Allow action
+     - Adds same NZB twice with different names
+     - Verifies both downloads succeed (different IDs)
+     - Note: Event is still emitted (informational), which is acceptable
+
+7. **Design Alignment**:
+   - Matches implementation_1.md:2151-2272 specification
+   - Three-action system (Block/Warn/Allow) working as designed
+   - Event emitted before action taken (consistent UX)
+   - Error type properly categorized as non-retryable
+   - SSE integration for real-time notifications
+
+8. **Test Coverage**:
+   - All 11 duplicate detection tests passing (8 existing + 3 new)
+   - Block action: Prevents duplicate + emits event + returns error
+   - Warn action: Allows duplicate + emits event + continues
+   - Allow action: Allows duplicate + emits event + continues
+   - Event contains all required information for UI display
+   - Integration with existing hash/job_name calculation verified
+
+**Build Verification**:
+- ✅ Library compiles successfully with 103 warnings (no errors)
+- ✅ All 11 duplicate detection tests pass in 0.55s
+- ✅ Event properly serialized to JSON in SSE stream
+- ✅ Non-exhaustive pattern matches handled correctly
+- ✅ No regressions in existing tests
+
+**Previous Iteration:**
 
 **Task 28.5: Implement check_duplicate() with SHA256 hashing**
 
@@ -2197,8 +2276,8 @@ The implementation will require these major dependencies:
 - [x] Task 28.3: Implement DuplicateMethod enum (NzbHash, NzbName, JobName)
 - [x] Task 28.4: Add nzb_hash and job_name columns to downloads table
 - [x] Task 28.5: Implement check_duplicate() with sha256 hashing
-- [ ] Task 28.6: Add duplicate detection to add_nzb_content()
-- [ ] Task 28.7: Emit warning event or block based on DuplicateAction
+- [x] Task 28.6: Add duplicate detection to add_nzb_content()
+- [x] Task 28.7: Emit warning event or block based on DuplicateAction
 - [ ] Task 28.8: Test duplicate detection with same NZB added twice
 
 ### Phase 5: Notifications & Polish (Steps 29-35)
