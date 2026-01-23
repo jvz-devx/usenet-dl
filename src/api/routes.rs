@@ -784,8 +784,22 @@ pub async fn pause_queue(State(state): State<AppState>) -> impl IntoResponse {
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn resume_queue(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn resume_queue(State(state): State<AppState>) -> impl IntoResponse {
+    match state.downloader.resume_all().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to resume queue");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "resume_failed",
+                        "message": format!("Failed to resume queue: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// GET /queue/stats - Get queue statistics

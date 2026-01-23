@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (24/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (25/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -40,9 +40,10 @@ IN_PROGRESS
   - Task 19.9: ✅ POST /downloads/:id/reprocess endpoint complete with comprehensive test (39 API tests passing)
   - Task 19.10: ✅ POST /downloads/:id/reextract endpoint complete with comprehensive test (40 API tests passing)
   - Task 19.11: ✅ POST /queue/pause endpoint complete with comprehensive test (41 API tests passing)
-- Total: 135/253 tasks complete (53.4%)
+  - Task 19.12: ✅ POST /queue/resume endpoint complete with comprehensive test (42 API tests passing)
+- Total: 136/253 tasks complete (53.8%)
 
-**Next Task:** Task 19.12 - Implement POST /queue/resume (resume_all handler)
+**Next Task:** Task 19.13 - Implement GET /queue/stats (queue_stats handler)
 
 ## Analysis
 
@@ -320,7 +321,7 @@ The implementation will require these major dependencies:
 - [x] Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)
 - [x] Task 19.10: Implement POST /downloads/:id/reextract (reextract handler)
 - [x] Task 19.11: Implement POST /queue/pause (pause_all handler)
-- [ ] Task 19.12: Implement POST /queue/resume (resume_all handler)
+- [x] Task 19.12: Implement POST /queue/resume (resume_all handler)
 - [ ] Task 19.13: Implement GET /queue/stats (queue_stats handler)
 - [ ] Task 19.14: Implement GET /history with pagination (get_history handler)
 - [ ] Task 19.15: Implement DELETE /history (clear_history handler)
@@ -461,7 +462,40 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.11: Implement POST /queue/pause (pause_all handler)**
+**Task 19.12: Implement POST /queue/resume (resume_all handler)**
+
+Successfully implemented the endpoint to resume all paused downloads in the queue:
+
+1. **Route Handler Implementation** (src/api/routes.rs:787-801):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Accepts POST request to `/queue/resume`
+   - Calls UsenetDownloader::resume_all() to resume all paused downloads
+   - Returns proper status codes:
+     * 204 NO_CONTENT: Success, queue resumed
+     * 500 INTERNAL_SERVER_ERROR: Resume operation failed
+   - Error responses follow standard format with "resume_failed" error code
+   - Logs errors with tracing for debugging
+
+2. **Test Implementation** (src/api/mod.rs:2327-2437):
+   - Created comprehensive test `test_resume_queue_endpoint()`
+   - Tests queue resume functionality with event verification
+   - Creates test download and adds to queue
+   - Pauses download first to set up for resume test
+   - Sends POST request to `/queue/resume` endpoint
+   - Verifies 204 NO_CONTENT response
+   - Subscribes to event channel and verifies QueueResumed event is emitted
+   - Checks database to confirm download status is set to Queued (resumed)
+   - Handles event race conditions (may receive other events first)
+   - Full validation of resume functionality end-to-end
+
+3. **Test Results**:
+   - ✅ All 42 API tests pass (previous 41 + new test)
+   - ✅ Test verifies QueueResumed event is emitted
+   - ✅ Test verifies download status transitions from Paused to Queued
+   - ✅ Full end-to-end integration validated
+   - ✅ Mirrors pause_queue implementation pattern
+
+**Previous Completion: Task 19.11: Implement POST /queue/pause (pause_all handler)**
 
 Successfully implemented the endpoint to pause all downloads in the queue:
 

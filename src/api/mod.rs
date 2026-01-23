@@ -2323,4 +2323,114 @@ mod tests {
         println!("   - Emits QueuePaused event");
         println!("   - Sets all downloads to Paused status");
     }
+
+    #[tokio::test]
+    async fn test_resume_queue_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing POST /queue/resume endpoint...");
+
+        // Setup
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config);
+
+        // Subscribe to events to verify QueueResumed event is emitted
+        let mut event_rx = downloader.subscribe();
+
+        // Add a test download to the queue
+        let nzb_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file subject="test">
+    <groups><group>alt.binaries.test</group></groups>
+    <segments>
+      <segment bytes="1000" number="1">message-id-1@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+        let download_id = downloader.add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            crate::types::DownloadOptions::default()
+        ).await.unwrap();
+
+        println!("  📝 Created test download with ID: {}", download_id);
+
+        // First, pause the download so we can resume it
+        downloader.pause(download_id).await.unwrap();
+        println!("  📝 Paused download to set up for resume test");
+
+        // Verify the download is paused
+        let download_info = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            download_info.status,
+            crate::types::Status::Paused.to_i32(),
+            "Download should be paused before resume test"
+        );
+
+        // Test: Resume the queue
+        println!("  🔍 Test: Resume all downloads in queue");
+        let request = Request::builder()
+            .method("POST")
+            .uri("/queue/resume")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "resume_queue should return 204 NO_CONTENT"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT for successful queue resume");
+
+        // Wait for and verify QueueResumed event was emitted
+        tokio::select! {
+            event = event_rx.recv() => {
+                match event {
+                    Ok(crate::Event::QueueResumed) => {
+                        println!("    ✓ QueueResumed event was emitted");
+                    }
+                    Ok(other) => {
+                        // Might receive other events first, try a few more times
+                        let mut found_resume = false;
+                        for _ in 0..3 {
+                            if let Ok(crate::Event::QueueResumed) = event_rx.recv().await {
+                                found_resume = true;
+                                println!("    ✓ QueueResumed event was emitted");
+                                break;
+                            }
+                        }
+                        if !found_resume {
+                            panic!("Expected QueueResumed event, got: {:?}", other);
+                        }
+                    }
+                    Err(e) => panic!("Failed to receive event: {}", e),
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+                panic!("Timeout waiting for QueueResumed event");
+            }
+        }
+
+        // Verify the download is queued (resumed from paused)
+        let download_info = downloader.db.get_download(download_id).await.unwrap().unwrap();
+        assert_eq!(
+            download_info.status,
+            crate::types::Status::Queued.to_i32(),
+            "Download should be queued (resumed) after resume_all"
+        );
+        println!("    ✓ Download status is set to Queued");
+
+        println!("✅ resume_queue endpoint test passed!");
+        println!("   - Returns 204 NO_CONTENT for successful resume");
+        println!("   - Emits QueueResumed event");
+        println!("   - Sets all downloads to Queued status");
+    }
 }
