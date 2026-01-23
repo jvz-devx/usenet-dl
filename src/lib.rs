@@ -1156,6 +1156,35 @@ impl UsenetDownloader {
         Ok(())
     }
 
+    /// Get the current global speed limit
+    ///
+    /// Returns the current speed limit in bytes per second, or None if unlimited.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<u64>` - Speed limit in bytes per second (None = unlimited)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// # let downloader = UsenetDownloader::new(config).await?;
+    /// // Get current speed limit
+    /// let limit = downloader.get_speed_limit();
+    /// if let Some(bps) = limit {
+    ///     println!("Current speed limit: {} bytes/sec", bps);
+    /// } else {
+    ///     println!("No speed limit (unlimited)");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_speed_limit(&self) -> Option<u64> {
+        self.speed_limiter.get_limit()
+    }
+
     /// Set the global speed limit
     ///
     /// This changes the download speed limit for all concurrent downloads.

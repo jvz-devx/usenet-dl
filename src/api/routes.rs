@@ -1182,12 +1182,19 @@ pub async fn update_config(
     path = "/api/v1/config/speed-limit",
     tag = "config",
     responses(
-        (status = 200, description = "Current speed limit in bytes per second"),
+        (status = 200, description = "Current speed limit in bytes per second", body = inline(Object)),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn get_speed_limit(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn get_speed_limit(State(state): State<AppState>) -> impl IntoResponse {
+    // Get the current speed limit from the downloader
+    let limit_bps = state.downloader.get_speed_limit();
+
+    // Return JSON response with limit_bps field
+    // null indicates unlimited speed
+    Json(json!({
+        "limit_bps": limit_bps
+    }))
 }
 
 /// PUT /config/speed-limit - Set speed limit

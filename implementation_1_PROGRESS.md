@@ -26,7 +26,7 @@ IN_PROGRESS
   - Tasks 14.1-14.6: ✅ Obfuscated filename detection and deobfuscation complete (213 tests passing)
   - Tasks 15.1-15.6: ✅ File moving with collision handling complete (226+ tests passing)
   - Tasks 16.1-16.6: ✅ Complete cleanup implementation with 8 comprehensive tests (240 tests passing)
-- Phase 3: 🔄 In Progress (31/71 tasks) - REST API implementation
+- Phase 3: 🔄 In Progress (32/71 tasks) - REST API implementation
   - Tasks 17.1-17.8: ✅ API server with CORS, authentication, and health endpoint tests complete
   - Tasks 18.1-18.7: ✅ OpenAPI integration with Swagger UI complete - 33 types annotated, 37 routes annotated, ApiDoc struct created, Swagger UI mounted at /swagger-ui with comprehensive endpoint validation (12 tests)
   - Task 19.1: ✅ GET /downloads endpoint complete with comprehensive test
@@ -48,9 +48,10 @@ IN_PROGRESS
   - Tasks 20.1-20.5: ✅ Server-Sent Events endpoint complete (46 API tests passing)
   - Task 21.1: ✅ GET /config endpoint complete with sensitive field redaction (47 API tests passing)
   - Task 21.2: ✅ PATCH /config endpoint complete with ConfigUpdate type (48 API tests passing)
-- Total: 147/253 tasks complete (58.1%)
+  - Task 21.3: ✅ GET /config/speed-limit endpoint complete with comprehensive test (49 API tests passing)
+- Total: 148/253 tasks complete (58.5%)
 
-**Next Task:** Task 21.3 - Implement GET /config/speed-limit endpoint
+**Next Task:** Task 21.4 - Implement PUT /config/speed-limit endpoint
 
 ## Analysis
 
@@ -342,7 +343,7 @@ The implementation will require these major dependencies:
 
 - [x] Task 21.1: Implement GET /config (get_config handler) with sensitive field redaction
 - [x] Task 21.2: Implement PATCH /config (update_config handler)
-- [ ] Task 21.3: Implement GET /config/speed-limit (get_speed_limit handler)
+- [x] Task 21.3: Implement GET /config/speed-limit (get_speed_limit handler)
 - [ ] Task 21.4: Implement PUT /config/speed-limit (set_speed_limit handler)
 - [ ] Task 21.5: Implement GET /categories (list_categories handler)
 - [ ] Task 21.6: Implement PUT /categories/:name (create_or_update_category handler)
@@ -469,7 +470,38 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Tasks 20.1-20.5: Server-Sent Events (SSE) endpoint implementation**
+**Task 21.3: GET /config/speed-limit endpoint implementation**
+
+Successfully implemented the endpoint to retrieve the current global speed limit:
+
+1. **Core Method Addition** (src/lib.rs:1159-1184):
+   - Added `get_speed_limit()` method to `UsenetDownloader`
+   - Returns `Option<u64>` - the current speed limit in bytes per second or None for unlimited
+   - Simply delegates to `speed_limiter.get_limit()`
+   - Added comprehensive documentation with examples
+
+2. **API Endpoint Implementation** (src/api/routes.rs:1179-1196):
+   - Implemented `GET /config/speed-limit` handler
+   - Returns JSON response: `{"limit_bps": number | null}`
+   - `null` indicates unlimited speed
+   - Proper OpenAPI annotations with response schema
+   - Already included in OpenAPI paths list
+
+3. **Comprehensive Testing** (src/api/mod.rs:3334-3386):
+   - Created `test_get_speed_limit()` test with two scenarios
+   - Test 1: Verify default unlimited speed returns `{"limit_bps": null}`
+   - Test 2: Set a speed limit (10 MB/s) and verify endpoint returns correct value
+   - Validates JSON structure and response status codes
+   - All 49 API tests passing (48 previous + 1 new test)
+
+**Technical Details**:
+- Endpoint leverages existing `SpeedLimiter::get_limit()` method
+- No new dependencies required
+- Clean separation: core logic in lib.rs, API handler in routes.rs
+- Thread-safe access via Arc-wrapped downloader in AppState
+- Consistent with other config endpoints (GET /config, PATCH /config)
+
+**Previous Iteration: Tasks 20.1-20.5: Server-Sent Events (SSE) endpoint implementation**
 
 Successfully implemented real-time event streaming for the REST API:
 

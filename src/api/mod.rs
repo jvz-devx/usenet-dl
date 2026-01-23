@@ -3329,4 +3329,69 @@ mod tests {
         println!("   - Accepts ConfigUpdate JSON");
         println!("   - Returns updated Config");
     }
+
+    #[tokio::test]
+    async fn test_get_speed_limit() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use serde_json::Value;
+        use tower::ServiceExt;
+
+        println!("\n=== Testing GET /config/speed-limit ===");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = downloader.get_config();
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Get default speed limit (should be None/unlimited)
+        let request = Request::builder()
+            .method("GET")
+            .uri("/config/speed-limit")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        // Default should be unlimited (null)
+        assert_eq!(json["limit_bps"], Value::Null);
+
+        println!("✅ GET /config/speed-limit (default unlimited) test passed!");
+
+        // Test 2: Set a speed limit and verify we can read it back
+        downloader.set_speed_limit(Some(10_000_000)).await; // 10 MB/s
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/config/speed-limit")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        // Should return the limit we just set
+        assert_eq!(json["limit_bps"], 10_000_000);
+
+        println!("✅ GET /config/speed-limit (with limit set) test passed!");
+        println!("   - Returns 200 OK");
+        println!("   - Correct JSON structure with limit_bps field");
+        println!("   - Returns null for unlimited speed");
+        println!("   - Returns correct limit value after setting");
+    }
 }
