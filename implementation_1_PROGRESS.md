@@ -37,9 +37,10 @@ IN_PROGRESS
   - Task 19.6: ✅ POST /downloads/:id/resume endpoint complete with comprehensive test (36 API tests passing)
   - Task 19.7: ✅ DELETE /downloads/:id endpoint complete with comprehensive test (37 API tests passing)
   - Task 19.8: ✅ PATCH /downloads/:id/priority endpoint complete with comprehensive test (38 API tests passing)
-- Total: 132/253 tasks complete (52.2%)
+  - Task 19.9: ✅ POST /downloads/:id/reprocess endpoint complete with comprehensive test (39 API tests passing)
+- Total: 133/253 tasks complete (52.6%)
 
-**Next Task:** Task 19.9 - Implement POST /downloads/:id/reprocess (reprocess handler)
+**Next Task:** Task 19.10 - Implement POST /downloads/:id/reextract (reextract handler)
 
 ## Analysis
 
@@ -458,7 +459,55 @@ The implementation will require these major dependencies:
 
 ## Completed This Iteration
 
-**Task 19.8: Implement PATCH /downloads/:id/priority (set_priority handler)**
+**Task 19.9: Implement POST /downloads/:id/reprocess (reprocess handler)**
+
+Successfully implemented the endpoint to re-run post-processing on completed or failed downloads:
+
+1. **UsenetDownloader::reprocess() Method** (src/lib.rs:809-885):
+   - Added new public async method to restart post-processing pipeline
+   - Verifies download exists in database (returns NotFound error if not found)
+   - Checks if download files still exist in temp directory (returns NotFound if missing)
+   - Resets download status to Processing
+   - Clears previous error messages
+   - Emits Verifying event to indicate post-processing is starting
+   - Spawns post-processing task asynchronously (fire-and-forget)
+   - Useful for: extracting after adding password, changing post-processing settings, manual file repairs
+   - Full documentation with examples and use cases
+
+2. **Route Handler Implementation** (src/api/routes.rs:642-679):
+   - Replaced NOT_IMPLEMENTED stub with full implementation
+   - Accepts POST request to `/downloads/:id/reprocess`
+   - Calls UsenetDownloader::reprocess() to start reprocessing
+   - Returns proper status codes:
+     * 204 NO_CONTENT: Success, reprocessing started
+     * 404 NOT_FOUND with "files_not_found": Download files missing from temp directory
+     * 404 NOT_FOUND with "not_found": Download doesn't exist in database
+     * 500 INTERNAL_SERVER_ERROR: Other errors
+   - Differentiates between download not found vs files not found using error code
+   - All error responses follow standard format with descriptive error codes
+
+3. **Test Implementation** (src/api/mod.rs:1988-2106):
+   - Created comprehensive test `test_reprocess_download_endpoint()`
+   - Tests three scenarios:
+     * **Reprocess existing download**: Creates download with files, verifies 204 response
+     * **Missing files**: Removes download directory, verifies 404 with "files_not_found" error code
+     * **Non-existent download**: Uses invalid ID, verifies 404 with "not_found" error code
+   - Validates response structure and status codes
+   - Tests both error conditions (files missing vs download missing)
+   - Properly creates test download directory structure
+
+4. **Test Results**:
+   - ✅ All 39 API tests pass (previous 38 + new test with 3 scenarios)
+   - ✅ Three test scenarios all pass
+   - ✅ Correct differentiation between "not_found" and "files_not_found" error codes
+   - ✅ 204 NO_CONTENT returned for successful reprocess
+   - ✅ Full end-to-end integration validated
+
+5. **Bug Fix**:
+   - Fixed error type in reprocess() method: Changed from Error::Database to Error::NotFound when download doesn't exist (src/lib.rs:843)
+   - This ensures API returns 404 instead of 500 for non-existent downloads
+
+**Previous Completion: Task 19.8: Implement PATCH /downloads/:id/priority (set_priority handler)**
 
 Successfully implemented the endpoint to update download priority:
 

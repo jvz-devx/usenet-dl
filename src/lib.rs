@@ -806,6 +806,85 @@ impl UsenetDownloader {
         Ok(())
     }
 
+    /// Re-run post-processing on a completed or failed download
+    ///
+    /// This method allows re-running the post-processing pipeline on a download.
+    /// This is useful when:
+    /// - Extraction failed due to missing password (now added)
+    /// - Post-processing settings changed
+    /// - Files were manually repaired
+    ///
+    /// The download files must still exist in the temp directory for reprocessing to work.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The download ID to reprocess
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if reprocessing started successfully, or an error if:
+    /// - The download doesn't exist
+    /// - Download files are missing from temp directory
+    /// - Database update fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader, id: DownloadId) -> Result<()> {
+    /// // Re-run post-processing after adding a password
+    /// downloader.reprocess(id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn reprocess(&self, id: DownloadId) -> Result<()> {
+        // Get download from database
+        let _download = self.db.get_download(id).await?
+            .ok_or_else(|| Error::NotFound(format!("Download {} not found", id)))?;
+
+        // Determine download path (temp directory)
+        let download_path = self.config.temp_dir
+            .join(format!("download_{}", id));
+
+        // Verify download files still exist
+        if !download_path.exists() {
+            return Err(Error::NotFound(format!(
+                "Download files not found at {}. Cannot reprocess.",
+                download_path.display()
+            )));
+        }
+
+        tracing::info!(
+            download_id = id,
+            path = %download_path.display(),
+            "Starting reprocessing"
+        );
+
+        // Reset status and re-queue for post-processing
+        self.db.update_status(id, Status::Processing.to_i32()).await?;
+
+        // Clear any previous error message
+        self.db.set_error(id, "").await?;
+
+        // Emit Verifying event to indicate post-processing is starting
+        self.emit_event(Event::Verifying { id });
+
+        // Start post-processing pipeline
+        // This will run asynchronously
+        let downloader = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = downloader.start_post_processing(id).await {
+                tracing::error!(
+                    download_id = id,
+                    error = %e,
+                    "Reprocessing failed"
+                );
+            }
+        });
+
+        Ok(())
+    }
+
     /// Pause all active downloads
     ///
     /// This method pauses all downloads that are currently queued, downloading, or processing.

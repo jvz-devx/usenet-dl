@@ -1983,4 +1983,128 @@ mod tests {
         println!("   - Returns 400 for invalid priority value");
         println!("   - Returns 404 for non-existent downloads");
     }
+
+    #[tokio::test]
+    async fn test_reprocess_download_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing POST /downloads/:id/reprocess endpoint...");
+
+        // Setup
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config);
+
+        // Create temp directory for test
+        std::fs::create_dir_all(&downloader.config.temp_dir).unwrap();
+
+        // Add a test download
+        let nzb_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file subject="test">
+    <groups><group>alt.binaries.test</group></groups>
+    <segments>
+      <segment bytes="1000" number="1">message-id-1@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+        let download_id = downloader.add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            crate::types::DownloadOptions::default()
+        ).await.unwrap();
+
+        // Create download directory with a test file
+        let download_path = downloader.config.temp_dir.join(format!("download_{}", download_id));
+        std::fs::create_dir_all(&download_path).unwrap();
+        std::fs::write(download_path.join("test.txt"), "test content").unwrap();
+
+        // Mark download as complete (so we can reprocess it)
+        downloader.db.update_status(download_id, crate::types::Status::Complete.to_i32()).await.unwrap();
+
+        println!("  📝 Created test download with ID: {}", download_id);
+
+        // Test 1: Reprocess existing download
+        println!("  🔍 Test 1: Reprocess existing download with files");
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/reprocess", download_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "reprocess should return 204 NO_CONTENT"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT for successful reprocess");
+
+        // Test 2: Reprocess download with missing files
+        println!("  🔍 Test 2: Reprocess download with missing files");
+
+        // Remove the download directory
+        std::fs::remove_dir_all(&download_path).unwrap();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/downloads/{}/reprocess", download_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "reprocess should return 404 NOT_FOUND when files are missing"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            response_json["error"]["code"],
+            "files_not_found",
+            "Error code should be 'files_not_found'"
+        );
+
+        println!("    ✓ Returns 404 NOT_FOUND when files are missing");
+        println!("    ✓ Returns correct error code 'files_not_found'");
+
+        // Test 3: Reprocess non-existent download
+        println!("  🔍 Test 3: Reprocess non-existent download");
+        let request = Request::builder()
+            .method("POST")
+            .uri("/downloads/999999/reprocess")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "reprocess should return 404 NOT_FOUND for non-existent download"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            response_json["error"]["code"],
+            "not_found",
+            "Error code should be 'not_found'"
+        );
+
+        println!("    ✓ Returns 404 NOT_FOUND for non-existent download");
+        println!("    ✓ Returns correct error code 'not_found'");
+
+        println!("✅ reprocess_download endpoint test passed!");
+        println!("   - Returns 204 NO_CONTENT for successful reprocess");
+        println!("   - Returns 404 with 'files_not_found' when download files are missing");
+        println!("   - Returns 404 with 'not_found' for non-existent downloads");
+    }
 }

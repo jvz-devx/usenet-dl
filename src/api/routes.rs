@@ -640,10 +640,47 @@ pub async fn set_download_priority(
     )
 )]
 pub async fn reprocess_download(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // Call reprocess on the downloader
+    match state.downloader.reprocess(id).await {
+        Ok(()) => {
+            // Success - reprocessing started
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(crate::Error::NotFound(msg)) => {
+            // Download or files not found
+            let error_code = if msg.contains("Download files not found") {
+                "files_not_found"
+            } else {
+                "not_found"
+            };
+
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": {
+                        "code": error_code,
+                        "message": msg
+                    }
+                }))
+            ).into_response()
+        }
+        Err(e) => {
+            // Other errors
+            tracing::error!(download_id = id, error = %e, "Failed to reprocess download");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "internal_error",
+                        "message": format!("Failed to reprocess download: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// POST /downloads/:id/reextract - Re-run extraction only
