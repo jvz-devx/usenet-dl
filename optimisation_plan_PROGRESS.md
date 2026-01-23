@@ -121,7 +121,7 @@ I've completed a thorough exploration of the codebase to understand what exists 
   - Add: `futures = "0.3"` to `[dependencies]` section
   - File: `/home/jens/Documents/source/usenet-dl/Cargo.toml`
 
-- [ ] Task 1.2: Add necessary imports to `src/lib.rs`
+- [x] Task 1.2: Add necessary imports to `src/lib.rs`
   - Add at top of file: `use futures::stream::{self, StreamExt};`
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs`
 
@@ -367,10 +367,10 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
-- Task 1.1: Added `futures = "0.3"` dependency to Cargo.toml
-  - Added to the "Async runtime" section after tokio-util
-  - Validated with `cargo check` - no errors
-  - Required for `futures::stream::StreamExt` and `buffer_unordered()`
+- Task 1.2: Added futures stream imports to src/lib.rs
+  - Added `use futures::stream::{self, StreamExt};` at line 97
+  - Validated with `cargo check` - compiles successfully
+  - Required for parallel download implementation using `stream::iter().buffer_unordered()`
 
 ## Notes
 

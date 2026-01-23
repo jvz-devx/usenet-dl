@@ -94,6 +94,7 @@ pub use types::{
     DownloadId, DownloadInfo, DownloadOptions, DuplicateInfo, Event, HistoryEntry, Priority,
     QueueStats, ServerCapabilities, ServerTestResult, Stage, Status,
 };
+use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use utils::extract_filename_from_response;
