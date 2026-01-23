@@ -2301,6 +2301,66 @@ impl UsenetDownloader {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// Start the folder watcher background task
+    ///
+    /// This method spawns a background task that monitors configured watch folders
+    /// for new NZB files and automatically adds them to the download queue.
+    ///
+    /// # Returns
+    /// Returns a `JoinHandle` that can be used to await the folder watcher task.
+    /// The task will run indefinitely until the channel is closed.
+    ///
+    /// # Errors
+    /// Returns error if the folder watcher cannot be initialized (e.g., invalid watch folder path).
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<()> {
+    /// # let config = Config::default();
+    /// let downloader = Arc::new(UsenetDownloader::new(config).await?);
+    ///
+    /// // Start the folder watcher
+    /// let watcher_handle = downloader.start_folder_watcher()?;
+    ///
+    /// // Watcher will now automatically add NZB files found in configured folders
+    /// // Optionally await the handle if you want to wait for completion
+    /// // watcher_handle.await.ok();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn start_folder_watcher(&self) -> Result<tokio::task::JoinHandle<()>> {
+        // Get watch folder configurations from config
+        let watch_folders = self.config.watch_folders.clone();
+
+        // If no watch folders configured, return early
+        if watch_folders.is_empty() {
+            tracing::info!("No watch folders configured, skipping folder watcher");
+            // Return a completed task handle
+            return Ok(tokio::spawn(async {}));
+        }
+
+        // Create folder watcher instance
+        let mut watcher = folder_watcher::FolderWatcher::new(
+            std::sync::Arc::new(self.clone()),
+            watch_folders,
+        )?;
+
+        // Start watching all configured folders
+        watcher.start()?;
+
+        // Spawn the watcher task
+        let handle = tokio::spawn(async move {
+            watcher.run().await;
+        });
+
+        tracing::info!("Folder watcher background task started");
+
+        Ok(handle)
+    }
+
     pub fn spawn_download_task(
         &self,
         download_id: DownloadId,
@@ -5285,5 +5345,94 @@ mod tests {
                 "Download should be Queued after resume"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_start_folder_watcher_no_watch_folders() {
+        // Create downloader with no watch folders configured
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Should succeed but return a completed task
+        let handle = downloader.start_folder_watcher();
+        assert!(handle.is_ok(), "start_folder_watcher should succeed with no watch folders");
+
+        // The task should complete immediately
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            handle.unwrap()
+        ).await;
+        assert!(result.is_ok(), "Task should complete immediately with no watch folders");
+    }
+
+    #[tokio::test]
+    async fn test_start_folder_watcher_with_configured_folders() {
+        let temp_dir = tempdir().unwrap();
+        let watch_path = temp_dir.path().join("watch");
+
+        // Create config with watch folder
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            watch_folders: vec![
+                config::WatchFolderConfig {
+                    path: watch_path.clone(),
+                    after_import: config::WatchFolderAction::Delete,
+                    category: Some("test".to_string()),
+                    scan_interval: Duration::from_secs(5),
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start folder watcher
+        let handle = downloader.start_folder_watcher();
+        assert!(handle.is_ok(), "start_folder_watcher should succeed: {:?}", handle.err());
+
+        // Verify watch directory was created
+        assert!(watch_path.exists(), "Watch folder should be created by start()");
+
+        // Let the watcher task run for a moment
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Abort the task (it runs indefinitely)
+        handle.unwrap().abort();
+    }
+
+    #[tokio::test]
+    async fn test_start_folder_watcher_creates_missing_directory() {
+        let temp_dir = tempdir().unwrap();
+        let watch_path = temp_dir.path().join("nonexistent").join("watch");
+
+        // Verify directory doesn't exist yet
+        assert!(!watch_path.exists(), "Watch path should not exist yet");
+
+        // Create config with non-existent watch folder
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            watch_folders: vec![
+                config::WatchFolderConfig {
+                    path: watch_path.clone(),
+                    after_import: config::WatchFolderAction::MoveToProcessed,
+                    category: None,
+                    scan_interval: Duration::from_secs(5),
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start folder watcher - should create the directory
+        let handle = downloader.start_folder_watcher();
+        assert!(handle.is_ok(), "start_folder_watcher should create missing directories: {:?}", handle.err());
+
+        // Verify directory was created
+        assert!(watch_path.exists(), "Watch folder should be auto-created");
+
+        // Abort the task
+        handle.unwrap().abort();
     }
 }

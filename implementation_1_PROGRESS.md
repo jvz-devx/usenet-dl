@@ -59,15 +59,53 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (4/90 tasks) - Automation features
-  - Tasks 24.1-24.4: ✅ FolderWatcher struct complete with notify integration (4 tests passing)
-- Total: 167/253 tasks complete (66.0%)
+- Phase 4: 🔄 In Progress (5/90 tasks) - Automation features
+  - Tasks 24.1-24.5: ✅ FolderWatcher with start_folder_watcher() background task (7 tests passing)
+- Total: 168/253 tasks complete (66.4%)
 
-**Next Task:** Task 24.5 - Implement watch_folder() task that monitors directory
+**Next Task:** Task 24.6 - Process .nzb files found in folder (call add_nzb)
 
 ## Completed This Iteration
 
-**Task 24.4: Create FolderWatcher struct with notify::Watcher**
+**Task 24.5: Implement watch_folder() task that monitors directory**
+
+Implemented the `start_folder_watcher()` method in UsenetDownloader to spawn the folder watcher as a background task:
+
+1. **Method Implementation** (src/lib.rs:2290-2354):
+   - Added `start_folder_watcher()` public method to UsenetDownloader
+   - Returns `Result<tokio::task::JoinHandle<()>>` for task management
+   - Handles case where no watch folders are configured (returns completed task)
+   - Creates FolderWatcher instance from config.watch_folders
+   - Calls `start()` to register all folders and create missing directories
+   - Spawns background task with `tokio::spawn(async move { watcher.run().await })`
+   - Returns JoinHandle for optional awaiting
+
+2. **Documentation:**
+   - Comprehensive rustdoc with method description
+   - Documents return type and error cases
+   - Includes usage example showing Arc<UsenetDownloader> pattern
+   - Notes that task runs indefinitely until channel closes
+
+3. **Error Handling:**
+   - Returns early with completed task if no watch folders configured
+   - Propagates errors from FolderWatcher::new() (invalid paths, etc.)
+   - Propagates errors from watcher.start() (permission issues, etc.)
+   - Logs informational message when starting watcher
+
+4. **Testing** (3 comprehensive tests):
+   - `test_start_folder_watcher_no_watch_folders()` - Verifies graceful handling when no folders configured
+   - `test_start_folder_watcher_with_configured_folders()` - Tests basic watcher startup and directory creation
+   - `test_start_folder_watcher_creates_missing_directory()` - Tests automatic directory creation for nested paths
+   - All tests use tempdir for isolation
+   - All tests properly abort background tasks to avoid hanging
+
+5. **Integration:**
+   - Method follows same pattern as `start_queue_processor()`
+   - Clones self into Arc for background task
+   - Returns JoinHandle consistent with other background tasks
+   - Can be called multiple times (creates separate watchers)
+
+**Previous Task: Task 24.4: Create FolderWatcher struct with notify::Watcher**
 
 Implemented the complete folder watching infrastructure for automatic NZB import:
 
@@ -510,7 +548,7 @@ The implementation will require these major dependencies:
 - [x] Task 24.2: Create WatchFolderConfig with path, after_import, category, scan_interval
 - [x] Task 24.3: Implement WatchFolderAction enum (Delete, MoveToProcessed, Keep)
 - [x] Task 24.4: Create FolderWatcher struct with notify::Watcher
-- [ ] Task 24.5: Implement watch_folder() task that monitors directory
+- [x] Task 24.5: Implement watch_folder() task that monitors directory
 - [ ] Task 24.6: Process .nzb files found in folder (call add_nzb)
 - [ ] Task 24.7: Handle after_import action (delete, move, or track in processed_nzbs table)
 - [ ] Task 24.8: Test folder watching with file creation
