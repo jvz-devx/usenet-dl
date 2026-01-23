@@ -66,16 +66,135 @@ IN_PROGRESS
   - Tasks 27.1-27.9: ✅ Scheduler with comprehensive time-based tests complete (50 scheduler tests passing + 1 scheduler API test)
   - Tasks 28.1-28.8: ✅ Duplicate detection fully complete with API integration tests (12 duplicate detection tests passing + 1 API test)
   - Tasks 29.1-29.7: ✅ Webhook notifications complete with httpbin.org integration tests (3 webhook tests passing)
-- Phase 5: 🔄 In Progress (32/38 tasks) - Notifications & Polish
+- Phase 5: 🔄 In Progress (33/38 tasks) - Notifications & Polish
   - Tasks 30.1-30.9: ✅ Script execution with environment variables complete (2 script tests passing)
   - Tasks 31.1-31.5: ✅ Complete disk space checking with comprehensive tests (7 disk space tests passing)
   - Tasks 32.1-32.6: ✅ Complete server health check with 5 integration tests and manual testing guide (61 API tests, 5 health check tests)
   - Tasks 33.1-33.5: ✅ Re-processing API complete with reprocess() and reextract() methods (2 API tests passing)
   - Tasks 34.1-34.6: ✅ Comprehensive error types with HTTP status mapping and 11 error response tests passing
-  - Tasks 35.1-35.3: ✅ Comprehensive README.md with 800+ lines of documentation
-- Total: 249/253 tasks complete (98.4%)
+  - Tasks 35.1-35.4: ✅ Comprehensive documentation complete (README, examples, API usage, configuration)
+- Total: 250/253 tasks complete (98.8%)
 
-**Next Task:** Task 35.4 - Document configuration file format (TOML or JSON)
+**Next Task:** Task 35.5 - Create CHANGELOG.md
+
+## Completed This Iteration
+
+**Task 35.4: Document configuration file format (TOML or JSON)**
+
+Successfully created comprehensive configuration documentation (CONFIGURATION.md) with 1187 lines covering all configuration options in both TOML and JSON formats.
+
+**Implementation Details:**
+
+1. **Complete Configuration Reference** (1187 lines total):
+   - Quick Start section with minimal TOML and JSON examples
+   - Top-level settings table with 27 configuration fields
+   - Detailed documentation for 15 nested configuration types
+   - Complete example configurations in both formats
+   - Configuration notes and best practices
+
+2. **ServerConfig Documentation**:
+   - All 7 fields documented (host, port, tls, username, password, connections, priority)
+   - Examples showing primary + backup server configuration
+   - TLS and plain connection examples
+
+3. **RetryConfig Documentation**:
+   - Exponential backoff configuration
+   - All 5 fields with defaults (max_attempts, initial_delay, max_delay, backoff_multiplier, jitter)
+   - Example showing 1s, 2s, 4s, 8s retry progression
+
+4. **PostProcess and FailedDownloadAction Enums**:
+   - 5 post-processing modes (none, verify, repair, unpack, unpack_and_cleanup)
+   - 3 failed download actions (keep, delete, move_to_failed)
+   - Clear descriptions of each option
+
+5. **Archive and File Handling**:
+   - ExtractionConfig with nested archive depth control
+   - FileCollisionAction enum (rename, overwrite, skip)
+   - DeobfuscationConfig for obfuscated filename handling
+   - DuplicateConfig with 3 detection methods and 3 action modes
+
+6. **DiskSpaceConfig and CleanupConfig**:
+   - Pre-download disk space validation settings
+   - Size multiplier for extraction overhead (2.5x default)
+   - Cleanup target/archive extensions
+   - Sample folder detection and deletion
+
+7. **ApiConfig with Rate Limiting**:
+   - REST API server configuration (bind_address, api_key, CORS)
+   - Swagger UI enable/disable
+   - RateLimitConfig with exempt paths and IPs
+   - Security notes for production deployment
+
+8. **ScheduleRule Documentation**:
+   - Time-based speed limits and pause rules
+   - Weekday filtering examples
+   - 3 action types: speed_limit, unlimited, pause
+   - HH:MM time format (24-hour)
+
+9. **WatchFolderConfig**:
+   - Auto-import NZB files from monitored directories
+   - 3 after_import actions (delete, move_to_processed, keep)
+   - Category assignment and scan interval
+
+10. **RssFeedConfig with Filters**:
+    - RSS/Atom feed monitoring
+    - RssFilter with include/exclude regex patterns
+    - Size and age filtering
+    - Auto-download vs notify-only mode
+
+11. **WebhookConfig**:
+    - HTTP POST webhooks for external notifications
+    - 3 event types (on_complete, on_failed, on_queued)
+    - Authentication header support
+    - Timeout configuration
+
+12. **ScriptConfig**:
+    - External script execution on events
+    - 3 event types (on_complete, on_failed, on_post_process_complete)
+    - Environment variables table (9 variables documented)
+    - Timeout configuration
+
+13. **CategoryConfig**:
+    - Category-specific destination directories
+    - Post-processing mode overrides
+    - Category-specific watch folders
+    - Category-specific scripts (run before global scripts)
+
+14. **Complete Example Configurations**:
+    - Full TOML example with all features (200+ lines)
+    - Full JSON example with all features (150+ lines)
+    - Both include: multiple servers, retry config, extraction, disk space, API, schedules, watch folders, RSS, webhooks, scripts, categories
+
+15. **Configuration Notes Section**:
+    - Data type conversions (durations in seconds, sizes in bytes)
+    - Enum serialization rules (snake_case)
+    - Security considerations (API keys, bind addresses, passwords, webhooks)
+    - Path handling (relative vs absolute, Windows paths)
+    - Minimal vs complete configuration guidance
+
+**Design Alignment:**
+- Covers all configuration types from implementation_1.md (lines 1386-1528)
+- Matches config.rs structure exactly (all 27 top-level fields + 15 nested types)
+- Provides both TOML and JSON syntax for all examples
+- Includes defaults table matching implementation (lines 1469-1528 of design)
+- Documents all enums with their serialized string values
+- Complete with security and best practices notes
+
+**Benefits:**
+- Users can configure usenet-dl in their preferred format (TOML or JSON)
+- Quick Start shows minimal working config (just NNTP server)
+- Complete reference documents every field with type and default
+- Real-world examples show common use cases (schedules, RSS, categories)
+- Side-by-side TOML/JSON examples for easy comparison
+- Security section highlights important considerations
+- Minimal vs complete guidance helps users avoid over-configuration
+
+**File Created:**
+- CONFIGURATION.md: 1187 lines of comprehensive configuration documentation
+
+---
+
+**Previous Iteration:**
 
 ## Completed This Iteration
 
@@ -3240,7 +3359,7 @@ The implementation will require these major dependencies:
 - [x] Task 35.1: Write comprehensive README.md (features, installation, usage, configuration)
 - [x] Task 35.2: Create examples/ directory with sample code
 - [x] Task 35.3: Write API usage documentation with curl examples
-- [ ] Task 35.4: Document configuration file format (TOML or JSON)
+- [x] Task 35.4: Document configuration file format (TOML or JSON)
 - [ ] Task 35.5: Create CHANGELOG.md
 - [ ] Task 35.6: Write CONTRIBUTING.md with development guidelines
 - [ ] Task 35.7: Add inline code documentation (rustdoc comments)
