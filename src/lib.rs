@@ -68,6 +68,7 @@ pub use error::{Error, Result};
 pub use types::{
     DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, Stage, Status,
 };
+use utils::extract_filename_from_response;
 
 /// Main entry point for the usenet-dl library
 /// Main downloader instance (cloneable - all fields are Arc-wrapped)
@@ -1334,6 +1335,76 @@ impl UsenetDownloader {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
+
+        // Delegate to add_nzb_content
+        self.add_nzb_content(&content, &name, options).await
+    }
+
+    /// Add NZB from URL
+    ///
+    /// This method fetches an NZB file from a given HTTP(S) URL and adds it to the queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - HTTP(S) URL to fetch the NZB file from
+    /// * `options` - Download options (category, priority, password, etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns the download ID on success, or an error if:
+    /// - The URL is invalid
+    /// - The HTTP request fails (network error, 404, etc.)
+    /// - The response body cannot be read
+    /// - The NZB content is invalid
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::*;
+    /// # async fn example(downloader: UsenetDownloader) -> Result<()> {
+    /// let id = downloader.add_nzb_url(
+    ///     "https://example.com/file.nzb",
+    ///     DownloadOptions {
+    ///         category: Some("movies".to_string()),
+    ///         priority: Priority::High,
+    ///         ..Default::default()
+    ///     }
+    /// ).await?;
+    /// println!("Added download with ID: {}", id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_nzb_url(
+        &self,
+        url: &str,
+        options: DownloadOptions,
+    ) -> Result<DownloadId> {
+        // Fetch NZB from URL
+        let response = reqwest::get(url)
+            .await
+            .map_err(|e| Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to fetch NZB from URL '{}': {}", url, e)
+            )))?;
+
+        // Check HTTP status
+        if !response.status().is_success() {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("HTTP error fetching NZB: {} {}", response.status(), url)
+            )));
+        }
+
+        // Extract filename from Content-Disposition header or URL
+        let name = extract_filename_from_response(&response, url);
+
+        // Read response body
+        let content = response.bytes()
+            .await
+            .map_err(|e| Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read response body from '{}': {}", url, e)
+            )))?;
 
         // Delegate to add_nzb_content
         self.add_nzb_content(&content, &name, options).await

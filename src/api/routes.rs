@@ -292,8 +292,74 @@ pub async fn add_download(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn add_download_url(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+pub async fn add_download_url(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Response {
+    // Extract URL from payload
+    let url = match payload.get("url").and_then(|v| v.as_str()) {
+        Some(url) => url,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "missing_url",
+                        "message": "Missing required field: url"
+                    }
+                }))
+            ).into_response();
+        }
+    };
+
+    // Extract optional download options
+    let options = if let Some(options_value) = payload.get("options") {
+        match serde_json::from_value(options_value.clone()) {
+            Ok(opts) => opts,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": {
+                            "code": "invalid_options",
+                            "message": format!("Invalid download options: {}", e)
+                        }
+                    }))
+                ).into_response();
+            }
+        }
+    } else {
+        crate::types::DownloadOptions::default()
+    };
+
+    // Call add_nzb_url to fetch and add the NZB
+    match state.downloader.add_nzb_url(url, options).await {
+        Ok(id) => {
+            (
+                StatusCode::CREATED,
+                Json(json!({"id": id}))
+            ).into_response()
+        }
+        Err(e) => {
+            // Check error type to determine status code
+            let status = match e {
+                crate::error::Error::Io(_) => StatusCode::BAD_REQUEST,
+                crate::error::Error::Network(_) => StatusCode::BAD_REQUEST,
+                crate::error::Error::InvalidNzb(_) => StatusCode::UNPROCESSABLE_ENTITY,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+
+            (
+                status,
+                Json(json!({
+                    "error": {
+                        "code": "add_failed",
+                        "message": format!("Failed to add NZB from URL: {}", e)
+                    }
+                }))
+            ).into_response()
+        }
+    }
 }
 
 /// POST /downloads/:id/pause - Pause download

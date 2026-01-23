@@ -3150,6 +3150,8 @@ dependencies = [
  "tower_governor",
  "tracing",
  "unrar",
+ "url",
+ "urlencoding",
  "utoipa",
  "utoipa-swagger-ui",
  "wiremock",

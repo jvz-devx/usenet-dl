@@ -146,6 +146,88 @@ pub fn is_sample(path: &Path) -> bool {
     false
 }
 
+/// Extract filename from HTTP response
+///
+/// Tries to extract the filename from Content-Disposition header,
+/// falls back to the URL path if not found.
+///
+/// # Arguments
+///
+/// * `response` - The reqwest Response object
+/// * `url` - The original URL (used as fallback)
+///
+/// # Returns
+///
+/// Returns the extracted filename (without extension) or "download" as last resort
+///
+/// # Examples
+///
+/// ```ignore
+/// let response = reqwest::get("https://example.com/file.nzb").await?;
+/// let filename = extract_filename_from_response(&response, "https://example.com/file.nzb");
+/// // Returns "file"
+/// ```
+pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -> String {
+    // Try to extract from Content-Disposition header
+    if let Some(content_disposition) = response.headers().get("content-disposition") {
+        if let Ok(value) = content_disposition.to_str() {
+            // Parse filename from Content-Disposition header
+            // Format: attachment; filename="file.nzb" or filename*=UTF-8''file.nzb
+            for part in value.split(';') {
+                let part = part.trim();
+                if part.starts_with("filename=") {
+                    let filename = part.trim_start_matches("filename=")
+                        .trim_matches('"')
+                        .to_string();
+                    // Remove extension
+                    if let Some(stem) = std::path::Path::new(&filename).file_stem() {
+                        if let Some(stem_str) = stem.to_str() {
+                            return stem_str.to_string();
+                        }
+                    }
+                    return filename;
+                } else if part.starts_with("filename*=") {
+                    // Handle RFC 5987 encoded filename
+                    let filename = part.trim_start_matches("filename*=");
+                    // Format is: charset'lang'encoded-filename
+                    if let Some(idx) = filename.rfind('\'') {
+                        let encoded = &filename[idx + 1..];
+                        // URL decode the filename
+                        if let Ok(decoded) = urlencoding::decode(encoded) {
+                            if let Some(stem) = std::path::Path::new(decoded.as_ref()).file_stem() {
+                                if let Some(stem_str) = stem.to_str() {
+                                    return stem_str.to_string();
+                                }
+                            }
+                            return decoded.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to extracting from URL path
+    if let Ok(parsed_url) = url::Url::parse(url) {
+        if let Some(segments) = parsed_url.path_segments() {
+            if let Some(last_segment) = segments.last() {
+                if !last_segment.is_empty() {
+                    // Remove extension
+                    if let Some(stem) = std::path::Path::new(last_segment).file_stem() {
+                        if let Some(stem_str) = stem.to_str() {
+                            return stem_str.to_string();
+                        }
+                    }
+                    return last_segment.to_string();
+                }
+            }
+        }
+    }
+
+    // Last resort fallback
+    "download".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1274,4 +1274,95 @@ mod tests {
         println!("✅ add_download endpoint test (missing file) passed!");
         println!("   - Correctly returns 400 for missing file field");
     }
+
+    #[tokio::test]
+    async fn test_add_download_url_endpoint() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::{Request, StatusCode, header};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing POST /downloads/url endpoint...");
+
+        // NOTE: This test requires a mock HTTP server or will skip if unable to create one
+        // For now, we'll test the error cases which don't require actual network calls
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Create router
+        let config = Arc::clone(&downloader.config);
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Missing URL field
+        println!("  📝 Test 1: Missing URL field");
+        let request1 = Request::builder()
+            .method("POST")
+            .uri("/downloads/url")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"options": {}}"#))
+            .unwrap();
+
+        let response1 = app.clone().oneshot(request1).await.unwrap();
+        assert_eq!(
+            response1.status(),
+            StatusCode::BAD_REQUEST,
+            "Should return 400 when URL is missing"
+        );
+
+        let body1 = to_bytes(response1.into_body(), usize::MAX).await.unwrap();
+        let json1: serde_json::Value = serde_json::from_slice(&body1).unwrap();
+        assert_eq!(json1["error"]["code"], "missing_url");
+
+        println!("    ✓ Returns 400 BAD_REQUEST when URL is missing");
+
+        // Test 2: Invalid options JSON
+        println!("  📝 Test 2: Invalid download options");
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/downloads/url")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"url": "https://example.com/test.nzb", "options": "invalid"}"#))
+            .unwrap();
+
+        let response2 = app.clone().oneshot(request2).await.unwrap();
+        assert_eq!(
+            response2.status(),
+            StatusCode::BAD_REQUEST,
+            "Should return 400 when options are invalid"
+        );
+
+        let body2 = to_bytes(response2.into_body(), usize::MAX).await.unwrap();
+        let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+        assert_eq!(json2["error"]["code"], "invalid_options");
+
+        println!("    ✓ Returns 400 BAD_REQUEST when options are invalid");
+
+        // Test 3: Invalid/unreachable URL (will fail in add_nzb_url)
+        println!("  📝 Test 3: Invalid URL");
+        let request3 = Request::builder()
+            .method("POST")
+            .uri("/downloads/url")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"url": "http://invalid-nonexistent-domain-12345.com/test.nzb"}"#))
+            .unwrap();
+
+        let response3 = app.clone().oneshot(request3).await.unwrap();
+        // Should return 400 for network/IO error
+        assert_eq!(
+            response3.status(),
+            StatusCode::BAD_REQUEST,
+            "Should return 400 when URL is unreachable"
+        );
+
+        let body3 = to_bytes(response3.into_body(), usize::MAX).await.unwrap();
+        let json3: serde_json::Value = serde_json::from_slice(&body3).unwrap();
+        assert_eq!(json3["error"]["code"], "add_failed");
+
+        println!("    ✓ Returns 400 BAD_REQUEST when URL is invalid/unreachable");
+
+        println!("✅ add_download_url endpoint test passed!");
+        println!("   - Correctly handles missing URL field");
+        println!("   - Correctly handles invalid options");
+        println!("   - Correctly handles network errors");
+    }
 }
