@@ -59,6 +59,7 @@ pub mod folder_watcher;
 pub mod post_processing;
 pub mod retry;
 pub mod rss_manager;
+pub mod rss_scheduler;
 pub mod speed_limiter;
 pub mod types;
 pub mod utils;
@@ -83,7 +84,8 @@ pub struct UsenetDownloader {
     /// Event broadcast channel sender (multiple subscribers supported)
     event_tx: tokio::sync::broadcast::Sender<crate::types::Event>,
     /// Configuration (wrapped in Arc for sharing across tasks)
-    config: std::sync::Arc<Config>,
+    /// Made public for access by background tasks like RSS scheduler
+    pub(crate) config: std::sync::Arc<Config>,
     /// NNTP connection pools (one per server, wrapped in Arc for sharing across tasks)
     nntp_pools: std::sync::Arc<Vec<nntp_rs::NntpPool>>,
     /// Priority queue for managing download order (protected by Mutex)
@@ -95,7 +97,8 @@ pub struct UsenetDownloader {
     /// Global speed limiter shared across all downloads (token bucket algorithm)
     speed_limiter: speed_limiter::SpeedLimiter,
     /// Flag to indicate whether new downloads are accepted (set to false during shutdown)
-    accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Made public for access by background tasks like RSS scheduler
+    pub(crate) accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Post-processing pipeline executor
     post_processor: std::sync::Arc<post_processing::PostProcessor>,
     /// Runtime-mutable categories (separate from config for dynamic updates)
@@ -2376,6 +2379,76 @@ impl UsenetDownloader {
         tracing::info!("Folder watcher background task started");
 
         Ok(handle)
+    }
+
+    /// Start RSS feed scheduler for automatic feed checking
+    ///
+    /// This spawns a background task that periodically checks all configured RSS feeds
+    /// based on their individual check_interval settings. The scheduler will:
+    /// - Check each enabled feed at its configured interval
+    /// - Parse RSS/Atom feed content
+    /// - Apply filters to items
+    /// - Mark items as seen to prevent duplicates
+    /// - Auto-download matching items if auto_download is enabled
+    ///
+    /// # Returns
+    /// A `JoinHandle` for the spawned background task. The task runs indefinitely
+    /// until the downloader is shut down (accepting_new flag set to false).
+    ///
+    /// If no RSS feeds are configured, returns a completed task immediately.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # use usenet_dl::config::RssFeedConfig;
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// let downloader = UsenetDownloader::new(config).await?;
+    ///
+    /// // Start RSS scheduler
+    /// let scheduler_handle = downloader.start_rss_scheduler();
+    ///
+    /// // Scheduler will now automatically check feeds at their configured intervals
+    /// // Optionally await the handle if you want to wait for completion
+    /// // scheduler_handle.await.ok();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn start_rss_scheduler(&self) -> tokio::task::JoinHandle<()> {
+        // Get RSS feed configurations from config
+        let rss_feeds = self.config.rss_feeds.clone();
+
+        // If no RSS feeds configured, return early
+        if rss_feeds.is_empty() {
+            tracing::info!("No RSS feeds configured, skipping RSS scheduler");
+            // Return a completed task handle
+            return tokio::spawn(async {});
+        }
+
+        // Create RSS manager instance
+        let rss_manager = std::sync::Arc::new(
+            rss_manager::RssManager::new(
+                self.db.clone(),
+                std::sync::Arc::new(self.clone()),
+                rss_feeds.clone(),
+            ).expect("Failed to create RSS manager")
+        );
+
+        // Create scheduler instance
+        let scheduler = rss_scheduler::RssScheduler::new(
+            std::sync::Arc::new(self.clone()),
+            rss_manager,
+        );
+
+        // Spawn the scheduler task
+        let handle = tokio::spawn(async move {
+            scheduler.run().await;
+        });
+
+        tracing::info!("RSS scheduler background task started");
+
+        handle
     }
 
     pub fn spawn_download_task(
@@ -5691,5 +5764,188 @@ mod tests {
 
         // Abort the task
         handle.unwrap().abort();
+    }
+
+    // ============================================================================
+    // RSS Scheduler Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_start_rss_scheduler_no_feeds() {
+        // Create downloader with no RSS feeds configured
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Should succeed but return a completed task
+        let handle = downloader.start_rss_scheduler();
+
+        // The task should complete immediately with no feeds
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            handle
+        ).await;
+        assert!(result.is_ok(), "Task should complete immediately with no RSS feeds");
+    }
+
+    #[tokio::test]
+    async fn test_start_rss_scheduler_with_feeds() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with RSS feeds
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            rss_feeds: vec![
+                config::RssFeedConfig {
+                    url: "https://example.com/feed.xml".to_string(),
+                    check_interval: Duration::from_secs(60), // 1 minute
+                    category: Some("test".to_string()),
+                    filters: vec![],
+                    auto_download: true,
+                    priority: Priority::Normal,
+                    enabled: true,
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start RSS scheduler
+        let handle = downloader.start_rss_scheduler();
+
+        // Let the scheduler task start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Verify the task is still running (it shouldn't complete immediately)
+        assert!(!handle.is_finished(), "Scheduler should be running with configured feeds");
+
+        // Abort the task
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_start_rss_scheduler_respects_shutdown() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with RSS feeds
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            rss_feeds: vec![
+                config::RssFeedConfig {
+                    url: "https://example.com/feed.xml".to_string(),
+                    check_interval: Duration::from_secs(60),
+                    category: None,
+                    filters: vec![],
+                    auto_download: false,
+                    priority: Priority::Normal,
+                    enabled: true,
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start RSS scheduler
+        let handle = downloader.start_rss_scheduler();
+
+        // Let it run briefly
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Trigger shutdown
+        downloader.accepting_new.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Wait for scheduler to detect shutdown
+        // Note: Scheduler checks every second, so 5 seconds should be plenty
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            handle
+        ).await;
+
+        assert!(result.is_ok(), "Scheduler should shut down gracefully when accepting_new is set to false");
+    }
+
+    #[tokio::test]
+    async fn test_start_rss_scheduler_with_multiple_feeds() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with multiple RSS feeds
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            rss_feeds: vec![
+                config::RssFeedConfig {
+                    url: "https://example.com/feed1.xml".to_string(),
+                    check_interval: Duration::from_secs(30),
+                    category: Some("movies".to_string()),
+                    filters: vec![],
+                    auto_download: true,
+                    priority: Priority::High,
+                    enabled: true,
+                },
+                config::RssFeedConfig {
+                    url: "https://example.com/feed2.xml".to_string(),
+                    check_interval: Duration::from_secs(60),
+                    category: Some("tv".to_string()),
+                    filters: vec![],
+                    auto_download: false,
+                    priority: Priority::Normal,
+                    enabled: false, // Disabled feed should be skipped
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start RSS scheduler
+        let handle = downloader.start_rss_scheduler();
+
+        // Let it run briefly
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Verify the task is running
+        assert!(!handle.is_finished(), "Scheduler should handle multiple feeds");
+
+        // Abort the task
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_start_rss_scheduler_only_enabled_feeds() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create config with only disabled feeds
+        let config = Config {
+            database_path: temp_dir.path().join("test.db"),
+            servers: vec![],
+            rss_feeds: vec![
+                config::RssFeedConfig {
+                    url: "https://example.com/feed.xml".to_string(),
+                    check_interval: Duration::from_secs(60),
+                    category: None,
+                    filters: vec![],
+                    auto_download: false,
+                    priority: Priority::Normal,
+                    enabled: false, // Disabled
+                }
+            ],
+            ..Default::default()
+        };
+
+        let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        // Start RSS scheduler
+        let handle = downloader.start_rss_scheduler();
+
+        // Let it run briefly
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Scheduler should still be running (just idle, checking for enabled feeds)
+        assert!(!handle.is_finished(), "Scheduler should run even with disabled feeds");
+
+        // Abort the task
+        handle.abort();
     }
 }

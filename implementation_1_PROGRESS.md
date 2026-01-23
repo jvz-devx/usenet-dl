@@ -59,15 +59,118 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (24/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (25/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Tasks 26.1-26.9: ✅ RSS feed auto-download complete (20 tests passing)
-- Total: 187/253 tasks complete (73.9%)
+  - Tasks 26.1-26.10: ✅ RSS feed scheduled checking complete (25 tests passing)
+- Total: 188/253 tasks complete (74.3%)
 
-**Next Task:** Task 26.10 - Implement scheduled feed checking task
+**Next Task:** Task 26.11 - Add API endpoints for RSS management
 
 ## Completed This Iteration
+
+**Task 26.10: Implement scheduled feed checking task**
+
+Successfully implemented RSS feed scheduler for automatic periodic feed checking with comprehensive tests:
+
+1. **RssScheduler Struct** (src/rss_scheduler.rs):
+   - New module implementing periodic RSS feed checking
+   - Follows FolderWatcher pattern for consistency
+   - Manages independent check intervals for each feed
+   - Parameters: `downloader` (Arc), `rss_manager` (Arc)
+   - Uses downloader's `accepting_new` flag for shutdown detection
+
+2. **run() Method - Main Scheduler Loop** (src/rss_scheduler.rs:53-163):
+   - Tracks last check time per feed using HashMap<String, SystemTime>
+   - Checks shutdown signal via `accepting_new.load()`
+   - Gets current feeds from config (dynamic reload support)
+   - Skips disabled feeds automatically
+   - Per-feed interval checking: `elapsed >= feed.check_interval`
+   - Calls `rss_manager.check_feed(feed)` for fetching
+   - Calls `rss_manager.process_feed_items()` for processing
+   - Logs successes (with item counts) and errors
+   - Updates last check timestamp after each check
+   - Sleeps 1 second between cycles (responsive shutdown)
+
+3. **Integration into UsenetDownloader** (src/lib.rs:2388-2449):
+   - New `start_rss_scheduler()` method (mirrors `start_folder_watcher()`)
+   - Returns `tokio::task::JoinHandle<()>` for task tracking
+   - Early return with completed task if no feeds configured
+   - Creates RssManager with full feed configs
+   - Spawns scheduler task via `tokio::spawn()`
+   - Comprehensive documentation with usage example
+
+4. **Shutdown Mechanism**:
+   - Made `accepting_new` field `pub(crate)` for scheduler access
+   - Made `config` field `pub(crate)` for scheduler access
+   - Scheduler checks flag every 1 second (responsive)
+   - Clean shutdown when flag set to false
+
+5. **Responsive Design**:
+   - 1-second sleep interval between checks (reduced from 30s)
+   - Allows quick shutdown detection (within 1-2 seconds)
+   - Prevents tight loops while maintaining responsiveness
+   - Each feed checked independently based on its interval
+
+6. **Module Declaration**:
+   - Added `pub mod rss_scheduler` to lib.rs
+   - Follows existing module organization pattern
+
+7. **Comprehensive Test Suite** (5 new tests, src/lib.rs:5772-5941):
+   - `test_start_rss_scheduler_no_feeds()`: Tests early return with no feeds
+     - Verifies task completes immediately
+     - Timeout of 100ms confirms instant completion
+   - `test_start_rss_scheduler_with_feeds()`: Tests scheduler startup
+     - Configures single feed with 60s interval
+     - Verifies task stays running (doesn't complete)
+     - Aborts task after verification
+   - `test_start_rss_scheduler_respects_shutdown()`: Tests graceful shutdown
+     - Starts scheduler with configured feed
+     - Sets `accepting_new` to false
+     - Verifies shutdown within 5 seconds
+     - Tests shutdown signal propagation
+   - `test_start_rss_scheduler_with_multiple_feeds()`: Tests multiple feeds
+     - Configures 2 feeds with different intervals
+     - One enabled, one disabled
+     - Verifies scheduler handles both correctly
+   - `test_start_rss_scheduler_only_enabled_feeds()`: Tests disabled feed handling
+     - Configures only disabled feed
+     - Verifies scheduler still runs (idle, checking for enabled feeds)
+
+8. **Design Alignment**:
+   - Matches implementation_1.md architecture (lines 2010-2107)
+   - Follows existing task spawning patterns (FolderWatcher)
+   - Uses same Arc-wrapping for thread-safe sharing
+   - Implements recommended per-feed timer approach
+   - Tracks last check time in memory (can add DB persistence later)
+
+9. **Error Handling**:
+   - Feed fetch failures logged as errors, don't stop scheduler
+   - Processing failures logged as errors, continue with next feed
+   - Database errors propagated up from process_feed_items
+   - Network timeouts handled by reqwest (30s timeout)
+
+10. **Logging**:
+    - Info: Scheduler start/stop events
+    - Info: Successful feed fetches with item counts
+    - Info: Auto-downloaded items with counts
+    - Debug: Individual feed check attempts with intervals
+    - Debug: Skipped disabled feeds
+    - Error: Feed fetch failures with URLs
+    - Error: Processing failures with URLs
+    - Warn: System time anomalies (clock went backwards)
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 5 RSS scheduler tests pass
+- ✅ Tests verify no-feed early return
+- ✅ Tests verify scheduler stays running with feeds
+- ✅ Tests verify graceful shutdown within 5 seconds
+- ✅ Tests verify multiple feed handling
+- ✅ Tests verify disabled feed handling
+- ✅ Total RSS tests: 25 passing (20 existing + 5 new)
+
+**Previous Iteration:**
 
 **Task 26.9: Auto-download matching items if auto_download=true**
 
