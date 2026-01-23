@@ -3324,29 +3324,50 @@ impl UsenetDownloader {
                         // Stop progress reporting task
                         progress_task.abort();
 
-                        // Handle download result
+                        let total_articles = success_count + failed_count;
+
+                        // Handle download result - allow partial success
                         if failed_count > 0 {
-                            // If any articles failed, fail the entire download
-                            let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
-                            tracing::error!(download_id = id, failed = failed_count, succeeded = success_count, "Download failed");
-                            let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
-                            let _ = db_clone.set_error(id, &error_msg).await;
+                            // Log warning about failed articles
+                            tracing::warn!(
+                                download_id = id,
+                                failed = failed_count,
+                                succeeded = success_count,
+                                total = total_articles,
+                                "Download completed with some failures"
+                            );
 
-                            event_tx_clone
-                                .send(Event::DownloadFailed {
-                                    id,
-                                    error: error_msg,
-                                })
-                                .ok();
+                            // Only fail the download if ALL articles failed or >50% failed
+                            if success_count == 0 || (failed_count as f64 / total_articles as f64) > 0.5 {
+                                let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
+                                tracing::error!(
+                                    download_id = id,
+                                    failed = failed_count,
+                                    succeeded = success_count,
+                                    "Download failed - too many article failures"
+                                );
+                                let _ = db_clone.update_status(id, Status::Failed.to_i32()).await;
+                                let _ = db_clone.set_error(id, &error_msg).await;
 
-                            // Clean up active downloads
-                            let mut active = active_downloads_clone.lock().await;
-                            active.remove(&id);
-                            return;
+                                event_tx_clone
+                                    .send(Event::DownloadFailed {
+                                        id,
+                                        error: error_msg,
+                                    })
+                                    .ok();
+
+                                // Clean up active downloads
+                                let mut active = active_downloads_clone.lock().await;
+                                active.remove(&id);
+                                return;
+                            }
+
+                            // Partial success - continue to completion
+                            // Failed articles already marked as FAILED in database during download
                         }
 
-                        // Stop progress reporting task
-                        progress_task.abort();
+                        // Continue with assembly (either all success or partial success)
+                        // Note: progress_task already aborted above
 
                         // All articles downloaded successfully
                         if let Err(e) = db_clone.update_status(id, Status::Complete.to_i32()).await {
@@ -3760,8 +3781,19 @@ impl UsenetDownloader {
                             format!("<{}>", article.message_id)
                         };
 
-                        let response = conn.fetch_article(&message_id).await
-                            .map_err(|e| format!("Article fetch failed: {}", e))?;
+                        let response = match conn.fetch_article(&message_id).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                tracing::warn!(
+                                    download_id = download_id,
+                                    article_id = article.id,
+                                    error = %e,
+                                    "Article fetch failed"
+                                );
+                                let _ = db.update_article_status(article.id, crate::db::article_status::FAILED).await;
+                                return Err(format!("Article fetch failed: {}", e));
+                            }
+                        };
 
                         // Save article content to temp directory
                         // Each article gets its own file: article_<segment_number>.dat
@@ -3769,17 +3801,30 @@ impl UsenetDownloader {
 
                         // Join response lines into single string for storage
                         let article_content = response.lines.join("\n");
-                        tokio::fs::write(&article_file, article_content.as_bytes()).await.map_err(|e| {
-                            format!("Failed to write article file: {}", e)
-                        })?;
+                        if let Err(e) = tokio::fs::write(&article_file, article_content.as_bytes()).await {
+                            tracing::warn!(
+                                download_id = download_id,
+                                article_id = article.id,
+                                error = %e,
+                                "Failed to write article file"
+                            );
+                            let _ = db.update_article_status(article.id, crate::db::article_status::FAILED).await;
+                            return Err(format!("Failed to write article file: {}", e));
+                        }
 
                         // Mark article as downloaded
-                        db.update_article_status(
+                        if let Err(e) = db.update_article_status(
                             article.id,
                             crate::db::article_status::DOWNLOADED,
-                        )
-                        .await
-                        .map_err(|e| format!("Failed to update article status: {}", e))?;
+                        ).await {
+                            tracing::warn!(
+                                download_id = download_id,
+                                article_id = article.id,
+                                error = %e,
+                                "Failed to update article status"
+                            );
+                            return Err(format!("Failed to update article status: {}", e));
+                        }
 
                         // Update atomic counters for progress tracking
                         downloaded_articles.fetch_add(1, Ordering::Relaxed);
@@ -3810,22 +3855,44 @@ impl UsenetDownloader {
                 }
             }
 
-            // If any articles failed, mark download as failed
+            // Handle download result - allow partial success
             if failures > 0 {
-                let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
+                tracing::warn!(
+                    download_id = download_id,
+                    failed = failures,
+                    succeeded = successes,
+                    total = total_articles,
+                    "Download completed with some failures"
+                );
 
-                db.update_status(download_id, Status::Failed.to_i32()).await?;
-                db.set_error(download_id, &error_msg).await?;
+                // Only fail the download if ALL articles failed or >50% failed
+                if successes == 0 || (failures as f64 / total_articles as f64) > 0.5 {
+                    let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
+                    tracing::error!(
+                        download_id = download_id,
+                        failed = failures,
+                        succeeded = successes,
+                        "Download failed - too many article failures"
+                    );
 
-                event_tx
-                    .send(Event::DownloadFailed {
-                        id: download_id,
-                        error: error_msg.clone(),
-                    })
-                    .ok();
+                    db.update_status(download_id, Status::Failed.to_i32()).await?;
+                    db.set_error(download_id, &error_msg).await?;
 
-                return Err(Error::Nntp(format!("Download failed: {} of {} articles failed. First error: {}",
-                    failures, total_articles, error_msg)));
+                    event_tx
+                        .send(Event::DownloadFailed {
+                            id: download_id,
+                            error: error_msg.clone(),
+                        })
+                        .ok();
+
+                    return Err(Error::Nntp(format!(
+                        "Download failed: {} of {} articles failed. First error: {}",
+                        failures, total_articles, error_msg
+                    )));
+                }
+
+                // Partial success - continue with assembly
+                // Failed articles already marked as FAILED in database during download
             }
 
             // Emit final progress event

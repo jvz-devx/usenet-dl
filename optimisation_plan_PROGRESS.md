@@ -218,20 +218,20 @@ I've completed a thorough exploration of the codebase to understand what exists 
 
 ### Phase 5: Error Handling and Retry Strategy
 
-- [ ] Task 5.1: Define error handling strategy for parallel downloads
+- [x] Task 5.1: Define error handling strategy for parallel downloads
   - Decide: Fail entire download on first error, or collect all errors and retry?
   - Plan suggests: Don't abort on single failure, mark articles as failed
   - Implementation: Collect both successes and failures in result processing
   - File: Design decision, affects Tasks 3.5 and 4.4
 
-- [ ] Task 5.2: Implement failure collection in queue processor
+- [x] Task 5.2: Implement failure collection in queue processor
   - In result processing (Task 3.5), separate `Ok` and `Err` results
   - Mark failed articles in database: `db.update_article_status(article.id, FAILED)`
   - Log warnings for failures: `tracing::warn!("Article fetch failed: {}", e)`
   - Only fail download if ALL articles fail or critical threshold exceeded
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (result processing section)
 
-- [ ] Task 5.3: Implement failure collection in direct download
+- [x] Task 5.3: Implement failure collection in direct download
   - Same as Task 5.2 but for direct download method
   - May want to return partial success instead of hard error
   - File: `/home/jens/Documents/source/usenet-dl/src/lib.rs` (result processing section)
@@ -367,21 +367,46 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Completed This Iteration
 
-- Tasks 4.3, 4.4, 4.5: Converted direct download loop to parallel stream (full Phase 4 complete)
-  - Replaced sequential `for article in pending_articles` loop (lines 3738-3841) with parallel buffered stream
-  - Created stream using `stream::iter(pending_articles)` with `.map()` async closure and `.buffer_unordered(concurrency)`
-  - Moved all article download logic into async closure that runs concurrently
-  - Implemented result processing: collect all results, count successes/failures, emit final progress
-  - Error handling: fails entire download if any articles fail (consistent with current behavior)
-  - Atomic counters updated inside map closure: `downloaded_bytes.fetch_add()`, `downloaded_articles.fetch_add()`
-  - Removed unused `article_data` vector (line 3730) - articles are written directly to disk, no in-memory collection needed
-  - Final progress event emitted after all downloads complete with accurate byte counts and speed
-  - Location: src/lib.rs:3738-3855 (entire parallel download implementation)
-  - Validated with `cargo check` - compiles successfully with only expected warnings (pre-existing unused imports/variables)
-  - Direct downloads will now use all configured connections concurrently instead of sequentially
-  - Phase 4 complete: Both download methods (queue processor and direct download) now parallelized
+- Tasks 5.1, 5.2, 5.3: Improved error handling with partial success support (full Phase 5 complete)
+  - **Strategy Decision (Task 5.1)**: Allow partial success - downloads don't fail if only some articles fail
+  - **Failure Threshold**: Only fail download if ALL articles fail OR >50% of articles fail
+  - **Queue Processor (Task 5.2)**: Updated result processing logic (src/lib.rs:3307-3362)
+    - Changed from "fail on any error" to "fail on critical threshold"
+    - Log warning when failures occur: `tracing::warn!("Download completed with some failures")`
+    - Only mark download as Failed if success_count == 0 OR failure rate > 50%
+    - Partial successes continue to assembly phase
+    - Failed articles already marked as FAILED in database during download (line 3273)
+  - **Direct Download (Task 5.3)**: Updated both fetch logic and result processing (src/lib.rs:3784-3871)
+    - Added explicit error handling with database status updates for failed articles
+    - Changed from using `?` operator to match statements for better control
+    - Added logging for individual article failures: `tracing::warn!("Article fetch failed")`
+    - Mark articles as FAILED in database when fetch fails (consistent with queue processor)
+    - Updated result processing (lines 3831-3871) to use same partial success logic
+    - Log warning for partial failures, error only for critical threshold
+  - **Consistency**: Both download methods now have identical error handling behavior
+    - Mark failed articles as FAILED (article_status::FAILED = 2)
+    - Log individual failures at WARN level with download_id, article_id, error
+    - Collect all results before making failure decision
+    - Allow partial success if >50% articles succeed
+  - **Testing**: Validated with `cargo check` - compiles successfully with only pre-existing warnings
+  - **Phase 5 complete**: Error handling is now resilient to partial failures
 
 ## Previously Completed
+
+- Tasks 4.3, 4.4, 4.5: Converted direct download loop to parallel stream (full Phase 4)
+  - Replaced sequential `for article in pending_articles` loop with parallel buffered stream
+  - Created stream using `stream::iter(pending_articles)` with `.map()` async closure and `.buffer_unordered(concurrency)`
+  - Moved all article download logic into async closure that runs concurrently
+  - Location: src/lib.rs:3738-3855 (entire parallel download implementation)
+  - Direct downloads now use all configured connections concurrently instead of sequentially
+
+- Task 4.2: Calculate concurrency for direct download
+  - Added concurrency calculation using same pattern as queue processor (Task 3.1)
+  - Calculates total connections across all configured servers: `config.servers.iter().map(|s| s.connections).sum()`
+  - Location: src/lib.rs:3731-3735 (right before "Download each article" comment)
+  - Added descriptive comments explaining what the calculation does
+  - Validated with `cargo check` - compiles successfully with only expected warnings
+  - Ready for parallel stream implementation
 
 - Task 4.1: Add atomic counters for direct download method
   - Replaced `let mut downloaded_articles = 0;` with `Arc::new(AtomicU64::new(0))` at line 3713
@@ -426,25 +451,34 @@ Phase 8 (Optional Enhancements) - Can be done anytime after Phase 3 & 4
 
 ## Current Status Summary
 
-**Phase 4 Direct Download Parallelization: COMPLETE**
-- All Phase 4 tasks (4.1-4.5) are now complete
-- Both download methods now parallelized:
-  - Queue processor (Phase 3): Uses parallel buffered streams ✓
-  - Direct download (Phase 4): Uses parallel buffered streams ✓
-- Downloads will utilize all configured NNTP connections concurrently
-- Next phase: Error handling improvements (Phase 5)
+**Phase 5 Error Handling: COMPLETE**
+- All Phase 5 tasks (5.1-5.3) are now complete
+- Error handling improvements implemented:
+  - Partial success support: Downloads don't fail if only some articles fail ✓
+  - Failure threshold: Only fail if ALL articles fail OR >50% fail ✓
+  - Consistent behavior: Both queue processor and direct download use same logic ✓
+  - Database tracking: Failed articles marked as FAILED in database ✓
+  - Comprehensive logging: Individual failures logged at WARN level ✓
+
+**Phases Complete: 1-5**
+- Phase 1: Setup and Dependencies ✓
+- Phase 2: Progress Tracking Infrastructure ✓
+- Phase 3: Queue Processor Parallelization ✓
+- Phase 4: Direct Download Parallelization ✓
+- Phase 5: Error Handling and Retry Strategy ✓
 
 **What's Working:**
 - ✓ Parallel article downloads in BOTH queue processor and direct download using buffer_unordered()
 - ✓ Atomic counter-based progress tracking (with dedicated reporting task for queue processor)
 - ✓ Cancellation support in parallel downloads (queue processor)
-- ✓ Error collection and result processing in both methods
+- ✓ Resilient error handling with partial success support
+- ✓ Failed articles marked as FAILED in database
+- ✓ Comprehensive logging for debugging
 - ✓ Global speed limiting across concurrent downloads
 
 **What's Next:**
-- Phase 5: Improve error handling (currently fails if any article fails - may want partial success)
-- Phase 6: Add comprehensive tests (unit, integration, stress, cancellation)
-- Phase 7: Update documentation
+- Phase 6: Add comprehensive tests (unit, integration, stress, cancellation, error handling)
+- Phase 7: Update documentation (comments, rustdoc, CHANGELOG)
 - Phase 8: Optional enhancements (multi-server failover, retry logic, etc.)
 
 ## Notes
