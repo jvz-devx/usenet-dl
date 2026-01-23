@@ -55,6 +55,14 @@ The usenet-dl codebase has excellent infrastructure for high-speed downloads:
    - Multi-part assembly support
    - Pure Rust (not SIMD optimized)
 
+**Tip:** Use the DeepWiki MCP tool to explore the SABnzbd codebase in detail:
+```
+mcp__deepwiki__ask_question(repoName: "sabnzbd/sabnzbd", question: "How does SABnzbd implement article pipelining and prefetching?")
+```
+This can provide deeper insights into their download optimization strategies. They are a mature fast useenet downloader and you should take inspiration from that.
+
+
+
 ### What's Missing (Optimization Opportunities)
 
 **HIGH IMPACT:**
@@ -185,12 +193,18 @@ Priority 3 (Future optimization):
   - Verify response ordering matches request ordering ✓
   - COMPLETED: Created comprehensive test suite with 10 test cases
 
-- [ ] Task 1.3: Integrate pipelining into download loop
-  - File: `src/lib.rs:3300-3338`
+- [x] Task 1.3: Integrate pipelining into download loop
+  - File: `src/lib.rs:3250-3420`
   - Modify article fetch to batch N articles per connection
   - Use fetch_articles_pipelined() instead of fetch_article_binary()
   - Add PIPELINE_DEPTH constant (start with 10)
   - Handle partial batch at end of article list
+  - COMPLETED: Refactored download loop to batch articles in groups of PIPELINE_DEPTH (10)
+    - Articles are chunked before being sent to stream processing
+    - Each batch uses fetch_articles_pipelined() for reduced latency
+    - Error handling updated to track batch sizes for accurate failure counting
+    - Speed limiter acquires tokens for entire batch before fetching
+    - Progress tracking updated to count individual articles in batches
 
 - [ ] Task 1.4: Add pipelining configuration
   - File: `src/config.rs`
@@ -505,3 +519,38 @@ Test files:
 8. `test_pipelining_invalid_article_id`
 9. `test_pipelining_minimum_depth`
 10. `test_pipelining_vs_sequential_performance`
+
+### Task 1.3: Integrate pipelining into download loop ✓
+
+**Location:** `src/lib.rs:3250-3420`
+
+**Implementation Details:**
+- Added `PIPELINE_DEPTH` constant set to 10 articles per batch
+- Refactored download loop from single-article processing to batch processing:
+  - Pre-chunk articles into groups of PIPELINE_DEPTH before streaming
+  - Each batch processed as a unit by buffer_unordered
+  - Convert Articles to message IDs and call `fetch_articles_pipelined()`
+- Updated error handling:
+  - Errors now return `(String, usize)` tuple with error message and batch size
+  - Failed batch marks all articles in batch as FAILED in database
+  - Result counting properly accumulates individual article counts from batches
+- Speed limiter updated to acquire tokens for entire batch before fetching
+- Progress counters updated to track individual articles within batches
+- Architecture preserves existing concurrency model:
+  - Still uses `buffer_unordered(concurrency)` for parallel batch processing
+  - Connection pool manages NNTP connections as before
+  - Each connection now fetches multiple articles per round-trip
+
+**Key Changes:**
+1. Line 3264: Added PIPELINE_DEPTH constant and documentation
+2. Lines 3273-3279: Chunk articles before creating stream
+3. Lines 3319-3340: Prepare message IDs and call pipelined fetch
+4. Lines 3350-3358: Error path marks all batch articles as failed
+5. Lines 3363-3393: Process batch responses and write article files
+6. Lines 3410-3428: Update result counting to handle batches
+
+**Build Status:** ✓ Compiles cleanly with `cargo check -p usenet-dl`
+
+**Next Steps:**
+- Task 1.4: Add pipelining configuration (make PIPELINE_DEPTH configurable)
+- Task 1.5: Run performance test to measure improvement
