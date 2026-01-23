@@ -1,5 +1,6 @@
 //! Configuration types for usenet-dl
 
+use crate::types::Priority;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration};
 use utoipa::ToSchema;
@@ -102,6 +103,10 @@ pub struct Config {
     #[serde(default)]
     pub watch_folders: Vec<WatchFolderConfig>,
 
+    /// RSS feed configurations
+    #[serde(default)]
+    pub rss_feeds: Vec<RssFeedConfig>,
+
     /// Webhook configurations
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
@@ -142,6 +147,7 @@ impl Default for Config {
             api: ApiConfig::default(),
             schedule_rules: vec![],
             watch_folders: vec![],
+            rss_feeds: vec![],
             webhooks: vec![],
             scripts: vec![],
             categories: HashMap::new(),
@@ -665,6 +671,64 @@ pub enum ScriptEvent {
     OnPostProcessComplete,
 }
 
+/// RSS feed configuration
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct RssFeedConfig {
+    /// Feed URL (RSS or Atom)
+    pub url: String,
+
+    /// How often to check the feed (default: 15 minutes)
+    #[serde(default = "default_rss_check_interval", with = "duration_serde")]
+    pub check_interval: Duration,
+
+    /// Category to assign to downloads
+    #[serde(default)]
+    pub category: Option<String>,
+
+    /// Only download items matching these filters
+    #[serde(default)]
+    pub filters: Vec<RssFilter>,
+
+    /// Automatically download matches (vs just notify)
+    #[serde(default = "default_true")]
+    pub auto_download: bool,
+
+    /// Priority for auto-downloaded items
+    #[serde(default)]
+    pub priority: Priority,
+
+    /// Whether feed is active
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// RSS feed filter
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct RssFilter {
+    /// Filter name (for UI)
+    pub name: String,
+
+    /// Patterns to include (regex)
+    #[serde(default)]
+    pub include: Vec<String>,
+
+    /// Patterns to exclude (regex)
+    #[serde(default)]
+    pub exclude: Vec<String>,
+
+    /// Minimum size (bytes)
+    #[serde(default)]
+    pub min_size: Option<u64>,
+
+    /// Maximum size (bytes)
+    #[serde(default)]
+    pub max_size: Option<u64>,
+
+    /// Maximum age from publish date (seconds)
+    #[serde(default, with = "optional_duration_serde")]
+    pub max_age: Option<Duration>,
+}
+
 /// Category configuration
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct CategoryConfig {
@@ -825,6 +889,10 @@ fn default_sample_folder_names() -> Vec<String> {
     ]
 }
 
+fn default_rss_check_interval() -> Duration {
+    Duration::from_secs(15 * 60) // 15 minutes
+}
+
 // Duration serialization helper
 mod duration_serde {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -843,6 +911,30 @@ mod duration_serde {
     {
         let secs = u64::deserialize(deserializer)?;
         Ok(Duration::from_secs(secs))
+    }
+}
+
+// Optional Duration serialization helper
+mod optional_duration_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match duration {
+            Some(d) => serializer.serialize_some(&d.as_secs()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = Option::<u64>::deserialize(deserializer)?;
+        Ok(secs.map(Duration::from_secs))
     }
 }
 
@@ -911,5 +1003,90 @@ mod tests {
         assert!(config.cleanup.enabled);
         assert!(!config.cleanup.target_extensions.is_empty());
         assert!(!config.cleanup.archive_extensions.is_empty());
+    }
+
+    #[test]
+    fn test_rss_feed_config_fields() {
+        // Verify RssFeedConfig has all required fields
+        let feed = RssFeedConfig {
+            url: "https://indexer.example/rss".to_string(),
+            check_interval: Duration::from_secs(900), // 15 minutes
+            category: Some("tv".to_string()),
+            filters: vec![
+                RssFilter {
+                    name: "HD Shows".to_string(),
+                    include: vec!["720p|1080p".to_string()],
+                    exclude: vec!["CAM|TS".to_string()],
+                    min_size: Some(1024 * 1024 * 100), // 100 MB
+                    max_size: Some(1024 * 1024 * 1024 * 5), // 5 GB
+                    max_age: Some(Duration::from_secs(86400 * 7)), // 7 days
+                }
+            ],
+            auto_download: true,
+            priority: Priority::High,
+            enabled: true,
+        };
+
+        // Verify fields are accessible
+        assert_eq!(feed.url, "https://indexer.example/rss");
+        assert_eq!(feed.check_interval, Duration::from_secs(900));
+        assert_eq!(feed.category, Some("tv".to_string()));
+        assert_eq!(feed.filters.len(), 1);
+        assert!(feed.auto_download);
+        assert_eq!(feed.priority, Priority::High);
+        assert!(feed.enabled);
+    }
+
+    #[test]
+    fn test_rss_filter_fields() {
+        // Verify RssFilter has all required fields
+        let filter = RssFilter {
+            name: "Movies".to_string(),
+            include: vec!["BluRay".to_string(), "WEB-DL".to_string()],
+            exclude: vec!["SCREENER".to_string()],
+            min_size: Some(1024 * 1024 * 500), // 500 MB
+            max_size: Some(1024 * 1024 * 1024 * 10), // 10 GB
+            max_age: Some(Duration::from_secs(86400)), // 1 day
+        };
+
+        // Verify fields are accessible
+        assert_eq!(filter.name, "Movies");
+        assert_eq!(filter.include.len(), 2);
+        assert_eq!(filter.exclude.len(), 1);
+        assert!(filter.min_size.is_some());
+        assert!(filter.max_size.is_some());
+        assert!(filter.max_age.is_some());
+    }
+
+    #[test]
+    fn test_config_includes_rss_feeds() {
+        let config = Config::default();
+
+        // Verify rss_feeds field exists and is empty by default
+        assert!(config.rss_feeds.is_empty());
+    }
+
+    #[test]
+    fn test_rss_feed_serialization() {
+        // Test JSON serialization/deserialization
+        let feed = RssFeedConfig {
+            url: "https://test.com/rss".to_string(),
+            check_interval: Duration::from_secs(900),
+            category: Some("movies".to_string()),
+            filters: vec![],
+            auto_download: true,
+            priority: Priority::Normal,
+            enabled: true,
+        };
+
+        let json = serde_json::to_string(&feed).expect("serialize failed");
+        let deserialized: RssFeedConfig = serde_json::from_str(&json).expect("deserialize failed");
+
+        assert_eq!(deserialized.url, feed.url);
+        assert_eq!(deserialized.check_interval, feed.check_interval);
+        assert_eq!(deserialized.category, feed.category);
+        assert!(deserialized.auto_download);
+        assert_eq!(deserialized.priority, feed.priority);
+        assert!(deserialized.enabled);
     }
 }

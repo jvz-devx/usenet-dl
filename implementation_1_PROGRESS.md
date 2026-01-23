@@ -59,15 +59,101 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (16/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (18/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
-  - Task 26.1: ✅ RSS dependencies added (rss 2.x, atom_syndication 0.12)
-- Total: 179/253 tasks complete (70.8%)
+  - Tasks 26.1-26.3: ✅ RSS feed configuration types complete with comprehensive tests (4 tests passing)
+- Total: 181/253 tasks complete (71.5%)
 
-**Next Task:** Task 26.2 - Create RssFeedConfig with url, check_interval, category, filters, auto_download, priority
+**Next Task:** Task 26.4 - Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
 
 ## Completed This Iteration
+
+**Tasks 26.2-26.3: RSS Feed Configuration Types**
+
+Successfully implemented RSS feed configuration structures with comprehensive type safety and serialization:
+
+1. **RssFeedConfig Structure** (src/config.rs:673-698):
+   - `url`: Feed URL (supports both RSS and Atom)
+   - `check_interval`: Duration with default 15 minutes (serialized as seconds)
+   - `category`: Optional category assignment for auto-downloaded items
+   - `filters`: Vec<RssFilter> for content filtering
+   - `auto_download`: Boolean flag to enable automatic downloading (default: true)
+   - `priority`: Priority enum for download queue positioning
+   - `enabled`: Boolean flag to activate/deactivate feed (default: true)
+   - All fields properly annotated with Serde and ToSchema for OpenAPI
+
+2. **RssFilter Structure** (src/config.rs:701-720):
+   - `name`: Human-readable filter identifier
+   - `include`: Vec<String> of regex patterns to match (OR logic)
+   - `exclude`: Vec<String> of regex patterns to reject (override includes)
+   - `min_size`: Optional minimum file size in bytes
+   - `max_size`: Optional maximum file size in bytes
+   - `max_age`: Optional Duration for maximum age from publish date
+   - Flexible filtering system supports complex matching rules
+
+3. **Config Integration** (src/config.rs:107-108, 148):
+   - Added `rss_feeds: Vec<RssFeedConfig>` field to main Config struct
+   - Initialized as empty vector in Default implementation
+   - Follows same pattern as watch_folders and webhooks
+
+4. **Duration Serialization Support**:
+   - Extended duration_serde module for required fields
+   - Added optional_duration_serde module for Option<Duration> (src/config.rs:866-880)
+   - Handles JSON serialization as seconds (u64)
+   - Proper None handling for optional durations
+
+5. **Type Imports**:
+   - Added `use crate::types::Priority` to config.rs:3
+   - Enables RSS feeds to use same priority system as downloads
+   - Maintains consistency across download sources
+
+6. **Default Functions**:
+   - `default_rss_check_interval()`: Returns Duration of 900 seconds (15 minutes)
+   - Balances feed freshness against server load
+   - Follows design document specification
+
+7. **Comprehensive Test Coverage** (4 tests):
+   ```
+   test config::tests::test_rss_feed_config_fields ... ok
+   test config::tests::test_rss_filter_fields ... ok
+   test config::tests::test_config_includes_rss_feeds ... ok
+   test config::tests::test_rss_feed_serialization ... ok
+   ```
+   - Tests verify all field accessibility
+   - Tests verify JSON serialization/deserialization
+   - Tests verify config includes rss_feeds field
+   - Tests cover both RssFeedConfig and RssFilter structures
+
+8. **Type Safety Features**:
+   - Strong typing prevents configuration errors
+   - Serde derives enable config file loading
+   - ToSchema derives enable OpenAPI documentation
+   - Optional fields use proper Option<T> types
+   - Duration types properly validated and serialized
+
+**Why Tasks 26.2 AND 26.3 Completed Together**:
+- Task 26.2 specified RssFeedConfig with filters field
+- Task 26.3 specified RssFilter structure
+- These are tightly coupled (RssFeedConfig contains Vec<RssFilter>)
+- Implementing both together ensures type coherence
+- More efficient than partial implementation requiring rework
+
+**Design Alignment**:
+- Matches implementation_1.md specification (lines 2018-2064)
+- Default check_interval: 15 minutes (as specified)
+- auto_download defaults to true (as specified)
+- enabled defaults to true (as specified)
+- Filter regex support for include/exclude (as specified)
+- Size and age constraints for filtering (as specified)
+
+**Build Verification**:
+- ✅ Library compiles successfully
+- ✅ All 4 new tests pass
+- ✅ No breaking changes to existing code
+- ✅ Total test count: 320 tests (316 existing + 4 new)
+
+**Previous Iteration:**
 
 **Task 26.1: Add RSS and atom_syndication dependencies**
 
@@ -689,9 +775,9 @@ The implementation will require these major dependencies:
 - [x] Task 25.4: Handle HTTP errors (404, 403, timeout)
 - [x] Task 25.5: Test URL fetching with various NZB URLs
 
-- [ ] Task 26.1: Add rss and atom_syndication dependencies
-- [ ] Task 26.2: Create RssFeedConfig with url, check_interval, category, filters, auto_download, priority
-- [ ] Task 26.3: Create RssFilter with include/exclude patterns, min/max size, max age
+- [x] Task 26.1: Add rss and atom_syndication dependencies
+- [x] Task 26.2: Create RssFeedConfig with url, check_interval, category, filters, auto_download, priority
+- [x] Task 26.3: Create RssFilter with include/exclude patterns, min/max size, max age
 - [ ] Task 26.4: Add RSS feed tables to SQLite schema (rss_feeds, rss_filters, rss_seen)
 - [ ] Task 26.5: Implement RssManager struct
 - [ ] Task 26.6: Implement check_feed() to fetch and parse RSS/Atom
