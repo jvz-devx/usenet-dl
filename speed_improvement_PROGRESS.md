@@ -206,11 +206,15 @@ Priority 3 (Future optimization):
     - Speed limiter acquires tokens for entire batch before fetching
     - Progress tracking updated to count individual articles in batches
 
-- [ ] Task 1.4: Add pipelining configuration
+- [x] Task 1.4: Add pipelining configuration
   - File: `src/config.rs`
   - Add pipeline_depth field to server config
   - Default to 10, allow 0 to disable pipelining
   - Document in README.md
+  - COMPLETED: Added pipeline_depth field to ServerConfig with default of 10
+    - Updated download loop to use configurable pipeline_depth from server config
+    - Added documentation in README.md configuration section
+    - Minimum depth enforced (clamped to 1 if 0 is configured)
 
 - [ ] Task 1.5: Run performance test with pipelining
   - Run: TEST_NZB_PATH="./Fallout.S02E06.nzb" NNTP_CONNECTIONS=50 cargo test --release --test e2e_real_nzb test_real_nzb_download -- --ignored --nocapture
@@ -552,5 +556,47 @@ Test files:
 **Build Status:** ✓ Compiles cleanly with `cargo check -p usenet-dl`
 
 **Next Steps:**
-- Task 1.4: Add pipelining configuration (make PIPELINE_DEPTH configurable)
 - Task 1.5: Run performance test to measure improvement
+
+### Task 1.4: Add pipelining configuration ✓
+
+**Location:** `src/config.rs`, `src/lib.rs`, `README.md`
+
+**Implementation Details:**
+- Added `pipeline_depth` field to `ServerConfig` struct (line 189-193 in config.rs)
+- Field has comprehensive documentation explaining pipelining benefits
+- Default value set to 10 via `default_pipeline_depth()` function
+- Updated download loop to use configurable value instead of hardcoded constant
+  - Reads pipeline_depth from first server config (line 3268-3271 in lib.rs)
+  - Enforces minimum depth of 1 (disables pipelining if set to 0 by clamping to 1)
+  - Falls back to 10 if no servers configured
+- Variable copied into async closure for use in pipelined fetch call
+- Updated README.md:
+  - Added pipeline_depth to Default Settings table
+  - Added pipeline_depth to ServerConfig example with explanatory comment
+
+**Key Changes:**
+1. `src/config.rs:189-193`: Added pipeline_depth field with documentation
+2. `src/config.rs:790-792`: Added default_pipeline_depth() function
+3. `src/lib.rs:3268-3271`: Read pipeline_depth from server config with validation
+4. `src/lib.rs:3294`: Use pipeline_depth for chunking articles
+5. `src/lib.rs:3307`: Copy pipeline_depth into async closure
+6. `src/lib.rs:3358`: Use pipeline_depth in fetch_articles_pipelined call
+7. `README.md:296`: Added to Default Settings table
+8. `README.md:319`: Added to ServerConfig example
+
+**Build Status:** ✓ Compiles cleanly with `cargo build -p usenet-dl`
+
+**Configuration Example:**
+```rust
+ServerConfig {
+    host: "news.example.com".to_string(),
+    port: 563,
+    tls: true,
+    username: Some("user".to_string()),
+    password: Some("pass".to_string()),
+    connections: 10,
+    priority: 0,
+    pipeline_depth: 10,  // Can be tuned: 1 (disabled) to 20 (aggressive)
+}
+```

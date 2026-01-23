@@ -180,6 +180,16 @@ pub struct ServerConfig {
     /// Server priority (lower = tried first, for backup servers)
     #[serde(default)]
     pub priority: i32,
+
+    /// Number of ARTICLE commands to pipeline per connection (default: 10)
+    ///
+    /// Pipelining sends multiple ARTICLE commands before reading responses,
+    /// reducing round-trip latency. Higher values can improve throughput but
+    /// may increase memory usage. Set to 1 to disable pipelining (sequential mode).
+    ///
+    /// Recommended values: 5-20 depending on network latency and server capabilities.
+    #[serde(default = "default_pipeline_depth")]
+    pub pipeline_depth: usize,
 }
 
 /// Retry configuration for transient failures
@@ -782,6 +792,10 @@ fn default_database_path() -> PathBuf {
 }
 
 fn default_connections() -> usize {
+    10
+}
+
+fn default_pipeline_depth() -> usize {
     10
 }
 

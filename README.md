@@ -293,6 +293,7 @@ All settings have sensible defaults. Only NNTP server configuration is required.
 | **Delete samples** | Yes | Usually unwanted |
 | **Disk space check** | Enabled, 1GB buffer | Prevent failed extractions |
 | **Retry attempts** | 5 with exponential backoff | Resilient to transient failures |
+| **Pipeline depth** | 10 articles per connection | Reduces round-trip latency overhead |
 | **API bind address** | 127.0.0.1:6789 | Localhost only for security |
 | **API authentication** | None | Easy local development |
 | **CORS** | Enabled for all origins | Easy frontend development |
@@ -316,6 +317,7 @@ let config = Config {
             password: Some("pass".to_string()),
             connections: 10,  // More connections = faster downloads (10 connections ≈ 10× speed)
             priority: 0, // Lower = tried first
+            pipeline_depth: 10,  // Number of articles to pipeline per connection (reduces latency)
         }
     ],
 

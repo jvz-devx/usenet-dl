@@ -3260,13 +3260,19 @@ impl UsenetDownloader {
                         // - With pipelining: 1 round-trip (send 10→receive 10)
                         //
                         // Expected performance improvement: +30-50% throughput on high-latency connections.
-                        const PIPELINE_DEPTH: usize = 10;
+                        //
+                        // Pipeline depth is configurable per server. Currently uses the first server's
+                        // setting since the download loop uses the first pool (see line 3312 below).
+                        // Set to 1 to disable pipelining and use sequential mode.
+                        let pipeline_depth = config_clone.servers.first()
+                            .map(|s| s.pipeline_depth.max(1))  // Ensure minimum depth of 1
+                            .unwrap_or(10);  // Default to 10 if no servers configured
 
                         // Download articles in parallel using buffered stream (futures::stream).
                         //
                         // Architecture:
                         // - stream::iter() creates a lazy stream over pending_articles
-                        // - Articles are batched into groups of PIPELINE_DEPTH for pipelined fetching
+                        // - Articles are batched into groups of pipeline_depth for pipelined fetching
                         // - .map() wraps each batch in an async closure that fetches all articles in the batch
                         // - .buffer_unordered(concurrency) runs up to N futures concurrently
                         // - .collect() gathers all results into a Vec
@@ -3281,11 +3287,11 @@ impl UsenetDownloader {
                         // of Python threads. The connection pool manages actual NNTP connections,
                         // while buffer_unordered manages concurrent article fetch operations.
                         //
-                        // Pipelining improvement: Each connection now fetches PIPELINE_DEPTH articles
+                        // Pipelining improvement: Each connection now fetches pipeline_depth articles
                         // per round-trip instead of 1, significantly reducing latency overhead.
                         let results: Vec<std::result::Result<Vec<(i32, u64)>, (String, usize)>> = stream::iter(
                             pending_articles
-                                .chunks(PIPELINE_DEPTH)
+                                .chunks(pipeline_depth)
                                 .map(|chunk| chunk.to_vec())
                                 .collect::<Vec<_>>()
                         )
@@ -3298,6 +3304,7 @@ impl UsenetDownloader {
                                 let download_temp_dir = download_temp_dir.clone();
                                 let downloaded_bytes = Arc::clone(&downloaded_bytes);
                                 let downloaded_articles = Arc::clone(&downloaded_articles);
+                                let pipeline_depth = pipeline_depth;  // Copy pipeline depth for use in async closure
 
                                 async move {
                                     let batch_size = article_batch.len();
@@ -3349,7 +3356,7 @@ impl UsenetDownloader {
                                     speed_limiter.acquire(total_batch_size).await;
 
                                     // Fetch articles using pipelined API for improved throughput
-                                    let responses = match conn.fetch_articles_pipelined(&message_id_refs, PIPELINE_DEPTH).await {
+                                    let responses = match conn.fetch_articles_pipelined(&message_id_refs, pipeline_depth).await {
                                         Ok(r) => r,
                                         Err(e) => {
                                             tracing::error!(download_id = id, batch_size = batch_size, error = %e, "Batch fetch failed");
