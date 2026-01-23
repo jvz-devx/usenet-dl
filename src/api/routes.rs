@@ -2,13 +2,26 @@
 
 use super::AppState;
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa;
+
+// ============================================================================
+// Query/Request Types
+// ============================================================================
+
+/// Query parameters for DELETE /downloads/:id
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct DeleteDownloadQuery {
+    /// Whether to delete downloaded files (default: false)
+    #[serde(default)]
+    pub delete_files: bool,
+}
 
 // ============================================================================
 // Queue Management - Downloads
@@ -485,7 +498,7 @@ pub async fn resume_download(
     tag = "downloads",
     params(
         ("id" = i64, Path, description = "Download ID"),
-        ("delete_files" = Option<bool>, Query, description = "Whether to delete downloaded files")
+        ("delete_files" = Option<bool>, Query, description = "Whether to delete downloaded files (not yet implemented, always deletes temp files)")
     ),
     responses(
         (status = 204, description = "Download deleted successfully"),
@@ -494,10 +507,38 @@ pub async fn resume_download(
     )
 )]
 pub async fn delete_download(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(_params): Query<DeleteDownloadQuery>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not implemented"})))
+    // TODO: Use delete_files parameter to control whether to delete final destination files
+    // Currently always deletes temp files via cancel()
+    match state.downloader.cancel(id).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            if e.to_string().contains("not found") {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "error": {
+                            "code": "not_found",
+                            "message": format!("Download {} not found", id)
+                        }
+                    }))
+                ).into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {
+                            "code": "internal_error",
+                            "message": e.to_string()
+                        }
+                    }))
+                ).into_response()
+            }
+        }
+    }
 }
 
 /// PATCH /downloads/:id/priority - Set priority

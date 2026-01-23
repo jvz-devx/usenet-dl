@@ -1648,4 +1648,138 @@ mod tests {
         println!("   - Returns 409 for downloads in terminal states");
         println!("   - Idempotent for already-active downloads");
     }
+
+    #[tokio::test]
+    async fn test_delete_download_endpoint() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt; // for oneshot()
+
+        println!("🧪 Testing DELETE /downloads/:id endpoint...");
+
+        // Create test downloader
+        let (downloader, _temp_dir) = create_test_downloader().await;
+
+        // Add a test download to the database
+        use crate::db::NewDownload;
+
+        let new_download = NewDownload {
+            name: "Download to Delete".to_string(),
+            nzb_path: "/tmp/test_delete.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("delete_hash".to_string()),
+            job_name: Some("Download to Delete".to_string()),
+            category: Some("movies".to_string()),
+            destination: "/downloads".to_string(),
+            post_process: 4, // UnpackAndCleanup
+            priority: 0,     // Normal
+            status: 0,       // Queued
+            size_bytes: 1024 * 1024 * 100, // 100 MB
+        };
+
+        // Insert download and get its ID
+        let download_id = downloader.db.insert_download(&new_download).await.unwrap();
+
+        // Verify download was created
+        assert!(
+            downloader.db.get_download(download_id).await.unwrap().is_some(),
+            "Download should exist before deletion"
+        );
+
+        // Create router
+        let config = Arc::new((*downloader.config).clone());
+        let app = create_router(downloader.clone(), config.clone());
+
+        // Test 1: Delete existing download
+        println!("  📝 Test 1: Delete existing download");
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/downloads/{}", download_id))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Check that response is successful
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "delete_download should return 204 NO_CONTENT for existing download"
+        );
+
+        // Verify download was deleted from database
+        assert!(
+            downloader.db.get_download(download_id).await.unwrap().is_none(),
+            "Download should not exist after deletion"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT");
+        println!("    ✓ Download removed from database");
+
+        // Test 2: Delete non-existent download (should return 404)
+        println!("  📝 Test 2: Delete non-existent download");
+        let request2 = Request::builder()
+            .method("DELETE")
+            .uri("/downloads/99999")
+            .body(Body::empty())
+            .unwrap();
+
+        let response2 = app.clone().oneshot(request2).await.unwrap();
+
+        assert_eq!(
+            response2.status(),
+            StatusCode::NOT_FOUND,
+            "delete_download should return 404 for non-existent download"
+        );
+
+        println!("    ✓ Returns 404 NOT_FOUND for non-existent download");
+
+        // Test 3: Delete with delete_files query parameter
+        println!("  📝 Test 3: Delete with delete_files query parameter");
+
+        // Create another download
+        let download2 = NewDownload {
+            name: "Download to Delete 2".to_string(),
+            nzb_path: "/tmp/test_delete2.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: Some("delete_hash2".to_string()),
+            job_name: Some("Download to Delete 2".to_string()),
+            category: None,
+            destination: "/downloads".to_string(),
+            post_process: 4,
+            priority: 0,
+            status: 0,
+            size_bytes: 1024 * 1024,
+        };
+
+        let download_id2 = downloader.db.insert_download(&download2).await.unwrap();
+
+        let request3 = Request::builder()
+            .method("DELETE")
+            .uri(format!("/downloads/{}?delete_files=true", download_id2))
+            .body(Body::empty())
+            .unwrap();
+
+        let response3 = app.oneshot(request3).await.unwrap();
+
+        assert_eq!(
+            response3.status(),
+            StatusCode::NO_CONTENT,
+            "delete_download should return 204 with delete_files parameter"
+        );
+
+        // Verify download was deleted
+        assert!(
+            downloader.db.get_download(download_id2).await.unwrap().is_none(),
+            "Download should not exist after deletion with delete_files=true"
+        );
+
+        println!("    ✓ Returns 204 NO_CONTENT with delete_files=true");
+        println!("    ✓ Download removed from database");
+
+        println!("✅ delete_download endpoint test passed!");
+        println!("   - Successfully deletes existing downloads");
+        println!("   - Returns 404 for non-existent downloads");
+        println!("   - Accepts delete_files query parameter");
+    }
 }
