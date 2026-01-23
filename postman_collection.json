@@ -1,0 +1,534 @@
+{
+  "info": {
+    "name": "usenet-dl API",
+    "description": "Complete API test collection for usenet-dl download manager",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:6789/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "downloadId",
+      "value": "1",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "key",
+        "value": "X-Api-Key",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the server is running and healthy"
+          },
+          "response": []
+        },
+        {
+          "name": "Get OpenAPI Spec",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json",
+              "host": ["{{baseUrl}}"],
+              "path": ["openapi.json"]
+            },
+            "description": "Retrieve the OpenAPI 3.1 specification"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Downloads",
+      "item": [
+        {
+          "name": "List Downloads",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads"]
+            },
+            "description": "Get all downloads in the queue"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Download by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}"]
+            },
+            "description": "Get details of a specific download"
+          },
+          "response": []
+        },
+        {
+          "name": "Add Download from File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "NZB file to upload"
+                },
+                {
+                  "key": "options",
+                  "value": "{\"priority\":\"normal\",\"category\":\"movies\"}",
+                  "type": "text",
+                  "description": "Optional download options (JSON)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/downloads",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads"]
+            },
+            "description": "Add a download by uploading an NZB file"
+          },
+          "response": []
+        },
+        {
+          "name": "Add Download from URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/file.nzb\",\n  \"options\": {\n    \"category\": \"movies\",\n    \"priority\": \"high\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/downloads/url",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "url"]
+            },
+            "description": "Add a download by providing an NZB URL"
+          },
+          "response": []
+        },
+        {
+          "name": "Pause Download",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}", "pause"]
+            },
+            "description": "Pause a specific download"
+          },
+          "response": []
+        },
+        {
+          "name": "Resume Download",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}", "resume"]
+            },
+            "description": "Resume a paused download"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Download",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}?delete_files=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}"],
+              "query": [
+                {
+                  "key": "delete_files",
+                  "value": "false",
+                  "description": "Whether to delete downloaded files"
+                }
+              ]
+            },
+            "description": "Remove a download from the queue"
+          },
+          "response": []
+        },
+        {
+          "name": "Set Download Priority",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priority\": \"high\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}/priority",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}", "priority"]
+            },
+            "description": "Change the priority of a download (low, normal, high, force)"
+          },
+          "response": []
+        },
+        {
+          "name": "Reprocess Download",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}/reprocess",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}", "reprocess"]
+            },
+            "description": "Re-run post-processing (verify, repair, extract) on a download"
+          },
+          "response": []
+        },
+        {
+          "name": "Reextract Download",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/downloads/{{downloadId}}/reextract",
+              "host": ["{{baseUrl}}"],
+              "path": ["downloads", "{{downloadId}}", "reextract"]
+            },
+            "description": "Re-run extraction only (skip verify/repair)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Queue",
+      "item": [
+        {
+          "name": "Get Queue Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/queue/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["queue", "stats"]
+            },
+            "description": "Get queue statistics (total, active, paused, etc.)"
+          },
+          "response": []
+        },
+        {
+          "name": "Pause Queue",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/queue/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["queue", "pause"]
+            },
+            "description": "Pause all downloads in the queue"
+          },
+          "response": []
+        },
+        {
+          "name": "Resume Queue",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/queue/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["queue", "resume"]
+            },
+            "description": "Resume all paused downloads"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "History",
+      "item": [
+        {
+          "name": "Get History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"]
+            },
+            "description": "Get download history"
+          },
+          "response": []
+        },
+        {
+          "name": "Get History (Paginated)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/history?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Number of items to return"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Number of items to skip"
+                }
+              ]
+            },
+            "description": "Get paginated download history"
+          },
+          "response": []
+        },
+        {
+          "name": "Get History (Filtered by Status)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/history?status=complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "complete",
+                  "description": "Filter by status (complete or failed)"
+                }
+              ]
+            },
+            "description": "Get history filtered by completion status"
+          },
+          "response": []
+        },
+        {
+          "name": "Clear History",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"]
+            },
+            "description": "Clear all history entries"
+          },
+          "response": []
+        },
+        {
+          "name": "Clear History (Before Timestamp)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/history?before=1640000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "1640000000",
+                  "description": "Unix timestamp - delete entries before this time"
+                }
+              ]
+            },
+            "description": "Clear history entries older than specified timestamp"
+          },
+          "response": []
+        },
+        {
+          "name": "Clear History (By Status)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/history?status=failed",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "failed",
+                  "description": "Delete only failed or complete entries"
+                }
+              ]
+            },
+            "description": "Clear history entries with specific status"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Configuration (Not Yet Implemented)",
+      "item": [
+        {
+          "name": "Get Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["config"]
+            },
+            "description": "[NOT IMPLEMENTED] Get current configuration"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Config",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_concurrent_downloads\": 5\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["config"]
+            },
+            "description": "[NOT IMPLEMENTED] Update configuration settings"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Speed Limit",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/config/speed-limit",
+              "host": ["{{baseUrl}}"],
+              "path": ["config", "speed-limit"]
+            },
+            "description": "[NOT IMPLEMENTED] Get current speed limit"
+          },
+          "response": []
+        },
+        {
+          "name": "Set Speed Limit",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit_bps\": 10485760\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/config/speed-limit",
+              "host": ["{{baseUrl}}"],
+              "path": ["config", "speed-limit"]
+            },
+            "description": "[NOT IMPLEMENTED] Set speed limit in bytes per second"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Events (Not Yet Implemented)",
+      "item": [
+        {
+          "name": "Subscribe to Events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["events"]
+            },
+            "description": "[NOT IMPLEMENTED] Subscribe to server-sent events stream"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
