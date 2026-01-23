@@ -69,7 +69,7 @@ pub mod utils;
 pub use config::{Config, ServerConfig};
 pub use db::Database;
 pub use error::{Error, Result};
-pub use scheduler::{RuleId, ScheduleAction, ScheduleRule, Weekday};
+pub use scheduler::{RuleId, ScheduleAction, ScheduleRule, Scheduler, Weekday};
 pub use types::{
     DownloadId, DownloadInfo, DownloadOptions, Event, HistoryEntry, Priority, QueueStats, Stage,
     Status,

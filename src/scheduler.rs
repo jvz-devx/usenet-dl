@@ -130,6 +130,95 @@ impl Weekday {
     }
 }
 
+/// Scheduler manages time-based rules for controlling download behavior
+///
+/// The Scheduler maintains a list of schedule rules and provides methods
+/// to evaluate which action should be active at any given time.
+#[derive(Clone, Debug)]
+pub struct Scheduler {
+    /// List of schedule rules (order matters - first match wins)
+    rules: Vec<ScheduleRule>,
+}
+
+impl Scheduler {
+    /// Create a new Scheduler with the given rules
+    ///
+    /// Rules are evaluated in order - the first matching enabled rule wins.
+    /// For best results, order rules from most specific to least specific.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, Weekday};
+    /// use chrono::NaiveTime;
+    ///
+    /// let rules = vec![
+    ///     ScheduleRule {
+    ///         id: 1,
+    ///         name: "Work hours".into(),
+    ///         days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
+    ///                    Weekday::Thursday, Weekday::Friday],
+    ///         start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+    ///         end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+    ///         action: ScheduleAction::SpeedLimit(1_000_000),
+    ///         enabled: true,
+    ///     },
+    /// ];
+    ///
+    /// let scheduler = Scheduler::new(rules);
+    /// ```
+    pub fn new(rules: Vec<ScheduleRule>) -> Self {
+        Self { rules }
+    }
+
+    /// Get the list of all rules
+    pub fn rules(&self) -> &[ScheduleRule] {
+        &self.rules
+    }
+
+    /// Update the list of rules
+    ///
+    /// This replaces all existing rules with the new list.
+    pub fn set_rules(&mut self, rules: Vec<ScheduleRule>) {
+        self.rules = rules;
+    }
+
+    /// Add a new rule to the scheduler
+    ///
+    /// The rule is added to the end of the list (lowest priority).
+    pub fn add_rule(&mut self, rule: ScheduleRule) {
+        self.rules.push(rule);
+    }
+
+    /// Remove a rule by ID
+    ///
+    /// Returns true if a rule was removed, false if no rule with that ID exists.
+    pub fn remove_rule(&mut self, id: RuleId) -> bool {
+        let original_len = self.rules.len();
+        self.rules.retain(|r| r.id != id);
+        self.rules.len() < original_len
+    }
+
+    /// Update an existing rule
+    ///
+    /// Returns true if the rule was found and updated, false otherwise.
+    pub fn update_rule(&mut self, rule: ScheduleRule) -> bool {
+        if let Some(existing) = self.rules.iter_mut().find(|r| r.id == rule.id) {
+            *existing = rule;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for Scheduler {
+    /// Create a scheduler with no rules
+    fn default() -> Self {
+        Self { rules: Vec::new() }
+    }
+}
+
 /// Serde module for serializing/deserializing NaiveTime as HH:MM:SS strings
 mod time_format {
     use chrono::NaiveTime;
@@ -316,5 +405,242 @@ mod tests {
         assert!(rule.days.contains(&Weekday::Monday));
         assert!(rule.days.contains(&Weekday::Friday));
         assert!(!rule.days.contains(&Weekday::Saturday));
+    }
+
+    #[test]
+    fn test_scheduler_creation() {
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Test rule".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ];
+
+        let scheduler = Scheduler::new(rules.clone());
+        assert_eq!(scheduler.rules().len(), 1);
+        assert_eq!(scheduler.rules()[0].name, "Test rule");
+    }
+
+    #[test]
+    fn test_scheduler_default() {
+        let scheduler = Scheduler::default();
+        assert_eq!(scheduler.rules().len(), 0);
+    }
+
+    #[test]
+    fn test_scheduler_add_rule() {
+        let mut scheduler = Scheduler::default();
+        assert_eq!(scheduler.rules().len(), 0);
+
+        let rule = ScheduleRule {
+            id: 1,
+            name: "New rule".into(),
+            days: vec![Weekday::Monday],
+            start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            action: ScheduleAction::SpeedLimit(1_000_000),
+            enabled: true,
+        };
+
+        scheduler.add_rule(rule.clone());
+        assert_eq!(scheduler.rules().len(), 1);
+        assert_eq!(scheduler.rules()[0].id, 1);
+        assert_eq!(scheduler.rules()[0].name, "New rule");
+    }
+
+    #[test]
+    fn test_scheduler_remove_rule() {
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Rule 1".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+            ScheduleRule {
+                id: 2,
+                name: "Rule 2".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                action: ScheduleAction::Pause,
+                enabled: true,
+            },
+        ];
+
+        let mut scheduler = Scheduler::new(rules);
+        assert_eq!(scheduler.rules().len(), 2);
+
+        // Remove existing rule
+        let removed = scheduler.remove_rule(1);
+        assert!(removed);
+        assert_eq!(scheduler.rules().len(), 1);
+        assert_eq!(scheduler.rules()[0].id, 2);
+
+        // Try to remove non-existent rule
+        let not_removed = scheduler.remove_rule(99);
+        assert!(!not_removed);
+        assert_eq!(scheduler.rules().len(), 1);
+    }
+
+    #[test]
+    fn test_scheduler_update_rule() {
+        let rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Original rule".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ];
+
+        let mut scheduler = Scheduler::new(rules);
+        assert_eq!(scheduler.rules()[0].name, "Original rule");
+
+        // Update existing rule
+        let updated_rule = ScheduleRule {
+            id: 1,
+            name: "Updated rule".into(),
+            days: vec![Weekday::Monday],
+            start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            action: ScheduleAction::SpeedLimit(5_000_000),
+            enabled: false,
+        };
+
+        let success = scheduler.update_rule(updated_rule);
+        assert!(success);
+        assert_eq!(scheduler.rules()[0].name, "Updated rule");
+        assert_eq!(scheduler.rules()[0].days.len(), 1);
+        assert!(!scheduler.rules()[0].enabled);
+
+        // Try to update non-existent rule
+        let non_existent = ScheduleRule {
+            id: 99,
+            name: "Non-existent".into(),
+            days: vec![],
+            start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(1, 0, 0).unwrap(),
+            action: ScheduleAction::Pause,
+            enabled: true,
+        };
+
+        let failed = scheduler.update_rule(non_existent);
+        assert!(!failed);
+        assert_eq!(scheduler.rules().len(), 1); // Still only 1 rule
+    }
+
+    #[test]
+    fn test_scheduler_set_rules() {
+        let initial_rules = vec![
+            ScheduleRule {
+                id: 1,
+                name: "Rule 1".into(),
+                days: vec![],
+                start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ];
+
+        let mut scheduler = Scheduler::new(initial_rules);
+        assert_eq!(scheduler.rules().len(), 1);
+
+        // Replace with new rules
+        let new_rules = vec![
+            ScheduleRule {
+                id: 2,
+                name: "New Rule 1".into(),
+                days: vec![Weekday::Monday],
+                start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                action: ScheduleAction::SpeedLimit(1_000_000),
+                enabled: true,
+            },
+            ScheduleRule {
+                id: 3,
+                name: "New Rule 2".into(),
+                days: vec![Weekday::Friday],
+                start_time: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+                end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            },
+        ];
+
+        scheduler.set_rules(new_rules);
+        assert_eq!(scheduler.rules().len(), 2);
+        assert_eq!(scheduler.rules()[0].id, 2);
+        assert_eq!(scheduler.rules()[1].id, 3);
+    }
+
+    #[test]
+    fn test_scheduler_multiple_operations() {
+        let mut scheduler = Scheduler::default();
+
+        // Add three rules
+        scheduler.add_rule(ScheduleRule {
+            id: 1,
+            name: "Rule 1".into(),
+            days: vec![],
+            start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            action: ScheduleAction::Unlimited,
+            enabled: true,
+        });
+
+        scheduler.add_rule(ScheduleRule {
+            id: 2,
+            name: "Rule 2".into(),
+            days: vec![Weekday::Monday, Weekday::Friday],
+            start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            action: ScheduleAction::SpeedLimit(2_000_000),
+            enabled: true,
+        });
+
+        scheduler.add_rule(ScheduleRule {
+            id: 3,
+            name: "Rule 3".into(),
+            days: vec![],
+            start_time: NaiveTime::from_hms_opt(20, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            action: ScheduleAction::Pause,
+            enabled: true,
+        });
+
+        assert_eq!(scheduler.rules().len(), 3);
+
+        // Remove middle rule
+        scheduler.remove_rule(2);
+        assert_eq!(scheduler.rules().len(), 2);
+        assert_eq!(scheduler.rules()[0].id, 1);
+        assert_eq!(scheduler.rules()[1].id, 3);
+
+        // Update remaining rule
+        scheduler.update_rule(ScheduleRule {
+            id: 3,
+            name: "Updated Rule 3".into(),
+            days: vec![Weekday::Saturday, Weekday::Sunday],
+            start_time: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+            end_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            action: ScheduleAction::Unlimited,
+            enabled: false,
+        });
+
+        assert_eq!(scheduler.rules()[1].name, "Updated Rule 3");
+        assert!(!scheduler.rules()[1].enabled);
     }
 }

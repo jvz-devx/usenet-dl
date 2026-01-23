@@ -59,16 +59,105 @@ IN_PROGRESS
   - Task 22.3: ✅ OpenAPI spec validation complete with manual checks and export (55 API tests passing)
   - Task 22.4: ✅ API documentation completeness test complete - 10 validation checks (56 API tests passing)
   - Tasks 23.1-23.6: ✅ Rate limiting with exempt paths/IPs complete - comprehensive tests validate burst capacity, 429 responses, token refill, and exempt path bypass (57 API tests passing)
-- Phase 4: 🔄 In Progress (31/90 tasks) - Automation features
+- Phase 4: 🔄 In Progress (32/90 tasks) - Automation features
   - Tasks 24.1-24.10: ✅ Complete folder watching with file creation test (8 tests passing)
   - Tasks 25.1-25.5: ✅ Complete URL fetching with timeout handling (7 tests passing)
   - Tasks 26.1-26.12: ✅ RSS feed complete with integration test and manual testing guide (38 tests passing)
-  - Tasks 27.1-27.3: ✅ Scheduler types (ScheduleRule, ScheduleAction, Weekday) complete (9 tests passing)
-- Total: 194/253 tasks complete (76.7%)
+  - Tasks 27.1-27.4: ✅ Scheduler struct with rule management complete (16 tests passing)
+- Total: 195/253 tasks complete (77.1%)
 
-**Next Task:** Task 27.4 - Create Scheduler struct with rules list
+**Next Task:** Task 27.5 - Implement get_current_action() to evaluate rules for current time
 
 ## Completed This Iteration
+
+**Task 27.4: Create Scheduler struct with rules list**
+
+Successfully implemented the Scheduler struct with comprehensive rule management methods and 7 new tests:
+
+1. **Scheduler Struct** (src/scheduler.rs:135-148):
+   - Field: `rules: Vec<ScheduleRule>` - list of schedule rules
+   - Order matters: first matching rule wins
+   - Follows implementation_1.md design specification
+   - Complete documentation with usage examples
+   - Derives: Clone, Debug
+
+2. **new() Constructor** (lines 150-183):
+   - Creates Scheduler with given rules list
+   - Parameters: `Vec<ScheduleRule>`
+   - Returns: `Scheduler` instance
+   - Comprehensive documentation with example code
+   - Shows how to create rules and instantiate scheduler
+
+3. **rules() Accessor Method** (lines 185-187):
+   - Returns immutable slice of all rules
+   - Signature: `&[ScheduleRule]`
+   - Allows inspection without modification
+
+4. **set_rules() Method** (lines 189-194):
+   - Replaces all existing rules with new list
+   - Parameters: `Vec<ScheduleRule>`
+   - Useful for bulk updates from config changes
+
+5. **add_rule() Method** (lines 196-201):
+   - Adds a new rule to the end (lowest priority)
+   - Parameters: `ScheduleRule`
+   - Maintains rule order for evaluation
+
+6. **remove_rule() Method** (lines 203-210):
+   - Removes rule by ID using `retain()`
+   - Parameters: `RuleId` (i64)
+   - Returns: `bool` - true if removed, false if not found
+   - Efficient single-pass removal
+
+7. **update_rule() Method** (lines 212-221):
+   - Updates existing rule in place
+   - Parameters: `ScheduleRule` (must have matching ID)
+   - Returns: `bool` - true if updated, false if not found
+   - Preserves rule position/priority
+
+8. **Default Implementation** (lines 225-229):
+   - Creates empty scheduler with no rules
+   - Follows Rust best practices
+
+9. **Public API Export** (src/lib.rs:72):
+   - Added `Scheduler` to public exports
+   - Alongside RuleId, ScheduleAction, ScheduleRule, Weekday
+   - Ready for use by library consumers
+
+10. **Comprehensive Test Suite** (7 new tests, src/scheduler.rs:340-548):
+    - `test_scheduler_creation()`: Validates constructor with rules
+    - `test_scheduler_default()`: Tests Default trait impl
+    - `test_scheduler_add_rule()`: Tests adding rules to empty scheduler
+    - `test_scheduler_remove_rule()`: Tests removal by ID (existing and non-existent)
+    - `test_scheduler_update_rule()`: Tests updating existing rule (success and failure cases)
+    - `test_scheduler_set_rules()`: Tests bulk replacement of rules
+    - `test_scheduler_multiple_operations()`: Tests complex scenario with add/remove/update
+
+11. **Design Alignment**:
+    - Matches implementation_1.md:1993-2007 specification
+    - Maintains ordered list of rules (first match wins)
+    - Provides CRUD operations for rule management
+    - Ready for get_current_action() implementation (Task 27.5)
+    - Supports dynamic rule updates at runtime
+
+12. **API Design**:
+    - Consistent with existing patterns (Database, Config, etc.)
+    - Immutable accessors with mutable modifiers
+    - Boolean return values for optional operations
+    - Clone + Debug for easy debugging
+    - Ready for integration with UsenetDownloader
+
+**Build Verification**:
+- ✅ Library compiles successfully with no errors
+- ✅ All 16 scheduler tests pass (9 existing + 7 new)
+- ✅ Tests complete in <0.1 seconds
+- ✅ Scheduler struct exported from lib.rs
+- ✅ Full CRUD operations tested (add, read, update, delete)
+- ✅ Edge cases validated (non-existent IDs, empty scheduler)
+- ✅ Multiple operation sequences tested
+- ✅ Total scheduler tests: 16 passing
+
+**Previous Iteration:**
 
 **Task 27.1: Create ScheduleRule with name, days, start_time, end_time, action, enabled**
 
@@ -1530,7 +1619,7 @@ The implementation will require these major dependencies:
 - [x] Task 27.1: Create ScheduleRule with name, days, start_time, end_time, action, enabled
 - [x] Task 27.2: Implement ScheduleAction enum (SpeedLimit, Unlimited, Pause)
 - [x] Task 27.3: Implement Weekday enum
-- [ ] Task 27.4: Create Scheduler struct with rules list
+- [x] Task 27.4: Create Scheduler struct with rules list
 - [ ] Task 27.5: Implement get_current_action() to evaluate rules for current time
 - [ ] Task 27.6: Create scheduler task that checks rules every minute
 - [ ] Task 27.7: Apply actions (set speed limit or pause queue)
