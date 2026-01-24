@@ -252,11 +252,13 @@ impl Scheduler {
 
         self.rules
             .iter()
-            .filter(|r| r.enabled)
-            .filter(|r| r.days.is_empty() || r.days.contains(&weekday))
-            .filter(|r| time >= r.start_time && time < r.end_time)
+            .find(|r| {
+                r.enabled
+                    && (r.days.is_empty() || r.days.contains(&weekday))
+                    && time >= r.start_time
+                    && time < r.end_time
+            })
             .map(|r| r.action.clone())
-            .next()
     }
 }
 

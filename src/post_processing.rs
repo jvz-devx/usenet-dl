@@ -463,14 +463,14 @@ impl PostProcessor {
             return Ok(());
         }
 
-        // Collect all target extensions (case-insensitive comparison)
-        let target_extensions: Vec<String> = self
+        // Collect all target extensions (keep original case, compare case-insensitively)
+        let target_extensions: Vec<&str> = self
             .config
             .cleanup
             .target_extensions
             .iter()
             .chain(self.config.cleanup.archive_extensions.iter())
-            .map(|ext| ext.to_lowercase())
+            .map(|ext| ext.as_str())
             .collect();
 
         // Recursively walk the directory and collect files/folders to delete
@@ -527,7 +527,7 @@ impl PostProcessor {
     fn collect_cleanup_targets<'a>(
         &'a self,
         path: &'a PathBuf,
-        target_extensions: &'a [String],
+        target_extensions: &'a [&'a str],
         files_to_delete: &'a mut Vec<PathBuf>,
         folders_to_delete: &'a mut Vec<PathBuf>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
@@ -566,10 +566,9 @@ impl PostProcessor {
                 let entry_path = entry.path();
 
                 if entry_path.is_file() {
-                    // Check if file extension matches target extensions
+                    // Check if file extension matches target extensions (case-insensitive)
                     if let Some(extension) = entry_path.extension().and_then(|e| e.to_str()) {
-                        let ext_lower = extension.to_lowercase();
-                        if target_extensions.contains(&ext_lower) {
+                        if target_extensions.iter().any(|ext| ext.eq_ignore_ascii_case(extension)) {
                             files_to_delete.push(entry_path);
                         }
                     }

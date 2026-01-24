@@ -1088,9 +1088,12 @@ impl UsenetDownloader {
                     );
                 }
                 Err(e) => {
+                    // Convert error to string once, reuse throughout
+                    let error_msg = e.to_string();
+
                     tracing::error!(
                         download_id = id,
-                        error = %e,
+                        error = %error_msg,
                         "Re-extraction failed"
                     );
 
@@ -1104,7 +1107,7 @@ impl UsenetDownloader {
                     }
 
                     // Set error message
-                    if let Err(db_err) = downloader.db.set_error(id, &e.to_string()).await {
+                    if let Err(db_err) = downloader.db.set_error(id, &error_msg).await {
                         tracing::error!(
                             download_id = id,
                             error = %db_err,
@@ -1116,7 +1119,7 @@ impl UsenetDownloader {
                     downloader.emit_event(Event::Failed {
                         id,
                         stage: Stage::Extract,
-                        error: e.to_string(),
+                        error: error_msg.clone(),
                         files_kept: true,
                     });
 
@@ -1128,7 +1131,7 @@ impl UsenetDownloader {
                         download.category.clone(),
                         "failed".to_string(),
                         None,
-                        Some(e.to_string()),
+                        Some(error_msg.clone()),
                     );
 
                     // Trigger scripts for failed event
@@ -1139,7 +1142,7 @@ impl UsenetDownloader {
                         download.category.clone(),
                         "failed".to_string(),
                         None,
-                        Some(e.to_string()),
+                        Some(error_msg),
                         download.size_bytes as u64,
                     );
                 }
@@ -1382,13 +1385,13 @@ impl UsenetDownloader {
     ///     watch_folder: None,
     ///     scripts: vec![],
     /// };
-    /// downloader.add_or_update_category("movies".to_string(), category_config).await;
+    /// downloader.add_or_update_category("movies", category_config).await;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn add_or_update_category(&self, name: String, config: crate::config::CategoryConfig) {
+    pub async fn add_or_update_category(&self, name: &str, config: crate::config::CategoryConfig) {
         let mut categories = self.categories.write().await;
-        categories.insert(name, config);
+        categories.insert(name.to_string(), config);
     }
 
     /// Remove a category
@@ -1620,10 +1623,10 @@ impl UsenetDownloader {
                 crate::config::RssFilter {
                     name: row.name,
                     include: row.include_patterns
-                        .map(|s| serde_json::from_str(&s).unwrap_or_default())
+                        .and_then(|s| serde_json::from_str(&s).ok())
                         .unwrap_or_default(),
                     exclude: row.exclude_patterns
-                        .map(|s| serde_json::from_str(&s).unwrap_or_default())
+                        .and_then(|s| serde_json::from_str(&s).ok())
                         .unwrap_or_default(),
                     min_size: row.min_size.map(|s| s as u64),
                     max_size: row.max_size.map(|s| s as u64),
@@ -1685,10 +1688,10 @@ impl UsenetDownloader {
     }
 
     /// Add a new RSS feed
-    pub async fn add_rss_feed(&self, name: String, config: crate::config::RssFeedConfig) -> Result<i64> {
+    pub async fn add_rss_feed(&self, name: &str, config: crate::config::RssFeedConfig) -> Result<i64> {
         // Insert the feed
         let feed_id = self.db.insert_rss_feed(
-            &name,
+            name,
             &config.url,
             config.check_interval.as_secs() as i64,
             config.category.as_deref(),
@@ -1728,11 +1731,11 @@ impl UsenetDownloader {
     }
 
     /// Update an existing RSS feed
-    pub async fn update_rss_feed(&self, id: i64, name: String, config: crate::config::RssFeedConfig) -> Result<bool> {
+    pub async fn update_rss_feed(&self, id: i64, name: &str, config: crate::config::RssFeedConfig) -> Result<bool> {
         // Update the feed
         let updated = self.db.update_rss_feed(
             id,
-            &name,
+            name,
             &config.url,
             config.check_interval.as_secs() as i64,
             config.category.as_deref(),
@@ -2355,7 +2358,17 @@ impl UsenetDownloader {
         destination: Option<PathBuf>,
         error: Option<String>,
     ) {
-        let webhooks = self.config.webhooks.clone();
+        // Filter to only webhooks that match this event type before cloning
+        let matching_webhooks: Vec<_> = self.config.webhooks.iter()
+            .filter(|w| w.events.contains(&event_type))
+            .cloned()
+            .collect();
+
+        // Early return if no webhooks are subscribed
+        if matching_webhooks.is_empty() {
+            return;
+        }
+
         let event_tx = Arc::clone(&self.event_tx);
 
         // Spawn async task to send webhooks (fire and forget)
@@ -2369,28 +2382,24 @@ impl UsenetDownloader {
                 crate::config::WebhookEvent::OnQueued => "queued",
             };
 
-            for webhook in webhooks.iter() {
-                // Check if this webhook is subscribed to this event type
-                if !webhook.events.contains(&event_type) {
-                    continue;
-                }
+            // Build shared payload once - use Arc to share across webhooks
+            let payload = Arc::new(crate::types::WebhookPayload {
+                event: event_str.to_string(),
+                download_id,
+                name,
+                category,
+                status,
+                destination,
+                error,
+                timestamp,
+            });
 
-                let payload = crate::types::WebhookPayload {
-                    event: event_str.to_string(),
-                    download_id,
-                    name: name.clone(),
-                    category: category.clone(),
-                    status: status.clone(),
-                    destination: destination.clone(),
-                    error: error.clone(),
-                    timestamp,
-                };
-
+            for webhook in matching_webhooks {
                 // Build HTTP client for this webhook
                 let client = reqwest::Client::new();
                 let mut request = client
                     .post(&webhook.url)
-                    .json(&payload)
+                    .json(payload.as_ref())
                     .timeout(webhook.timeout);
 
                 // Add authentication header if configured
@@ -2398,8 +2407,8 @@ impl UsenetDownloader {
                     request = request.header("Authorization", auth);
                 }
 
-                // Send the webhook request - clone url once for potential error reporting
-                let url = webhook.url.clone();
+                // url is moved into the async block, only cloned for error reporting if needed
+                let url = webhook.url;
                 let timeout = webhook.timeout;
                 let result = tokio::time::timeout(
                     timeout,
@@ -2417,7 +2426,7 @@ impl UsenetDownloader {
                             );
                             tracing::warn!(url = %url, error = %error_msg, "webhook failed");
                             event_tx.send(Event::WebhookFailed {
-                                url: url.clone(),
+                                url,
                                 error: error_msg,
                             }).ok();
                         } else {
@@ -2428,7 +2437,7 @@ impl UsenetDownloader {
                         let error_msg = format!("Failed to send webhook: {}", e);
                         tracing::warn!(url = %url, error = %error_msg, "webhook failed");
                         event_tx.send(Event::WebhookFailed {
-                            url: url.clone(),
+                            url,
                             error: error_msg,
                         }).ok();
                     }
@@ -2436,7 +2445,7 @@ impl UsenetDownloader {
                         let error_msg = format!("Webhook timed out after {:?}", timeout);
                         tracing::warn!(url = %url, error = %error_msg, "webhook timeout");
                         event_tx.send(Event::WebhookFailed {
-                            url: url.clone(),
+                            url,
                             error: error_msg,
                         }).ok();
                     }
@@ -3411,7 +3420,7 @@ impl UsenetDownloader {
                                 let batch_tx = batch_tx.clone();  // Clone sender for batched status updates
                                 let speed_limiter = Arc::clone(&speed_limiter_clone);
                                 let cancel_token = cancel_token.clone();
-                                let download_temp_dir = download_temp_dir.as_path().to_owned();
+                                let download_temp_dir = download_temp_dir.clone();
                                 let downloaded_bytes = Arc::clone(&downloaded_bytes);
                                 let downloaded_articles = Arc::clone(&downloaded_articles);
                                 let pipeline_depth = pipeline_depth;  // Copy pipeline depth for use in async closure

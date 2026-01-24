@@ -295,7 +295,21 @@ impl RarExtractor {
                 passwords.len()
             );
 
-            match Self::try_extract(archive_path, password, dest_path) {
+            // Use spawn_blocking to avoid blocking the async runtime during extraction
+            let archive_path_owned = archive_path.to_path_buf();
+            let dest_path_owned = dest_path.to_path_buf();
+            let password_owned = password.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
+            })
+            .await
+            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+                archive: archive_path.to_path_buf(),
+                reason: format!("extraction task panicked: {}", e),
+            }))?;
+
+            match result {
                 Ok(files) => {
                     info!(
                         download_id,
@@ -502,7 +516,21 @@ impl SevenZipExtractor {
                 passwords.len()
             );
 
-            match Self::try_extract(archive_path, password, dest_path) {
+            // Use spawn_blocking to avoid blocking the async runtime during extraction
+            let archive_path_owned = archive_path.to_path_buf();
+            let dest_path_owned = dest_path.to_path_buf();
+            let password_owned = password.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
+            })
+            .await
+            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+                archive: archive_path.to_path_buf(),
+                reason: format!("extraction task panicked: {}", e),
+            }))?;
+
+            match result {
                 Ok(files) => {
                     info!(
                         download_id,
@@ -745,7 +773,21 @@ impl ZipExtractor {
                 passwords.len()
             );
 
-            match Self::try_extract(archive_path, password, dest_path) {
+            // Use spawn_blocking to avoid blocking the async runtime during extraction
+            let archive_path_owned = archive_path.to_path_buf();
+            let dest_path_owned = dest_path.to_path_buf();
+            let password_owned = password.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
+            })
+            .await
+            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+                archive: archive_path.to_path_buf(),
+                reason: format!("extraction task panicked: {}", e),
+            }))?;
+
+            match result {
                 Ok(files) => {
                     info!(
                         download_id,

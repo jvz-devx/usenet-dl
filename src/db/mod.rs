@@ -114,7 +114,7 @@ impl From<HistoryRow> for HistoryEntry {
             download_time: Duration::from_secs(row.download_time_secs as u64),
             completed_at: Utc.timestamp_opt(row.completed_at, 0)
                 .single()
-                .unwrap_or_else(|| Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()),
+                .unwrap_or_else(Utc::now),
         }
     }
 }
