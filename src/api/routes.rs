@@ -1336,7 +1336,7 @@ pub async fn create_or_update_category(
     Json(category_config): Json<crate::config::CategoryConfig>,
 ) -> impl IntoResponse {
     // Add or update the category
-    state.downloader.add_or_update_category(name, category_config).await;
+    state.downloader.add_or_update_category(&name, category_config).await;
 
     // Return 204 No Content on success
     StatusCode::NO_CONTENT
@@ -1642,7 +1642,7 @@ pub async fn add_rss_feed(
     }
 
     // Add the feed
-    match state.downloader.add_rss_feed(request.name, request.config).await {
+    match state.downloader.add_rss_feed(&request.name, request.config).await {
         Ok(id) => (
             StatusCode::CREATED,
             Json(json!({ "id": id }))
@@ -1697,7 +1697,7 @@ pub async fn update_rss_feed(
     }
 
     // Update the feed
-    match state.downloader.update_rss_feed(id, request.name, request.config).await {
+    match state.downloader.update_rss_feed(id, &request.name, request.config).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (
             StatusCode::NOT_FOUND,

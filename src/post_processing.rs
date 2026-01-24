@@ -282,35 +282,32 @@ impl PostProcessor {
             self.config.file_collision
         );
 
-        // Check if source exists
-        if !source_path.exists() {
-            return Err(crate::error::Error::PostProcess(PostProcessError::InvalidPath {
-                path: source_path.clone(),
-                reason: "Source path does not exist".to_string(),
-            }));
-        }
+        // Check if source exists and get its type
+        let source_metadata = match fs::metadata(source_path).await {
+            Ok(meta) => meta,
+            Err(_) => {
+                return Err(crate::error::Error::PostProcess(PostProcessError::InvalidPath {
+                    path: source_path.clone(),
+                    reason: "Source path does not exist".to_string(),
+                }));
+            }
+        };
 
         // Ensure destination parent directory exists
         if let Some(parent) = destination.parent() {
-            if !parent.exists() {
-                debug!(
-                    download_id,
-                    ?parent,
-                    "creating destination parent directory"
-                );
-                fs::create_dir_all(parent).await?;
-            }
+            // create_dir_all handles the case when directory already exists
+            fs::create_dir_all(parent).await?;
         }
 
         // If source is a file, move it directly
-        if source_path.is_file() {
+        if source_metadata.is_file() {
             return self
                 .move_single_file(download_id, source_path, destination)
                 .await;
         }
 
         // If source is a directory, move all its contents
-        if source_path.is_dir() {
+        if source_metadata.is_dir() {
             return self
                 .move_directory_contents(download_id, source_path, destination)
                 .await;
@@ -372,10 +369,8 @@ impl PostProcessor {
                 "moving directory contents"
             );
 
-            // Create destination directory if it doesn't exist
-            if !destination.exists() {
-                fs::create_dir_all(destination).await?;
-            }
+            // Create destination directory (create_dir_all handles existing)
+            fs::create_dir_all(destination).await?;
 
             // Read all entries in source directory
             let mut entries = fs::read_dir(source_dir).await?;
@@ -386,11 +381,14 @@ impl PostProcessor {
                 let entry_name = entry.file_name();
                 let dest_entry_path = destination.join(&entry_name);
 
-                if source_entry_path.is_file() {
+                // Get file type from the entry (avoids extra syscall)
+                let file_type = entry.file_type().await?;
+
+                if file_type.is_file() {
                     // Move file with collision handling
                     self.move_single_file(download_id, &source_entry_path, &dest_entry_path)
                         .await?;
-                } else if source_entry_path.is_dir() {
+                } else if file_type.is_dir() {
                     // Recursively move subdirectory
                     self.move_directory_contents(download_id, &source_entry_path, &dest_entry_path)
                         .await?;
@@ -458,19 +456,20 @@ impl PostProcessor {
             "cleaning up intermediate files"
         );
 
-        if !download_path.exists() {
+        // Check if download path exists using async fs
+        if fs::metadata(download_path).await.is_err() {
             debug!(download_id, ?download_path, "download path does not exist, skipping cleanup");
             return Ok(());
         }
 
-        // Collect all target extensions (case-insensitive comparison)
-        let target_extensions: Vec<String> = self
+        // Collect all target extensions (keep original case, compare case-insensitively)
+        let target_extensions: Vec<&str> = self
             .config
             .cleanup
             .target_extensions
             .iter()
             .chain(self.config.cleanup.archive_extensions.iter())
-            .map(|ext| ext.to_lowercase())
+            .map(|ext| ext.as_str())
             .collect();
 
         // Recursively walk the directory and collect files/folders to delete
@@ -527,15 +526,16 @@ impl PostProcessor {
     fn collect_cleanup_targets<'a>(
         &'a self,
         path: &'a PathBuf,
-        target_extensions: &'a [String],
+        target_extensions: &'a [&'a str],
         files_to_delete: &'a mut Vec<PathBuf>,
         folders_to_delete: &'a mut Vec<PathBuf>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             use tokio::fs;
 
-            // Check if this is a sample folder
-            if path.is_dir() && self.config.cleanup.delete_samples {
+            // Check if this is a sample folder (using async metadata check)
+            let is_dir = fs::metadata(path).await.map(|m| m.is_dir()).unwrap_or(false);
+            if is_dir && self.config.cleanup.delete_samples {
                 if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
                     // Check if folder name matches any sample folder names (case-insensitive)
                     let is_sample = self
@@ -565,15 +565,20 @@ impl PostProcessor {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let entry_path = entry.path();
 
-                if entry_path.is_file() {
-                    // Check if file extension matches target extensions
+                // Get file type from the entry (async, avoids extra syscall)
+                let file_type = match entry.file_type().await {
+                    Ok(ft) => ft,
+                    Err(_) => continue,
+                };
+
+                if file_type.is_file() {
+                    // Check if file extension matches target extensions (case-insensitive)
                     if let Some(extension) = entry_path.extension().and_then(|e| e.to_str()) {
-                        let ext_lower = extension.to_lowercase();
-                        if target_extensions.contains(&ext_lower) {
+                        if target_extensions.iter().any(|ext| ext.eq_ignore_ascii_case(extension)) {
                             files_to_delete.push(entry_path);
                         }
                     }
-                } else if entry_path.is_dir() {
+                } else if file_type.is_dir() {
                     // Recursively check subdirectories
                     self.collect_cleanup_targets(
                         &entry_path,

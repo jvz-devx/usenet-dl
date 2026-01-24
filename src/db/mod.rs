@@ -114,7 +114,7 @@ impl From<HistoryRow> for HistoryEntry {
             download_time: Duration::from_secs(row.download_time_secs as u64),
             completed_at: Utc.timestamp_opt(row.completed_at, 0)
                 .single()
-                .unwrap_or_else(|| Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()),
+                .unwrap_or_else(Utc::now),
         }
     }
 }
@@ -1425,7 +1425,7 @@ impl Database {
     ///
     /// Returns Ok(()) on success, or an error if the database operation fails.
     pub async fn mark_nzb_processed(&self, path: &std::path::Path) -> Result<()> {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().into_owned();
         let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
@@ -1455,7 +1455,7 @@ impl Database {
     ///
     /// Returns true if the NZB has been processed before, false otherwise.
     pub async fn is_nzb_processed(&self, path: &std::path::Path) -> Result<bool> {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().into_owned();
 
         let count: i64 = sqlx::query_scalar(
             r#"

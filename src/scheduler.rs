@@ -36,7 +36,7 @@
 //! };
 //! ```
 
-use chrono::{Datelike, NaiveTime, Timelike};
+use chrono::{Datelike, NaiveTime};
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a schedule rule
@@ -252,11 +252,13 @@ impl Scheduler {
 
         self.rules
             .iter()
-            .filter(|r| r.enabled)
-            .filter(|r| r.days.is_empty() || r.days.contains(&weekday))
-            .filter(|r| time >= r.start_time && time < r.end_time)
+            .find(|r| {
+                r.enabled
+                    && (r.days.is_empty() || r.days.contains(&weekday))
+                    && time >= r.start_time
+                    && time < r.end_time
+            })
             .map(|r| r.action.clone())
-            .next()
     }
 }
 
@@ -292,6 +294,7 @@ mod time_format {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn test_schedule_rule_creation() {

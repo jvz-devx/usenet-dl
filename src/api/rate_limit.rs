@@ -103,6 +103,7 @@ impl RateLimiter {
         }
 
         // Get or create token bucket for this IP
+        // Scope the lock tightly to avoid holding it during try_consume
         let mut buckets = self.buckets.lock().await;
         let bucket = buckets.entry(addr.ip()).or_insert_with(|| {
             TokenBucket::new(
@@ -110,7 +111,8 @@ impl RateLimiter {
                 self.config.burst_size,
             )
         });
-
+        // try_consume is fast, so holding the lock briefly is acceptable
+        // The bucket is modified in place, so we need the mutable borrow
         bucket.try_consume()
     }
 }

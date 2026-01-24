@@ -851,7 +851,7 @@ fn default_size_multiplier() -> f64 {
 }
 
 fn default_bind_address() -> SocketAddr {
-    "127.0.0.1:6789".parse().unwrap()
+    SocketAddr::from(([127, 0, 0, 1], 6789))
 }
 
 fn default_cors_origins() -> Vec<String> {

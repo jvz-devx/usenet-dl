@@ -12,7 +12,7 @@ rust-version = "1.70"
 
 [dependencies]
 # Core NNTP functionality
-nntp-rs = { path = "../nntp-rs" }
+nntp-rs = { git = "https://github.com/jvz-devx/nntp-rs", branch = "main" }
 
 # Async runtime
 tokio = { version = "1", features = ["full", "signal"] }
