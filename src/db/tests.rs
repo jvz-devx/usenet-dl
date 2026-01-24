@@ -1265,7 +1265,7 @@ async fn test_history_ordering() {
 
 #[tokio::test]
 async fn test_shutdown_state_initial() {
-    // Task 9.7: Test initial shutdown state after migration
+    // Test initial shutdown state after migration
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1278,7 +1278,7 @@ async fn test_shutdown_state_initial() {
 
 #[tokio::test]
 async fn test_shutdown_state_clean_lifecycle() {
-    // Task 9.7: Test clean start and shutdown sequence
+    // Test clean start and shutdown sequence
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1297,7 +1297,7 @@ async fn test_shutdown_state_clean_lifecycle() {
 
 #[tokio::test]
 async fn test_shutdown_state_unclean_detection() {
-    // Task 9.7: Test unclean shutdown detection (crash scenario)
+    // Test unclean shutdown detection (crash scenario)
     let temp_file = NamedTempFile::new().unwrap();
 
     // First session: start but don't shut down cleanly (simulating crash)
@@ -1331,7 +1331,7 @@ async fn test_shutdown_state_unclean_detection() {
 
 #[tokio::test]
 async fn test_rss_tables_schema() {
-    // Task 26.4: Test RSS feed tables schema
+    // Test RSS feed tables schema
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1423,7 +1423,7 @@ async fn test_rss_tables_schema() {
 
 #[tokio::test]
 async fn test_rss_seen_primary_key_constraint() {
-    // Task 26.4: Test rss_seen composite primary key
+    // Test rss_seen composite primary key
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1480,7 +1480,7 @@ async fn test_rss_seen_primary_key_constraint() {
 
 #[tokio::test]
 async fn test_rss_feeds_default_values() {
-    // Task 26.4: Test RSS feed default values
+    // Test RSS feed default values
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1520,7 +1520,7 @@ async fn test_rss_feeds_default_values() {
 
 #[tokio::test]
 async fn test_is_rss_item_seen_returns_false_for_new_item() {
-    // Task 26.8: Test is_rss_item_seen returns false for new items
+    // Test is_rss_item_seen returns false for new items
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1552,7 +1552,7 @@ async fn test_is_rss_item_seen_returns_false_for_new_item() {
 
 #[tokio::test]
 async fn test_mark_rss_item_seen_and_check() {
-    // Task 26.8: Test marking an item as seen and checking it
+    // Test marking an item as seen and checking it
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1593,7 +1593,7 @@ async fn test_mark_rss_item_seen_and_check() {
 
 #[tokio::test]
 async fn test_mark_rss_item_seen_idempotent() {
-    // Task 26.8: Test that marking the same item multiple times is idempotent
+    // Test that marking the same item multiple times is idempotent
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1651,7 +1651,7 @@ async fn test_mark_rss_item_seen_idempotent() {
 
 #[tokio::test]
 async fn test_rss_item_seen_different_feeds() {
-    // Task 26.8: Test that same GUID in different feeds are tracked separately
+    // Test that same GUID in different feeds are tracked separately
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 
@@ -1717,7 +1717,7 @@ async fn test_rss_item_seen_different_feeds() {
 
 #[tokio::test]
 async fn test_rss_item_seen_with_different_guids() {
-    // Task 26.8: Test tracking multiple different items in same feed
+    // Test tracking multiple different items in same feed
     let temp_file = NamedTempFile::new().unwrap();
     let db = Database::new(temp_file.path()).await.unwrap();
 

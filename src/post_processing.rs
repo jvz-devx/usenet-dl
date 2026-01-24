@@ -162,8 +162,8 @@ impl PostProcessor {
             })
             .ok();
 
-        // TODO: Implement PAR2 verification using nntp-rs
-        // For now, just simulate success
+        // PAR2 verification not yet implemented
+        // Future: Use nntp-rs PAR2 support when available
         warn!(download_id, "PAR2 verification not yet implemented");
 
         // Emit VerifyComplete event
@@ -185,9 +185,8 @@ impl PostProcessor {
     ) -> Result<()> {
         debug!(download_id, ?download_path, "running repair stage");
 
-        // TODO: Implement PAR2 repair
-        // Note: nntp-rs only supports verification, not repair
-        // We may need external par2cmdline tool or skip this in MVP
+        // PAR2 repair not yet implemented
+        // Note: May require external par2cmdline tool
         warn!(download_id, "PAR2 repair not yet implemented");
 
         Ok(())
@@ -210,7 +209,7 @@ impl PostProcessor {
             })
             .ok();
 
-        // TODO: Implement archive extraction (RAR, 7z, ZIP)
+        // Archive extraction not yet implemented (RAR, 7z, ZIP)
         warn!(download_id, "archive extraction not yet implemented");
 
         // Emit ExtractComplete event

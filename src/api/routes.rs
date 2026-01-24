@@ -596,8 +596,8 @@ pub async fn delete_download(
     Path(id): Path<i64>,
     Query(_params): Query<DeleteDownloadQuery>,
 ) -> impl IntoResponse {
-    // TODO: Use delete_files parameter to control whether to delete final destination files
-    // Currently always deletes temp files via cancel()
+    // Note: delete_files parameter currently ignored
+    // Always deletes temp files via cancel()
     match state.downloader.cancel(id).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {

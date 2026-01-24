@@ -1933,7 +1933,7 @@ impl UsenetDownloader {
     /// 3. Persists final state to the database
     /// 4. Closes database connections
     ///
-    /// Note: In Phase 4+, this will also stop folder watchers and RSS feed checks.
+    /// Note: This will also stop folder watchers and RSS feed checks when available.
     ///
     /// # Errors
     ///
@@ -2080,18 +2080,18 @@ impl UsenetDownloader {
     ///
     /// # Current Implementation
     ///
-    /// In the current implementation (Phase 1), download states are already persisted
+    /// In the current implementation, download states are already persisted
     /// to the database throughout their lifecycle:
     /// - Status changes are immediately written via `update_status()`
     /// - Progress updates are written via `update_progress()`
     /// - Article status is tracked in the `download_articles` table
     ///
-    /// # Future Phases
+    /// # Future Extensions
     ///
     /// As additional features are implemented, this method will be extended to persist:
-    /// - Folder watcher state (Phase 4)
-    /// - RSS feed state and seen items (Phase 4)
-    /// - Scheduler state (Phase 4)
+    /// - Folder watcher state
+    /// - RSS feed state and seen items
+    /// - Scheduler state
     /// - Any in-memory caches or buffers
     ///
     /// # Returns
@@ -2671,7 +2671,7 @@ impl UsenetDownloader {
         // Calculate total size
         let size_bytes = nzb.total_bytes() as i64;
 
-        // Check if sufficient disk space is available (Task 31.3)
+        // Check if sufficient disk space is available
         self.check_disk_space(size_bytes).await?;
 
         // Calculate NZB hash for duplicate detection (sha256)
@@ -2687,7 +2687,7 @@ impl UsenetDownloader {
 
         // Check for duplicates before proceeding
         if let Some(dup_info) = self.check_duplicate(content, name).await {
-            // Emit warning event about duplicate (Task 28.7)
+            // Emit warning event about duplicate
             self.emit_event(Event::DuplicateDetected {
                 id: dup_info.existing_id,
                 name: name.to_string(),
@@ -3412,7 +3412,7 @@ impl UsenetDownloader {
                                     }
 
                                     // Get a connection from the first NNTP pool
-                                    // TODO: Add multi-server failover in future tasks
+                                    // Note: Multi-server failover not yet implemented
                                     let pool = match pool.first() {
                                         Some(p) => p,
                                         None => {
@@ -4037,7 +4037,7 @@ impl UsenetDownloader {
 
                     async move {
                         // Get a connection from the first NNTP pool
-                        // TODO: Add multi-server failover in future tasks
+                        // Note: Multi-server failover not yet implemented
                         let pool = nntp_pools
                             .first()
                             .ok_or_else(|| "No NNTP pools configured".to_string())?;
@@ -4341,7 +4341,7 @@ impl UsenetDownloader {
 
                 self.event_tx.send(crate::types::Event::Failed {
                     id: download_id,
-                    stage: crate::types::Stage::Extract, // TODO: Track actual stage
+                    stage: crate::types::Stage::Extract, // Default to Extract stage
                     error: e.to_string(),
                     files_kept: true, // Default: keep files on failure
                 }).ok();

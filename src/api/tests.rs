@@ -3991,7 +3991,7 @@ async fn test_swagger_ui_try_it_out_functionality() {
 
 #[tokio::test]
 async fn test_openapi_spec_validation() {
-    println!("\n📋 Testing OpenAPI Specification Validation (Task 22.3)");
+    println!("\n📋 Testing OpenAPI Specification Validation");
     println!("═══════════════════════════════════════════════════════\n");
 
     // Create test downloader and API
