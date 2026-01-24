@@ -36,7 +36,7 @@ By participating in this project, you agree to maintain a respectful, inclusive 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/usenet-dl.git
+git clone https://github.com/jvz-devx/usenet-dl.git
 cd usenet-dl
 
 # Build the project
@@ -133,17 +133,26 @@ usenet-dl/
 │       ├── openapi.rs      # OpenAPI documentation
 │       └── sse.rs          # Server-Sent Events
 ├── examples/
-│   ├── basic_usage.rs      # Simple usage example
-│   ├── with_api.rs         # REST API example
-│   ├── custom_config.rs    # Configuration example
-│   └── event_subscriber.rs # Event subscription example
-├── tests/                  # Integration tests (in-file with #[cfg(test)])
+│   ├── basic_download.rs       # Simple usage example
+│   ├── rest_api_server.rs      # REST API example
+│   ├── custom_configuration.rs # Configuration example
+│   ├── multi_subscriber.rs     # Event subscription example
+│   ├── speedtest.rs            # Performance testing
+│   └── README.md               # Examples documentation
+├── tests/
+│   └── manual/                 # Manual testing guides
+│       ├── api-testing.md      # API testing procedures
+│       ├── server-testing.md   # NNTP server testing
+│       └── rss-testing.md      # RSS feed testing
 ├── docs/
-│   ├── README.md           # Main documentation
-│   ├── API_USAGE.md        # REST API documentation
-│   ├── CONFIGURATION.md    # Configuration reference
-│   ├── CHANGELOG.md        # Version history
-│   └── CONTRIBUTING.md     # This file
+│   ├── getting-started.md      # Installation and basic usage
+│   ├── configuration.md        # Configuration reference
+│   ├── api-reference.md        # REST API documentation
+│   ├── architecture.md         # System design and modules
+│   ├── post-processing.md      # Extraction and cleanup
+│   └── contributing.md         # This file
+├── README.md               # Project overview
+├── CHANGELOG.md            # Version history
 └── Cargo.toml              # Project manifest
 ```
 
@@ -453,8 +462,8 @@ All public APIs must have rustdoc comments with:
 
 When updating features, also update:
 - **README.md**: Feature list, quick start
-- **API_USAGE.md**: REST API endpoints and examples
-- **CONFIGURATION.md**: Configuration options
+- **docs/api-reference.md**: REST API endpoints and examples
+- **docs/configuration.md**: Configuration options
 - **CHANGELOG.md**: Version history (follow [Keep a Changelog](https://keepachangelog.com/))
 
 ### Examples
@@ -590,7 +599,7 @@ Include:
 
 **Do not open public issues for security vulnerabilities.**
 
-Email security reports to: [security@example.com] (TODO: update with actual email)
+Please report security vulnerabilities by opening a private security advisory on GitHub or by contacting the maintainers directly.
 
 Include:
 - Description of the vulnerability
@@ -675,7 +684,7 @@ SELECT id, name, status FROM downloads;
 
 ## Questions?
 
-- **Documentation**: Check README.md, API_USAGE.md, CONFIGURATION.md
+- **Documentation**: Check README.md and the `docs/` directory
 - **Examples**: See `examples/` directory
 - **Issues**: Search existing issues on GitHub
 - **Discussions**: Open a GitHub discussion for questions
@@ -686,4 +695,4 @@ By contributing to usenet-dl, you agree that your contributions will be licensed
 
 ---
 
-Thank you for contributing to usenet-dl! 🎉
+Thank you for contributing to usenet-dl!
