@@ -1425,7 +1425,7 @@ impl Database {
     ///
     /// Returns Ok(()) on success, or an error if the database operation fails.
     pub async fn mark_nzb_processed(&self, path: &std::path::Path) -> Result<()> {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().into_owned();
         let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
@@ -1455,7 +1455,7 @@ impl Database {
     ///
     /// Returns true if the NZB has been processed before, false otherwise.
     pub async fn is_nzb_processed(&self, path: &std::path::Path) -> Result<bool> {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().into_owned();
 
         let count: i64 = sqlx::query_scalar(
             r#"

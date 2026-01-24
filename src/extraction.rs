@@ -8,6 +8,7 @@ use crate::db::Database;
 use crate::error::{Error, PostProcessError, Result};
 use crate::types::{ArchiveType, DownloadId};
 use std::path::{Path, PathBuf};
+use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
 /// Detect archive type by file extension
@@ -300,7 +301,7 @@ impl RarExtractor {
             let dest_path_owned = dest_path.to_path_buf();
             let password_owned = password.clone();
 
-            let result = tokio::task::spawn_blocking(move || {
+            let result = spawn_blocking(move || {
                 Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
             })
             .await
@@ -521,7 +522,7 @@ impl SevenZipExtractor {
             let dest_path_owned = dest_path.to_path_buf();
             let password_owned = password.clone();
 
-            let result = tokio::task::spawn_blocking(move || {
+            let result = spawn_blocking(move || {
                 Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
             })
             .await
@@ -778,7 +779,7 @@ impl ZipExtractor {
             let dest_path_owned = dest_path.to_path_buf();
             let password_owned = password.clone();
 
-            let result = tokio::task::spawn_blocking(move || {
+            let result = spawn_blocking(move || {
                 Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
             })
             .await

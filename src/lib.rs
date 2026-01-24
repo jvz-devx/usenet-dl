@@ -1706,14 +1706,14 @@ impl UsenetDownloader {
                 None
             } else {
                 Some(serde_json::to_string(&filter.include)
-                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize include filter: {}", e)))?)
+                    ?)
             };
 
             let exclude_json = if filter.exclude.is_empty() {
                 None
             } else {
                 Some(serde_json::to_string(&filter.exclude)
-                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize exclude filter: {}", e)))?)
+                    ?)
             };
 
             self.db.insert_rss_filter(
@@ -1756,14 +1756,14 @@ impl UsenetDownloader {
                 None
             } else {
                 Some(serde_json::to_string(&filter.include)
-                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize include filter: {}", e)))?)
+                    ?)
             };
 
             let exclude_json = if filter.exclude.is_empty() {
                 None
             } else {
                 Some(serde_json::to_string(&filter.exclude)
-                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize exclude filter: {}", e)))?)
+                    ?)
             };
 
             self.db.insert_rss_filter(
@@ -2369,7 +2369,7 @@ impl UsenetDownloader {
             return;
         }
 
-        let event_tx = Arc::clone(&self.event_tx);
+        let event_tx = self.event_tx.clone();
 
         // Spawn async task to send webhooks (fire and forget)
         tokio::spawn(async move {
@@ -2778,7 +2778,7 @@ impl UsenetDownloader {
             nzb_hash: Some(nzb_hash),
             job_name: Some(job_name),
             category: options.category.clone(),
-            destination: destination.to_string_lossy().to_string(),
+            destination: destination.to_string_lossy().into_owned(),
             post_process: post_process.to_i32(),
             priority: options.priority as i32,
             status: Status::Queued.to_i32(),
@@ -3093,13 +3093,13 @@ impl UsenetDownloader {
                         }
                     };
 
-                    // Clone dependencies for the download task (use Arc::clone for clarity)
+                    // Clone dependencies for the download task
                     let db_clone = Arc::clone(&db);
-                    let event_tx_clone = Arc::clone(&event_tx);
+                    let event_tx_clone = event_tx.clone();
                     let nntp_pools_clone = Arc::clone(&nntp_pools);
                     let config_clone = Arc::clone(&config);
                     let active_downloads_clone = Arc::clone(&active_downloads);
-                    let speed_limiter_clone = Arc::clone(&speed_limiter);
+                    let speed_limiter_clone = speed_limiter.clone();
                     let downloader_clone = downloader.clone();
 
                     // Create cancellation token for this download
@@ -3409,21 +3409,23 @@ impl UsenetDownloader {
                         //
                         // Pipelining improvement: Each connection now fetches pipeline_depth articles
                         // per round-trip instead of 1, significantly reducing latency overhead.
-                        let results: Vec<std::result::Result<Vec<(i32, u64)>, (String, usize)>> = stream::iter(
-                            pending_articles
-                                .chunks(pipeline_depth)
-                                .map(|chunk| chunk.to_vec())
-                        )
+                        // Collect chunks into owned Vecs to avoid lifetime issues with async closures
+                        let article_batches: Vec<Vec<_>> = pending_articles
+                            .chunks(pipeline_depth)
+                            .map(|chunk| chunk.to_vec())
+                            .collect();
+
+                        let results: Vec<std::result::Result<Vec<(i32, u64)>, (String, usize)>> = stream::iter(article_batches)
                             .map(|article_batch| {
-                                // Clone variables needed in the async closure (use Arc::clone for clarity)
+                                // Clone variables needed in the async closure
                                 let pool = Arc::clone(&nntp_pools_clone);
-                                let batch_tx = batch_tx.clone();  // Clone sender for batched status updates
-                                let speed_limiter = Arc::clone(&speed_limiter_clone);
+                                let batch_tx = batch_tx.clone();
+                                let speed_limiter = speed_limiter_clone.clone();
                                 let cancel_token = cancel_token.clone();
                                 let download_temp_dir = download_temp_dir.clone();
                                 let downloaded_bytes = Arc::clone(&downloaded_bytes);
                                 let downloaded_articles = Arc::clone(&downloaded_articles);
-                                let pipeline_depth = pipeline_depth;  // Copy pipeline depth for use in async closure
+                                let pipeline_depth = pipeline_depth;
 
                                 async move {
                                     let batch_size = article_batch.len();
@@ -3814,13 +3816,18 @@ impl UsenetDownloader {
         }
 
         // Create RSS manager instance
-        let rss_manager = std::sync::Arc::new(
-            rss_manager::RssManager::new(
-                self.db.clone(),
-                std::sync::Arc::new(self.clone()),
-                rss_feeds.clone(),
-            ).expect("Failed to create RSS manager")
-        );
+        let rss_manager = match rss_manager::RssManager::new(
+            self.db.clone(),
+            std::sync::Arc::new(self.clone()),
+            rss_feeds.clone(),
+        ) {
+            Ok(manager) => std::sync::Arc::new(manager),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create RSS manager");
+                // Return a completed task handle on error
+                return tokio::spawn(async {});
+            }
+        };
 
         // Create scheduler instance
         let scheduler = rss_scheduler::RssScheduler::new(

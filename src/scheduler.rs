@@ -36,7 +36,7 @@
 //! };
 //! ```
 
-use chrono::{Datelike, NaiveTime, Timelike};
+use chrono::{Datelike, NaiveTime};
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a schedule rule
@@ -294,6 +294,7 @@ mod time_format {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn test_schedule_rule_creation() {
