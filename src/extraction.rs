@@ -51,21 +51,27 @@ impl PasswordList {
         let mut passwords = Vec::new();
 
         // Add in priority order, skip duplicates
+        // Use reference in HashSet to avoid double allocation
         for pw in [cached_correct, download_password, nzb_meta_password]
             .into_iter()
             .flatten()
         {
-            if seen.insert(pw.to_string()) {
+            if seen.insert(pw) {
                 passwords.push(pw.to_string());
             }
         }
 
-        // Add from file
+        // Add from file - need owned strings for file content
+        let file_content;
         if let Some(path) = global_file {
             if let Ok(content) = std::fs::read_to_string(path) {
-                for line in content.lines() {
+                file_content = content;
+                for line in file_content.lines() {
                     let pw = line.trim();
-                    if !pw.is_empty() && seen.insert(pw.to_string()) {
+                    // For file passwords, we need to check if already seen as &str
+                    // but the HashSet contains &str from the parameters above
+                    // We need a different approach - collect file passwords separately
+                    if !pw.is_empty() && !passwords.iter().any(|p| p == pw) {
                         passwords.push(pw.to_string());
                     }
                 }
@@ -73,7 +79,7 @@ impl PasswordList {
         }
 
         // Empty password last
-        if try_empty && seen.insert(String::new()) {
+        if try_empty && !passwords.iter().any(|p| p.is_empty()) {
             passwords.push(String::new());
         }
 

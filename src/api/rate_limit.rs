@@ -122,8 +122,7 @@ pub async fn rate_limit_middleware(
     req: Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let path = req.uri().path().to_string();
-    match limiter.check(&path, addr).await {
+    match limiter.check(req.uri().path(), addr).await {
         None => next.run(req).await,
         Some(retry_after) => {
             let error = json!({

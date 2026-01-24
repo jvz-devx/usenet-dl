@@ -112,7 +112,9 @@ impl From<HistoryRow> for HistoryEntry {
             status: Status::from_i32(row.status),
             size_bytes: row.size_bytes as u64,
             download_time: Duration::from_secs(row.download_time_secs as u64),
-            completed_at: Utc.timestamp_opt(row.completed_at, 0).unwrap(),
+            completed_at: Utc.timestamp_opt(row.completed_at, 0)
+                .single()
+                .unwrap_or_else(|| Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()),
         }
     }
 }
@@ -1165,7 +1167,7 @@ impl Database {
         )
         .bind(&entry.name)
         .bind(&entry.category)
-        .bind(entry.destination.as_ref().map(|p| p.to_string_lossy().into_owned()))
+        .bind(entry.destination.as_ref().and_then(|p| p.to_str().map(String::from)))
         .bind(entry.status)
         .bind(entry.size_bytes as i64)
         .bind(entry.download_time_secs)
