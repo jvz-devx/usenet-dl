@@ -1,2 +1,26 @@
+# Development artifacts
+.codemachine/
+.ralph/
+plan.md
+plan_PROGRESS.md
 implementation_1_PROGRESS.md
-target/
+CLEANUP_PLAN.md
+CLEANUP_PLAN_PROGRESS.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build
+/target/
+*.db
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db

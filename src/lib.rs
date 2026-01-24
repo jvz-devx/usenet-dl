@@ -647,14 +647,18 @@ impl UsenetDownloader {
                 "No pending articles - proceeding to post-processing"
             );
 
-            // TODO: Task 10.3 - Implement start_post_processing()
-            // For now, just update status to Processing
-            self.db.update_status(id, Status::Processing.to_i32()).await?;
+            // Start post-processing pipeline asynchronously
+            let downloader = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = downloader.start_post_processing(id).await {
+                    tracing::error!(
+                        download_id = id,
+                        error = %e,
+                        "Post-processing failed"
+                    );
+                }
+            });
 
-            // Emit event to indicate post-processing stage
-            self.emit_event(Event::Verifying { id });
-
-            // TODO: Will call self.start_post_processing(id).await in Phase 2
             Ok(())
         } else {
             // Resume downloading remaining articles
@@ -1929,7 +1933,7 @@ impl UsenetDownloader {
     /// 3. Persists final state to the database
     /// 4. Closes database connections
     ///
-    /// Note: In Phase 4+, this will also stop folder watchers and RSS feed checks.
+    /// Note: This will also stop folder watchers and RSS feed checks when available.
     ///
     /// # Errors
     ///
@@ -2076,18 +2080,18 @@ impl UsenetDownloader {
     ///
     /// # Current Implementation
     ///
-    /// In the current implementation (Phase 1), download states are already persisted
+    /// In the current implementation, download states are already persisted
     /// to the database throughout their lifecycle:
     /// - Status changes are immediately written via `update_status()`
     /// - Progress updates are written via `update_progress()`
     /// - Article status is tracked in the `download_articles` table
     ///
-    /// # Future Phases
+    /// # Future Extensions
     ///
     /// As additional features are implemented, this method will be extended to persist:
-    /// - Folder watcher state (Phase 4)
-    /// - RSS feed state and seen items (Phase 4)
-    /// - Scheduler state (Phase 4)
+    /// - Folder watcher state
+    /// - RSS feed state and seen items
+    /// - Scheduler state
     /// - Any in-memory caches or buffers
     ///
     /// # Returns
@@ -2667,7 +2671,7 @@ impl UsenetDownloader {
         // Calculate total size
         let size_bytes = nzb.total_bytes() as i64;
 
-        // Check if sufficient disk space is available (Task 31.3)
+        // Check if sufficient disk space is available
         self.check_disk_space(size_bytes).await?;
 
         // Calculate NZB hash for duplicate detection (sha256)
@@ -2683,7 +2687,7 @@ impl UsenetDownloader {
 
         // Check for duplicates before proceeding
         if let Some(dup_info) = self.check_duplicate(content, name).await {
-            // Emit warning event about duplicate (Task 28.7)
+            // Emit warning event about duplicate
             self.emit_event(Event::DuplicateDetected {
                 id: dup_info.existing_id,
                 name: name.to_string(),
@@ -2761,17 +2765,21 @@ impl UsenetDownloader {
         // Insert download into database
         let download_id = self.db.insert_download(&new_download).await?;
 
-        // Insert all articles (segments) for resume support
-        for file in &nzb.files {
-            for segment in &file.segments {
-                let article = db::NewArticle {
+        // Insert all articles (segments) for resume support (batch insert for performance)
+        // SQLite has a limit of ~999 variables per query, so we chunk (5 columns per article = 199 max)
+        let articles: Vec<db::NewArticle> = nzb.files
+            .iter()
+            .flat_map(|file| {
+                file.segments.iter().map(|segment| db::NewArticle {
                     download_id,
                     message_id: segment.message_id.clone(),
                     segment_number: segment.number as i32,
                     size_bytes: segment.bytes as i64,
-                };
-                self.db.insert_article(&article).await?;
-            }
+                })
+            })
+            .collect();
+        for chunk in articles.chunks(199) {
+            self.db.insert_articles_batch(chunk).await?;
         }
 
         // Cache password if provided
@@ -3038,6 +3046,7 @@ impl UsenetDownloader {
         let config = self.config.clone();
         let active_downloads = self.active_downloads.clone();
         let speed_limiter = self.speed_limiter.clone();
+        let downloader = self.clone();
 
         tokio::spawn(async move {
             loop {
@@ -3068,6 +3077,7 @@ impl UsenetDownloader {
                     let config_clone = config.clone();
                     let active_downloads_clone = active_downloads.clone();
                     let speed_limiter_clone = speed_limiter.clone();
+                    let downloader_clone = downloader.clone();
 
                     // Create cancellation token for this download
                     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -3147,6 +3157,18 @@ impl UsenetDownloader {
                             // Clean up active downloads
                             let mut active = active_downloads_clone.lock().await;
                             active.remove(&id);
+
+                            // Start post-processing pipeline asynchronously
+                            tokio::spawn(async move {
+                                if let Err(e) = downloader_clone.start_post_processing(id).await {
+                                    tracing::error!(
+                                        download_id = id,
+                                        error = %e,
+                                        "Post-processing failed"
+                                    );
+                                }
+                            });
+
                             return;
                         }
 
@@ -3390,7 +3412,7 @@ impl UsenetDownloader {
                                     }
 
                                     // Get a connection from the first NNTP pool
-                                    // TODO: Add multi-server failover in future tasks
+                                    // Note: Multi-server failover not yet implemented
                                     let pool = match pool.first() {
                                         Some(p) => p,
                                         None => {
@@ -3596,6 +3618,18 @@ impl UsenetDownloader {
                         // Clean up: remove from active downloads
                         let mut active = active_downloads_clone.lock().await;
                         active.remove(&id);
+
+                        // Start post-processing pipeline asynchronously
+                        let downloader_clone = downloader_clone.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = downloader_clone.start_post_processing(id).await {
+                                tracing::error!(
+                                    download_id = id,
+                                    error = %e,
+                                    "Post-processing failed"
+                                );
+                            }
+                        });
                     });
                 } else {
                     // Queue is empty, wait a bit before checking again
@@ -3900,6 +3934,7 @@ impl UsenetDownloader {
         let event_tx = self.event_tx.clone();
         let nntp_pools = self.nntp_pools.clone();
         let config = self.config.clone();
+        let downloader = self.clone();
 
         tokio::spawn(async move {
             // Fetch download record
@@ -3934,6 +3969,18 @@ impl UsenetDownloader {
                 event_tx
                     .send(Event::DownloadComplete { id: download_id })
                     .ok();
+
+                // Start post-processing pipeline asynchronously
+                tokio::spawn(async move {
+                    if let Err(e) = downloader.start_post_processing(download_id).await {
+                        tracing::error!(
+                            download_id,
+                            error = %e,
+                            "Post-processing failed"
+                        );
+                    }
+                });
+
                 return Ok(());
             }
 
@@ -3990,7 +4037,7 @@ impl UsenetDownloader {
 
                     async move {
                         // Get a connection from the first NNTP pool
-                        // TODO: Add multi-server failover in future tasks
+                        // Note: Multi-server failover not yet implemented
                         let pool = nntp_pools
                             .first()
                             .ok_or_else(|| "No NNTP pools configured".to_string())?;
@@ -4170,6 +4217,17 @@ impl UsenetDownloader {
                 .send(Event::DownloadComplete { id: download_id })
                 .ok();
 
+            // Start post-processing pipeline asynchronously
+            tokio::spawn(async move {
+                if let Err(e) = downloader.start_post_processing(download_id).await {
+                    tracing::error!(
+                        download_id,
+                        error = %e,
+                        "Post-processing failed"
+                    );
+                }
+            });
+
             Ok(())
         })
     }
@@ -4283,7 +4341,7 @@ impl UsenetDownloader {
 
                 self.event_tx.send(crate::types::Event::Failed {
                     id: download_id,
-                    stage: crate::types::Stage::Extract, // TODO: Track actual stage
+                    stage: crate::types::Stage::Extract, // Default to Extract stage
                     error: e.to_string(),
                     files_kept: true, // Default: keep files on failure
                 }).ok();

@@ -187,9 +187,9 @@ Common events you'll encounter:
 ## Further Reading
 
 - **README.md** - Project overview and quick start
-- **API_TESTING.md** - REST API testing guide
-- **MANUAL_SERVER_TESTING.md** - Server health check testing
-- **implementation_1.md** - Detailed design specification
+- **tests/manual/api-testing.md** - REST API testing guide
+- **tests/manual/server-testing.md** - Server health check testing
+- **docs/architecture.md** - System design and architecture overview
 
 ## Need Help?
 

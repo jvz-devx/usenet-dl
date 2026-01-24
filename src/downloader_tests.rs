@@ -1399,11 +1399,11 @@ async fn test_pause_all_resume_all_cycle() {
     assert_eq!(d2.status, Status::Queued.to_i32());
 }
 
-// === Task 5.9: Queue State Persistence Tests ===
+// === Queue State Persistence Tests ===
 
 #[tokio::test]
 async fn test_queue_state_persisted_to_database() {
-    // Test Task 5.9: Queue state is persisted to SQLite on every change
+    // Test: Queue state is persisted to SQLite on every change
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // 1. Add download - should persist Status::Queued
@@ -1511,7 +1511,7 @@ async fn test_queue_ordering_persisted_correctly() {
 
 #[tokio::test]
 async fn test_queue_persistence_enables_restore() {
-    // Test that persisted queue state can be used to restore queue (Task 6.3 preview)
+    // Test that persisted queue state can be used to restore queue
     use tempfile::TempDir;
 
     // Create persistent temp directory for database
@@ -1703,7 +1703,7 @@ async fn test_resume_download_emits_event() {
     );
 }
 
-// Task 6.3: restore_queue() tests
+// restore_queue() tests
 
 #[tokio::test]
 async fn test_restore_queue_with_no_incomplete_downloads() {
@@ -1957,7 +1957,7 @@ async fn test_restore_queue_called_on_startup() {
 
 #[tokio::test]
 async fn test_resume_after_simulated_crash() {
-    // Task 6.6: Test resume after simulated crash (kill process mid-download)
+    // Test resume after simulated crash (kill process mid-download)
     //
     // This test simulates a crash by:
     // 1. Starting a download
@@ -2077,7 +2077,7 @@ async fn test_resume_after_simulated_crash() {
 #[tokio::test]
 async fn test_speed_limiter_shared_across_downloads() {
     // This test verifies that the speed limiter is properly shared
-    // across all download tasks (Task 7.4)
+    // across all download tasks
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -2108,7 +2108,7 @@ async fn test_speed_limiter_shared_across_downloads() {
 #[tokio::test]
 async fn test_set_speed_limit_method() {
     // This test verifies that set_speed_limit() properly updates the limiter
-    // and emits the SpeedLimitChanged event (Task 7.6)
+    // and emits the SpeedLimitChanged event
 
     let (downloader, _temp_dir) = create_test_downloader().await;
 
@@ -2168,7 +2168,7 @@ async fn test_set_speed_limit_takes_effect_immediately() {
 
 #[tokio::test]
 async fn test_speed_limit_with_multiple_concurrent_downloads() {
-    // Task 7.7: Test speed limiting with multiple concurrent downloads
+    // Test speed limiting with multiple concurrent downloads
     // This test verifies that the speed limiter properly limits total bandwidth
     // across multiple concurrent downloads and distributes bandwidth fairly
 
@@ -2225,7 +2225,7 @@ async fn test_speed_limit_with_multiple_concurrent_downloads() {
 
 #[tokio::test]
 async fn test_speed_limit_dynamic_change_during_downloads() {
-    // Task 7.7: Test changing speed limit dynamically while downloads are active
+    // Test changing speed limit dynamically while downloads are active
     // This verifies that limit changes take effect immediately for ongoing transfers
 
     let (downloader, _temp_dir) = create_test_downloader().await;
@@ -2293,7 +2293,7 @@ async fn test_speed_limit_dynamic_change_during_downloads() {
 
 #[tokio::test]
 async fn test_speed_limit_bandwidth_distribution() {
-    // Task 7.7: Test that bandwidth is distributed fairly across concurrent downloads
+    // Test that bandwidth is distributed fairly across concurrent downloads
     // All downloads should complete at roughly the same time
 
     let (downloader, _temp_dir) = create_test_downloader().await;
@@ -2347,7 +2347,7 @@ async fn test_speed_limit_bandwidth_distribution() {
 
 #[tokio::test]
 async fn test_speed_limit_unlimited_mode_with_concurrent_downloads() {
-    // Task 7.7: Verify that unlimited mode allows maximum throughput
+    // Verify that unlimited mode allows maximum throughput
     // without any artificial delays
 
     let (downloader, _temp_dir) = create_test_downloader().await;
@@ -2390,7 +2390,7 @@ async fn test_speed_limit_unlimited_mode_with_concurrent_downloads() {
 
 #[tokio::test]
 async fn test_shutdown_graceful() {
-    // Task 9.1: Test graceful shutdown
+    // Test graceful shutdown
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Verify shutdown completes successfully
@@ -2400,7 +2400,7 @@ async fn test_shutdown_graceful() {
 
 #[tokio::test]
 async fn test_shutdown_with_active_downloads() {
-    // Task 9.1: Test shutdown cancels active downloads
+    // Test shutdown cancels active downloads
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Simulate some active downloads by adding cancellation tokens
@@ -2432,7 +2432,7 @@ async fn test_shutdown_with_active_downloads() {
 
 #[tokio::test]
 async fn test_shutdown_waits_for_completion() {
-    // Task 9.1: Test shutdown waits for active downloads to complete
+    // Test shutdown waits for active downloads to complete
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Add a download token, then remove it after a delay to simulate completion
@@ -2475,7 +2475,7 @@ async fn test_shutdown_waits_for_completion() {
 
 #[tokio::test]
 async fn test_shutdown_rejects_new_downloads() {
-    // Task 9.2: Test that shutdown() sets accepting_new flag and new downloads are rejected
+    // Test that shutdown() sets accepting_new flag and new downloads are rejected
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Initially, should accept new downloads
@@ -2520,7 +2520,7 @@ async fn test_shutdown_rejects_new_downloads() {
 
 #[tokio::test]
 async fn test_pause_graceful_all() {
-    // Task 9.3: Test graceful pause signals cancellation to all active downloads
+    // Test graceful pause signals cancellation to all active downloads
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Add multiple download tokens to simulate active downloads
@@ -2557,7 +2557,7 @@ async fn test_pause_graceful_all() {
 
 #[tokio::test]
 async fn test_graceful_pause_completes_current_article() {
-    // Task 9.3: Verify that graceful pause allows current article to complete
+    // Verify that graceful pause allows current article to complete
     // This is a conceptual test - the actual behavior is in the download loop
     // which checks cancellation BEFORE starting each article, not during.
     // This means the current article always completes before pausing.
@@ -2613,7 +2613,7 @@ async fn test_graceful_pause_completes_current_article() {
 
 #[tokio::test]
 async fn test_persist_all_state_marks_interrupted_downloads_as_paused() {
-    // Task 9.5: Test persist_all_state() marks interrupted downloads as Paused
+    // Test persist_all_state() marks interrupted downloads as Paused
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Add a download in Downloading status
@@ -2680,7 +2680,7 @@ async fn test_persist_all_state_marks_interrupted_downloads_as_paused() {
 
 #[tokio::test]
 async fn test_persist_all_state_preserves_active_downloads() {
-    // Task 9.5: Test persist_all_state() does not modify truly active downloads
+    // Test persist_all_state() does not modify truly active downloads
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Add a download
@@ -2714,7 +2714,7 @@ async fn test_persist_all_state_preserves_active_downloads() {
 
 #[tokio::test]
 async fn test_shutdown_calls_persist_all_state() {
-    // Task 9.5: Test shutdown() integrates persist_all_state()
+    // Test shutdown() integrates persist_all_state()
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Add a download in Downloading status (simulating interrupted)
@@ -2740,7 +2740,7 @@ async fn test_shutdown_calls_persist_all_state() {
 
 #[tokio::test]
 async fn test_shutdown_emits_shutdown_event() {
-    // Task 9.6: Test that shutdown() emits a Shutdown event
+    // Test that shutdown() emits a Shutdown event
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Subscribe to events
@@ -2774,7 +2774,7 @@ async fn test_shutdown_emits_shutdown_event() {
 
 #[tokio::test]
 async fn test_run_with_shutdown_basic() {
-    // Task 9.6: Test that run_with_shutdown function exists and is callable
+    // Test that run_with_shutdown function exists and is callable
     // Note: We can't easily test actual signal handling in unit tests,
     // but we verify the function compiles and the structure is correct
 
@@ -2788,7 +2788,7 @@ async fn test_run_with_shutdown_basic() {
 
 #[tokio::test]
 async fn test_graceful_shutdown_and_recovery_on_restart() {
-    // Task 9.8: Test complete graceful shutdown and recovery on restart
+    // Test complete graceful shutdown and recovery on restart
     //
     // This integration test verifies:
     // 1. Active downloads are gracefully paused on shutdown
@@ -2802,7 +2802,7 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
     let download_id;
     let total_articles;
 
-    // Phase 1: Create downloader, add download, and perform graceful shutdown
+    // Part 1: Create downloader, add download, and perform graceful shutdown
     {
         let config = Config {
             database_path: db_path.clone(),
@@ -2859,7 +2859,7 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
         );
     }
 
-    // Phase 2: Simulate restart by creating new downloader instance
+    // Part 2: Simulate restart by creating new downloader instance
     {
         // First, check the shutdown state BEFORE creating the downloader
         // (UsenetDownloader::new() calls set_clean_start() which would override the flag)
