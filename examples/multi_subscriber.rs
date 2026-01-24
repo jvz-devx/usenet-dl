@@ -21,6 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         password: Some("your_password".to_string()),
         connections: 10,
         priority: 0,
+        pipeline_depth: 10,
     };
 
     let config = Config {

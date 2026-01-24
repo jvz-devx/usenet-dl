@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         password: Some("pass".to_string()),
         connections: 20,
         priority: 0, // Try first
+        pipeline_depth: 10,
     };
 
     let backup_server = ServerConfig {
@@ -46,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         password: Some("pass2".to_string()),
         connections: 10,
         priority: 1, // Try if primary fails
+        pipeline_depth: 10,
     };
 
     // Retry configuration with exponential backoff
