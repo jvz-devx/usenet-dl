@@ -24,7 +24,7 @@ IN_PROGRESS
 - [x] Create `docs/getting-started.md`
 - [x] Create `docs/architecture.md`
 - [x] Create `docs/post-processing.md`
-- [ ] Create `tests/manual/README.md`
+- [x] Create `tests/manual/README.md`
 
 ### 4. Clean Documentation Files
 - [ ] Clean `README.md` (remove status sections, emoji, placeholders)
@@ -57,16 +57,13 @@ IN_PROGRESS
 
 ## Completed This Iteration
 
-- Created `docs/post-processing.md` with comprehensive documentation covering:
-  - 5-stage post-processing pipeline (verify, repair, extract, move, cleanup)
-  - Archive extraction for RAR, 7z, ZIP with password handling
-  - Nested archive support and recursion
-  - File collision handling (rename, overwrite, skip)
-  - Cleanup configuration and behavior
-  - Deobfuscation system with detection heuristics
-  - Event monitoring and error handling
-  - Re-extraction functionality
-  - Complete usage examples
+- Created `tests/manual/README.md` as index for manual testing guides:
+  - Overview of all three testing guides (API, RSS, Server)
+  - Clear descriptions of what each guide covers
+  - When to use each guide
+  - Prerequisites and setup information
+  - Links to automated testing
+  - Professional, navigable structure
 
 ## Notes
 
