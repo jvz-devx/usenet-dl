@@ -5,21 +5,9 @@ A high-performance, highly configurable backend library for building SABnzbd/NZB
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust Version: 1.70+](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
-## Status
-
-**✅ Feature Complete - 97% Implementation Done (246/253 tasks)**
-
-This library is production-ready with comprehensive test coverage (300+ tests passing). Only documentation tasks remain.
-
-- **Phase 1**: ✅ Core library (queue, persistence, events, retry, shutdown) - 137 tests
-- **Phase 2**: ✅ Post-processing (extraction, deobfuscation, cleanup) - 240 tests
-- **Phase 3**: ✅ REST API with OpenAPI (37 endpoints, Swagger UI) - 57 tests
-- **Phase 4**: ✅ Automation (folder watching, RSS, scheduler, duplicates) - 50+ tests
-- **Phase 5**: 🔄 Notifications & polish (webhooks, scripts, health checks) - 30/38 tasks complete
-
 ## Features
 
-### ✨ Core Capabilities
+### Core Capabilities
 
 - **Queue Management**: Priority-based download queue with pause/resume/cancel
 - **Resume Support**: Article-level download tracking, survives crashes and restarts
@@ -29,7 +17,7 @@ This library is production-ready with comprehensive test coverage (300+ tests pa
 - **Event System**: Real-time events via `tokio::broadcast` channels
 - **Graceful Shutdown**: Signal handling with state preservation
 
-### 📦 Post-Processing
+### Post-Processing
 
 - **Archive Extraction**: RAR, 7z, and ZIP with password support
 - **Nested Extraction**: Automatic recursive extraction (configurable depth)
@@ -38,7 +26,7 @@ This library is production-ready with comprehensive test coverage (300+ tests pa
 - **File Collision Handling**: Rename, overwrite, or skip on conflicts
 - **Smart Cleanup**: Remove .par2, .nzb, .sfv, sample folders, and archives after extraction
 
-### 🌐 REST API
+### REST API
 
 - **OpenAPI 3.1 Compliant**: Full schema generation with utoipa
 - **Swagger UI**: Interactive API documentation at `/swagger-ui`
@@ -48,7 +36,7 @@ This library is production-ready with comprehensive test coverage (300+ tests pa
 - **CORS**: Configurable cross-origin support for frontend development
 - **Rate Limiting**: Optional per-IP rate limiting (disabled by default)
 
-### 🤖 Automation
+### Automation
 
 - **Folder Watching**: Auto-import NZB files from watched directories
 - **URL Fetching**: Download NZBs directly from HTTP(S) URLs
@@ -56,7 +44,7 @@ This library is production-ready with comprehensive test coverage (300+ tests pa
 - **Time-Based Scheduler**: Speed limits and pause/resume based on time rules
 - **Duplicate Detection**: Hash and name-based duplicate checking
 
-### 🔔 Notifications
+### Notifications
 
 - **Webhooks**: HTTP POST on download events (complete, failed, queued)
 - **Script Execution**: Run external scripts with environment variables
@@ -118,7 +106,7 @@ Add as a path or git dependency:
 [dependencies]
 usenet-dl = { path = "../usenet-dl" }
 # or
-usenet-dl = { git = "https://github.com/yourusername/usenet-dl" }
+usenet-dl = { git = "https://github.com/jvz-devx/usenet-dl" }
 ```
 
 ### Requirements
@@ -634,11 +622,11 @@ RUST_LOG=debug cargo run --example api_server
 
 ### Manual Testing Guides
 
-The project includes comprehensive manual testing documentation:
+The project includes comprehensive manual testing documentation in `tests/manual/`:
 
-- `API_TESTING.md` - REST API testing with curl and Postman
-- `MANUAL_SERVER_TESTING.md` - NNTP server health check testing
-- `RSS_MANUAL_TESTING.md` - RSS feed integration testing
+- [API Testing](tests/manual/api-testing.md) - REST API testing with curl and Postman
+- [Server Testing](tests/manual/server-testing.md) - NNTP server health check testing
+- [RSS Testing](tests/manual/rss-testing.md) - RSS feed integration testing
 - `test_api.sh` - Automated API testing script
 - `postman_collection.json` - Postman collection for API testing
 
@@ -720,48 +708,27 @@ Database migrations are handled automatically on startup.
 - **Archive extraction requires external tools** - unrar and 7z must be in PATH for RAR/7z support
 - **No Windows testing yet** - Primarily developed and tested on Linux/macOS
 
-## Roadmap
-
-### Phase 5 Completion (In Progress)
-- [x] Webhooks
-- [x] Script execution
-- [x] Disk space checking
-- [x] Server health checks
-- [x] Re-processing API
-- [x] Comprehensive error types
-- [ ] Documentation (7/8 tasks remaining)
-
-### Future Enhancements (Post-1.0)
-- [ ] PAR2 repair implementation (waiting on nntp-rs)
-- [ ] Windows CI/CD testing
-- [ ] Performance optimizations
-- [ ] Metrics and monitoring
-- [ ] Plugin system for custom post-processors
-- [ ] WebSocket support as alternative to SSE
-- [ ] Multi-language support for API responses
-
 ## Documentation
 
-- **[implementation_1.md](implementation_1.md)** - Complete design specification (2600+ lines)
-- **[implementation_1_PROGRESS.md](implementation_1_PROGRESS.md)** - Detailed task tracking and progress
-- **[API_TESTING.md](API_TESTING.md)** - REST API testing guide
-- **[MANUAL_SERVER_TESTING.md](MANUAL_SERVER_TESTING.md)** - Server health check testing
-- **[RSS_MANUAL_TESTING.md](RSS_MANUAL_TESTING.md)** - RSS feed testing guide
-- **Inline rustdoc** - Run `cargo doc --open` for API documentation
+Comprehensive documentation is available in the `docs/` directory:
+
+- **[Getting Started](docs/getting-started.md)** - Installation, setup, and basic usage
+- **[Configuration](docs/configuration.md)** - Complete configuration options reference
+- **[API Reference](docs/api-reference.md)** - REST API endpoints and examples
+- **[Architecture](docs/architecture.md)** - System design and module overview
+- **[Post-Processing](docs/post-processing.md)** - Extraction, deobfuscation, and cleanup
+- **[Contributing](docs/contributing.md)** - Development guidelines and workflow
+- **API Documentation** - Run `cargo doc --open` for inline Rustdoc
+
+### Manual Testing
+
+See [tests/manual/](tests/manual/) for comprehensive testing guides.
 
 ## Contributing
 
-Contributions are welcome! This project is in final polishing phase (97% complete).
+Contributions are welcome! Please see [docs/contributing.md](docs/contributing.md) for development guidelines and workflow.
 
-**Before contributing:**
-
-1. Check [implementation_1_PROGRESS.md](implementation_1_PROGRESS.md) for current status
-2. Review [implementation_1.md](implementation_1.md) for design decisions
-3. Run tests: `cargo test`
-4. Format code: `cargo fmt`
-5. Check lints: `cargo clippy`
-
-**Development workflow:**
+**Quick start:**
 
 ```bash
 # Create feature branch
@@ -795,10 +762,10 @@ at your option.
 
 ## Support
 
-- **Issues**: https://github.com/yourusername/usenet-dl/issues
-- **Discussions**: https://github.com/yourusername/usenet-dl/discussions
+- **Issues**: https://github.com/jvz-devx/usenet-dl/issues
+- **Discussions**: https://github.com/jvz-devx/usenet-dl/discussions
 - **Documentation**: Run `cargo doc --open` or visit https://docs.rs/usenet-dl
 
 ---
 
-**Built with ❤️ in Rust**
+Built with Rust
