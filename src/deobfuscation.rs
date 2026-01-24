@@ -222,9 +222,10 @@ pub fn determine_final_name(
 /// let largest = find_largest_file(&files);
 /// ```
 pub fn find_largest_file(files: &[PathBuf]) -> Option<PathBuf> {
-    let mut largest: Option<(PathBuf, u64)> = None;
+    let mut largest_idx: Option<usize> = None;
+    let mut largest_size: u64 = 0;
 
-    for file in files {
+    for (idx, file) in files.iter().enumerate() {
         // Skip directories
         if file.is_dir() {
             continue;
@@ -233,21 +234,15 @@ pub fn find_largest_file(files: &[PathBuf]) -> Option<PathBuf> {
         // Get file size
         if let Ok(metadata) = fs::metadata(file) {
             let size = metadata.len();
-
-            match &largest {
-                None => {
-                    largest = Some((file.clone(), size));
-                }
-                Some((_, current_size)) => {
-                    if size > *current_size {
-                        largest = Some((file.clone(), size));
-                    }
-                }
+            if largest_idx.is_none() || size > largest_size {
+                largest_idx = Some(idx);
+                largest_size = size;
             }
         }
     }
 
-    largest.map(|(path, _)| path)
+    // Only clone the winner at the end
+    largest_idx.map(|idx| files[idx].clone())
 }
 
 #[cfg(test)]

@@ -1702,13 +1702,15 @@ impl UsenetDownloader {
             let include_json = if filter.include.is_empty() {
                 None
             } else {
-                Some(serde_json::to_string(&filter.include).unwrap())
+                Some(serde_json::to_string(&filter.include)
+                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize include filter: {}", e)))?)
             };
 
             let exclude_json = if filter.exclude.is_empty() {
                 None
             } else {
-                Some(serde_json::to_string(&filter.exclude).unwrap())
+                Some(serde_json::to_string(&filter.exclude)
+                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize exclude filter: {}", e)))?)
             };
 
             self.db.insert_rss_filter(
@@ -1750,13 +1752,15 @@ impl UsenetDownloader {
             let include_json = if filter.include.is_empty() {
                 None
             } else {
-                Some(serde_json::to_string(&filter.include).unwrap())
+                Some(serde_json::to_string(&filter.include)
+                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize include filter: {}", e)))?)
             };
 
             let exclude_json = if filter.exclude.is_empty() {
                 None
             } else {
-                Some(serde_json::to_string(&filter.exclude).unwrap())
+                Some(serde_json::to_string(&filter.exclude)
+                    .map_err(|e| Error::InvalidInput(format!("Failed to serialize exclude filter: {}", e)))?)
             };
 
             self.db.insert_rss_filter(
@@ -2352,24 +2356,27 @@ impl UsenetDownloader {
         error: Option<String>,
     ) {
         let webhooks = self.config.webhooks.clone();
-        let event_tx = self.event_tx.clone();
+        let event_tx = Arc::clone(&self.event_tx);
 
         // Spawn async task to send webhooks (fire and forget)
         tokio::spawn(async move {
             let timestamp = chrono::Utc::now().timestamp();
 
-            for webhook in &webhooks {
+            // Pre-compute event string once (not per webhook)
+            let event_str: &'static str = match event_type {
+                crate::config::WebhookEvent::OnComplete => "complete",
+                crate::config::WebhookEvent::OnFailed => "failed",
+                crate::config::WebhookEvent::OnQueued => "queued",
+            };
+
+            for webhook in webhooks.iter() {
                 // Check if this webhook is subscribed to this event type
                 if !webhook.events.contains(&event_type) {
                     continue;
                 }
 
                 let payload = crate::types::WebhookPayload {
-                    event: match event_type {
-                        crate::config::WebhookEvent::OnComplete => "complete".to_string(),
-                        crate::config::WebhookEvent::OnFailed => "failed".to_string(),
-                        crate::config::WebhookEvent::OnQueued => "queued".to_string(),
-                    },
+                    event: event_str.to_string(),
                     download_id,
                     name: name.clone(),
                     category: category.clone(),
@@ -2391,7 +2398,7 @@ impl UsenetDownloader {
                     request = request.header("Authorization", auth);
                 }
 
-                // Send the webhook request
+                // Send the webhook request - clone url once for potential error reporting
                 let url = webhook.url.clone();
                 let timeout = webhook.timeout;
                 let result = tokio::time::timeout(
@@ -2497,27 +2504,34 @@ impl UsenetDownloader {
         // Category scripts first
         if let Some(cat_name) = &category {
             if let Some(cat_config) = self.config.categories.get(cat_name) {
-                // Add category-specific environment variables
-                let mut cat_env_vars = env_vars.clone();
-                cat_env_vars.insert(
-                    "USENET_DL_CATEGORY_DESTINATION".to_string(),
-                    cat_config.destination.display().to_string(),
-                );
-                cat_env_vars.insert("USENET_DL_IS_CATEGORY_SCRIPT".to_string(), "true".to_string());
+                // Check if any category scripts match this event before cloning
+                let matching_scripts: Vec<_> = cat_config.scripts.iter()
+                    .filter(|s| s.events.contains(&event_type))
+                    .collect();
 
-                for script in &cat_config.scripts {
-                    if script.events.contains(&event_type) {
+                if !matching_scripts.is_empty() {
+                    // Only clone env_vars if we have matching scripts
+                    let mut cat_env_vars = env_vars.clone();
+                    cat_env_vars.insert(
+                        "USENET_DL_CATEGORY_DESTINATION".to_string(),
+                        cat_config.destination.display().to_string(),
+                    );
+                    cat_env_vars.insert("USENET_DL_IS_CATEGORY_SCRIPT".to_string(), "true".to_string());
+
+                    for script in matching_scripts {
                         self.run_script_async(&script.path, script.timeout, cat_env_vars.clone());
                     }
                 }
             }
         }
 
-        // Then global scripts
-        for script in &self.config.scripts {
-            if script.events.contains(&event_type) {
-                self.run_script_async(&script.path, script.timeout, env_vars.clone());
-            }
+        // Then global scripts - only clone for matching scripts
+        let matching_global: Vec<_> = self.config.scripts.iter()
+            .filter(|s| s.events.contains(&event_type))
+            .collect();
+
+        for script in matching_global {
+            self.run_script_async(&script.path, script.timeout, env_vars.clone());
         }
     }
 
@@ -3070,13 +3084,13 @@ impl UsenetDownloader {
                         }
                     };
 
-                    // Clone dependencies for the download task
-                    let db_clone = db.clone();
-                    let event_tx_clone = event_tx.clone();
-                    let nntp_pools_clone = nntp_pools.clone();
-                    let config_clone = config.clone();
-                    let active_downloads_clone = active_downloads.clone();
-                    let speed_limiter_clone = speed_limiter.clone();
+                    // Clone dependencies for the download task (use Arc::clone for clarity)
+                    let db_clone = Arc::clone(&db);
+                    let event_tx_clone = Arc::clone(&event_tx);
+                    let nntp_pools_clone = Arc::clone(&nntp_pools);
+                    let config_clone = Arc::clone(&config);
+                    let active_downloads_clone = Arc::clone(&active_downloads);
+                    let speed_limiter_clone = Arc::clone(&speed_limiter);
                     let downloader_clone = downloader.clone();
 
                     // Create cancellation token for this download
@@ -3390,15 +3404,14 @@ impl UsenetDownloader {
                             pending_articles
                                 .chunks(pipeline_depth)
                                 .map(|chunk| chunk.to_vec())
-                                .collect::<Vec<_>>()
                         )
                             .map(|article_batch| {
-                                // Clone variables needed in the async closure
-                                let pool = nntp_pools_clone.clone();
+                                // Clone variables needed in the async closure (use Arc::clone for clarity)
+                                let pool = Arc::clone(&nntp_pools_clone);
                                 let batch_tx = batch_tx.clone();  // Clone sender for batched status updates
-                                let speed_limiter = speed_limiter_clone.clone();
+                                let speed_limiter = Arc::clone(&speed_limiter_clone);
                                 let cancel_token = cancel_token.clone();
-                                let download_temp_dir = download_temp_dir.clone();
+                                let download_temp_dir = download_temp_dir.as_path().to_owned();
                                 let downloaded_bytes = Arc::clone(&downloaded_bytes);
                                 let downloaded_articles = Arc::clone(&downloaded_articles);
                                 let pipeline_depth = pipeline_depth;  // Copy pipeline depth for use in async closure
@@ -3430,20 +3443,21 @@ impl UsenetDownloader {
                                     };
 
                                     // Prepare message IDs for pipelined fetch
-                                    let message_ids: Vec<String> = article_batch
+                                    // Use Cow to avoid allocation when brackets already present
+                                    let message_ids: Vec<std::borrow::Cow<'_, str>> = article_batch
                                         .iter()
                                         .map(|article| {
                                             // NNTP requires angle brackets around message-ids for ARTICLE command
                                             if article.message_id.starts_with('<') {
-                                                article.message_id.clone()
+                                                std::borrow::Cow::Borrowed(article.message_id.as_str())
                                             } else {
-                                                format!("<{}>", article.message_id)
+                                                std::borrow::Cow::Owned(format!("<{}>", article.message_id))
                                             }
                                         })
                                         .collect();
 
                                     // Convert to &str for the API
-                                    let message_id_refs: Vec<&str> = message_ids.iter().map(|s| s.as_str()).collect();
+                                    let message_id_refs: Vec<&str> = message_ids.iter().map(|s| s.as_ref()).collect();
 
                                     // Acquire bandwidth tokens before downloading.
                                     // The speed limiter uses a token bucket algorithm to enforce global
@@ -4400,25 +4414,42 @@ impl UsenetDownloader {
 pub async fn run_with_shutdown(downloader: UsenetDownloader) -> Result<()> {
     use tokio::signal::unix::{signal, SignalKind};
 
-    let shutdown_signal = async {
-        // Set up signal handlers
-        let mut sigterm = signal(SignalKind::terminate())
-            .expect("Failed to register SIGTERM handler");
-        let mut sigint = signal(SignalKind::interrupt())
-            .expect("Failed to register SIGINT handler");
+    // Set up signal handlers - these may fail in restricted environments (containers, tests)
+    let sigterm_result = signal(SignalKind::terminate());
+    let sigint_result = signal(SignalKind::interrupt());
 
-        tokio::select! {
-            _ = sigterm.recv() => {
-                tracing::info!("Received SIGTERM signal");
-            }
-            _ = sigint.recv() => {
-                tracing::info!("Received SIGINT signal (Ctrl+C)");
+    match (sigterm_result, sigint_result) {
+        (Ok(mut sigterm), Ok(mut sigint)) => {
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM signal");
+                }
+                _ = sigint.recv() => {
+                    tracing::info!("Received SIGINT signal (Ctrl+C)");
+                }
             }
         }
-    };
-
-    // Wait for shutdown signal
-    shutdown_signal.await;
+        (Err(e), _) => {
+            tracing::warn!(error = %e, "Could not register SIGTERM handler, waiting for SIGINT only");
+            if let Ok(mut sigint) = signal(SignalKind::interrupt()) {
+                sigint.recv().await;
+                tracing::info!("Received SIGINT signal (Ctrl+C)");
+            } else {
+                tracing::error!("Could not register any signal handlers, using ctrl_c fallback");
+                tokio::signal::ctrl_c().await.ok();
+            }
+        }
+        (_, Err(e)) => {
+            tracing::warn!(error = %e, "Could not register SIGINT handler, waiting for SIGTERM only");
+            if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
+                sigterm.recv().await;
+                tracing::info!("Received SIGTERM signal");
+            } else {
+                tracing::error!("Could not register any signal handlers, using ctrl_c fallback");
+                tokio::signal::ctrl_c().await.ok();
+            }
+        }
+    }
 
     // Perform graceful shutdown
     downloader.shutdown().await
