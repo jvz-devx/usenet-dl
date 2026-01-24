@@ -1137,7 +1137,7 @@ Wait for the specified time before retrying.
 - **OpenAPI Spec**: http://localhost:6789/api/v1/openapi.json - Machine-readable API specification
 - **Examples**: See `examples/rest_api_server.rs` for server setup
 - **Test Script**: Use `test_api.sh` for automated endpoint testing
-- **Manual Testing Guide**: See `API_TESTING.md` for testing workflows
+- **Manual Testing Guide**: See `tests/manual/api-testing.md` for testing workflows
 
 ## Support
 

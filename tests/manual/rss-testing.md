@@ -343,9 +343,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Additional Resources
 
-- [Implementation Design](implementation_1.md) - Lines 2010-2107 (RSS section)
 - [API Documentation](http://localhost:6789/swagger-ui/) - RSS endpoints
 - [Database Schema](src/db.rs) - See `rss_feeds` and `rss_seen` tables
+- [Architecture Overview](../../docs/architecture.md) - System design and RSS integration
 
 ## Support
 
