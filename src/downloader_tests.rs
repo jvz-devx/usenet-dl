@@ -52,14 +52,23 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(vec![]));
     let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
 
+    // Use NoOp parity handler for tests (no external binary required)
+    let parity_handler: std::sync::Arc<dyn crate::ParityHandler> =
+        std::sync::Arc::new(crate::NoOpParityHandler);
+
+    // Wrap database in Arc for sharing
+    let db_arc = std::sync::Arc::new(db);
+
     // Create post-processing pipeline executor
     let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
         event_tx.clone(),
         config_arc.clone(),
+        parity_handler.clone(),
+        db_arc.clone(),
     ));
 
     let downloader = UsenetDownloader {
-        db: std::sync::Arc::new(db),
+        db: db_arc,
         event_tx,
         config: config_arc,
         nntp_pools: std::sync::Arc::new(nntp_pools),
@@ -69,6 +78,7 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
         speed_limiter,
         accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         post_processor,
+        parity_handler,
         categories,
         schedule_rules,
         next_schedule_rule_id,

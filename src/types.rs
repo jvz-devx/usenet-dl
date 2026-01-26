@@ -193,6 +193,14 @@ pub enum Event {
         success: bool,
     },
 
+    /// PAR2 repair skipped (not supported or not needed)
+    RepairSkipped {
+        /// Download ID
+        id: DownloadId,
+        /// Reason for skipping
+        reason: String,
+    },
+
     /// Archive extraction started
     Extracting {
         /// Download ID
@@ -491,4 +499,30 @@ pub struct ServerCapabilities {
 
     /// Whether compression is supported (e.g., XZVER)
     pub compression: bool,
+}
+
+/// Overall system capabilities for post-processing features
+///
+/// This struct provides information about what features are available
+/// based on the current configuration and available external tools.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Capabilities {
+    /// PAR2 parity checking and repair capabilities
+    pub parity: ParityCapabilitiesInfo,
+}
+
+/// Information about PAR2 parity capabilities
+///
+/// This struct wraps the core parity capabilities with additional
+/// metadata for API consumers.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ParityCapabilitiesInfo {
+    /// Whether PAR2 verification is available
+    pub can_verify: bool,
+
+    /// Whether PAR2 repair is available
+    pub can_repair: bool,
+
+    /// Name of the parity handler implementation in use
+    pub handler: String,
 }

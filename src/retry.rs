@@ -103,6 +103,15 @@ impl IsRetryable for Error {
             Error::InsufficientSpace { .. } => false,
             // Disk space check errors are permanent (file system issues)
             Error::DiskSpaceCheckFailed(_) => false,
+            // External tool errors might be retryable (temporary failures)
+            Error::ExternalTool(msg) => {
+                // Retry on timeouts, busy states, but not on "not found" errors
+                msg.contains("timeout")
+                    || msg.contains("busy")
+                    || msg.contains("temporary")
+            }
+            // Not supported errors are permanent (feature unavailable)
+            Error::NotSupported(_) => false,
             // Unknown errors - be conservative and don't retry
             Error::Other(_) => false,
         }

@@ -1226,6 +1226,23 @@ pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(redacted_config))
 }
 
+/// GET /capabilities - Query system capabilities
+#[utoipa::path(
+    get,
+    path = "/api/v1/capabilities",
+    tag = "system",
+    responses(
+        (status = 200, description = "Current system capabilities", body = crate::types::Capabilities),
+        (status = 500, description = "Internal server error")
+    )
+)]
+pub async fn get_capabilities(State(state): State<AppState>) -> impl IntoResponse {
+    // Get the capabilities from the downloader
+    let capabilities = state.downloader.capabilities();
+
+    (StatusCode::OK, Json(capabilities))
+}
+
 /// PATCH /config - Update config
 #[utoipa::path(
     patch,
@@ -1480,6 +1497,7 @@ pub async fn event_stream(
                             crate::types::Event::VerifyComplete { .. } => "verify_complete",
                             crate::types::Event::Repairing { .. } => "repairing",
                             crate::types::Event::RepairComplete { .. } => "repair_complete",
+                            crate::types::Event::RepairSkipped { .. } => "repair_skipped",
                             crate::types::Event::Extracting { .. } => "extracting",
                             crate::types::Event::ExtractComplete { .. } => "extract_complete",
                             crate::types::Event::Moving { .. } => "moving",

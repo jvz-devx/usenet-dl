@@ -68,6 +68,7 @@ use utoipa::OpenApi;
         crate::api::routes::delete_category,
 
         // System
+        crate::api::routes::get_capabilities,
         crate::api::routes::health_check,
         crate::api::routes::openapi_spec,
         crate::api::routes::event_stream,
@@ -96,6 +97,9 @@ use utoipa::OpenApi;
         crate::types::DownloadOptions,
         crate::types::HistoryEntry,
         crate::types::QueueStats,
+        crate::types::Capabilities,
+        crate::types::ParityCapabilitiesInfo,
+        crate::types::ServerCapabilities,
 
         // Config types from config.rs
         crate::config::Config,

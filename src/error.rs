@@ -92,6 +92,14 @@ pub enum Error {
     #[error("failed to check disk space: {0}")]
     DiskSpaceCheckFailed(String),
 
+    /// External tool execution failed (par2, unrar, etc.)
+    #[error("external tool error: {0}")]
+    ExternalTool(String),
+
+    /// Operation not supported (missing binary, not implemented, etc.)
+    #[error("not supported: {0}")]
+    NotSupported(String),
+
     /// Other error
     #[error("{0}")]
     Other(String),
@@ -357,6 +365,10 @@ impl ToHttpStatus for Error {
             // 503 Service Unavailable
             Error::ShuttingDown => 503,
             Error::Download(DownloadError::Timeout { .. }) => 503,
+            Error::ExternalTool(_) => 503,
+
+            // 501 Not Implemented - Feature not supported
+            Error::NotSupported(_) => 501,
 
             // 500 for download failures
             Error::Download(DownloadError::Failed { .. }) => 500,
@@ -404,6 +416,8 @@ impl ToHttpStatus for Error {
             Error::Duplicate(_) => "duplicate",
             Error::InsufficientSpace { .. } => "insufficient_space",
             Error::DiskSpaceCheckFailed(_) => "disk_space_check_failed",
+            Error::ExternalTool(_) => "external_tool_error",
+            Error::NotSupported(_) => "not_supported",
             Error::Other(_) => "internal_error",
         }
     }

@@ -67,6 +67,7 @@ pub use state::AppState;
 /// - `DELETE /categories/:name` - Delete category
 ///
 /// ## System
+/// - `GET /capabilities` - Query system capabilities
 /// - `GET /health` - Health check
 /// - `GET /openapi.json` - OpenAPI specification
 /// - `GET /swagger-ui` - Interactive Swagger UI documentation (if enabled)
@@ -128,6 +129,7 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         .route("/categories/:name", put(routes::create_or_update_category))
         .route("/categories/:name", delete(routes::delete_category))
         // System
+        .route("/capabilities", get(routes::get_capabilities))
         .route("/health", get(routes::health_check))
         .route("/openapi.json", get(routes::openapi_spec))
         .route("/events", get(routes::event_stream))

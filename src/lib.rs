@@ -65,6 +65,8 @@ pub mod error;
 pub mod extraction;
 /// Folder watching for automatic NZB import
 pub mod folder_watcher;
+/// PAR2 parity handling
+pub mod parity;
 /// Post-processing pipeline
 pub mod post_processing;
 /// Retry logic with exponential backoff
@@ -90,6 +92,10 @@ pub use db::Database;
 pub use error::{
     ApiError, DatabaseError, DownloadError, Error, ErrorDetail, PostProcessError, Result,
     ToHttpStatus,
+};
+pub use parity::{
+    CliParityHandler, NoOpParityHandler, ParityCapabilities, ParityHandler, RepairResult,
+    VerifyResult,
 };
 pub use scheduler::{RuleId, ScheduleAction, ScheduleRule, Scheduler, Weekday};
 pub use types::{
@@ -129,6 +135,8 @@ pub struct UsenetDownloader {
     pub(crate) accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Post-processing pipeline executor
     post_processor: std::sync::Arc<post_processing::PostProcessor>,
+    /// Parity handler for PAR2 verification and repair (trait object for pluggable implementations)
+    parity_handler: std::sync::Arc<dyn ParityHandler>,
     /// Runtime-mutable categories (separate from config for dynamic updates)
     categories: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::config::CategoryConfig>>>,
     /// Runtime-mutable schedule rules (separate from config for dynamic updates)
@@ -224,14 +232,43 @@ impl UsenetDownloader {
         // Initialize the next ID counter (0 since config rules don't have IDs yet)
         let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
 
+        // Initialize parity handler based on config
+        let parity_handler: std::sync::Arc<dyn ParityHandler> =
+            if let Some(ref par2_path) = config.par2_path {
+                // Use explicitly configured binary path
+                std::sync::Arc::new(CliParityHandler::new(par2_path.clone()))
+            } else if config.search_path {
+                // Search PATH for par2 binary
+                CliParityHandler::from_path()
+                    .map(|h| std::sync::Arc::new(h) as std::sync::Arc<dyn ParityHandler>)
+                    .unwrap_or_else(|| std::sync::Arc::new(NoOpParityHandler))
+            } else {
+                // No binary configured and PATH search disabled
+                std::sync::Arc::new(NoOpParityHandler)
+            };
+
+        // Log parity handler capabilities
+        let parity_caps = parity_handler.capabilities();
+        tracing::info!(
+            parity_handler = parity_handler.name(),
+            can_verify = parity_caps.can_verify,
+            can_repair = parity_caps.can_repair,
+            "Parity handler initialized"
+        );
+
+        // Create database Arc for sharing
+        let db_arc = std::sync::Arc::new(db);
+
         // Create post-processing pipeline executor
         let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
             event_tx.clone(),
             config_arc.clone(),
+            parity_handler.clone(),
+            db_arc.clone(),
         ));
 
         let downloader = Self {
-            db: std::sync::Arc::new(db),
+            db: db_arc,
             event_tx,
             config: config_arc,
             nntp_pools: std::sync::Arc::new(nntp_pools),
@@ -241,6 +278,7 @@ impl UsenetDownloader {
             speed_limiter,
             accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             post_processor,
+            parity_handler,
             categories,
             schedule_rules,
             next_schedule_rule_id,
@@ -314,6 +352,47 @@ impl UsenetDownloader {
     /// ```
     pub fn get_config(&self) -> std::sync::Arc<Config> {
         std::sync::Arc::clone(&self.config)
+    }
+
+    /// Query the current system capabilities
+    ///
+    /// Returns information about what post-processing features are currently available
+    /// based on the configuration and available external tools.
+    ///
+    /// # Returns
+    ///
+    /// A `Capabilities` struct containing information about:
+    /// - PAR2 verification and repair availability
+    /// - The parity handler implementation in use
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let downloader = UsenetDownloader::new(Config::default()).await?;
+    /// let caps = downloader.capabilities();
+    ///
+    /// if caps.parity.can_repair {
+    ///     println!("PAR2 repair is available via {}", caps.parity.handler);
+    /// } else {
+    ///     println!("PAR2 repair not available (using {})", caps.parity.handler);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn capabilities(&self) -> crate::types::Capabilities {
+        let parity_caps = self.parity_handler.capabilities();
+        let handler_name = self.parity_handler.name().to_string();
+
+        crate::types::Capabilities {
+            parity: crate::types::ParityCapabilitiesInfo {
+                can_verify: parity_caps.can_verify,
+                can_repair: parity_caps.can_repair,
+                handler: handler_name,
+            },
+        }
     }
 
     /// Emit an event to all subscribers

@@ -87,6 +87,14 @@ pub struct Config {
     #[serde(default)]
     pub sevenzip_path: Option<PathBuf>,
 
+    /// Path to par2 executable (auto-detected if None)
+    #[serde(default)]
+    pub par2_path: Option<PathBuf>,
+
+    /// Whether to search PATH for external binaries if explicit paths not set (default: true)
+    #[serde(default = "default_true")]
+    pub search_path: bool,
+
     /// Database path (default: "./usenet-dl.db")
     #[serde(default = "default_database_path")]
     pub database_path: PathBuf,
@@ -143,6 +151,8 @@ impl Default for Config {
             try_empty_password: true,
             unrar_path: None,
             sevenzip_path: None,
+            par2_path: None,
+            search_path: true,
             database_path: default_database_path(),
             api: ApiConfig::default(),
             schedule_rules: vec![],

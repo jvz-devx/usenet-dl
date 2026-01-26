@@ -65,6 +65,8 @@ All other settings use sensible defaults and are optional.
 | `try_empty_password` | Boolean | `true` | Try empty password as fallback for archives |
 | `unrar_path` | String (path, optional) | `null` | Path to unrar executable (auto-detected if null) |
 | `sevenzip_path` | String (path, optional) | `null` | Path to 7z executable (auto-detected if null) |
+| `par2_path` | String (path, optional) | `null` | Path to par2 binary for repair operations (auto-detected if null) |
+| `search_path` | Boolean | `true` | Search system PATH for external binaries if explicit paths not set |
 | `database_path` | String (path) | `"usenet-dl.db"` | SQLite database path |
 | `api` | `ApiConfig` | See below | REST API configuration |
 | `schedule_rules` | Array of `ScheduleRule` | `[]` | Time-based speed limit rules |
@@ -259,6 +261,107 @@ archive_extensions = ["rar", "zip", "7z", "tar", "gz", "bz2"]
 |-------|------|---------|-------------|
 | `max_recursion_depth` | Integer | `2` | Maximum depth for nested archive extraction (0 = only outer archives) |
 | `archive_extensions` | Array of strings | `["rar", "zip", "7z", "tar", "gz", "bz2"]` | File extensions to treat as archives for recursion |
+
+---
+
+## PAR2 Configuration
+
+Configure PAR2 verification and repair capabilities. By default, usenet-dl searches the system PATH for the `par2` binary. You can override this with explicit paths or disable PATH searching.
+
+### Automatic Detection (Default)
+
+```toml
+# No configuration needed - will search PATH automatically
+search_path = true  # This is the default
+```
+
+```json
+{
+  "search_path": true
+}
+```
+
+When `search_path` is `true` (default) and `par2_path` is not set, usenet-dl will:
+1. Search for `par2` in the system PATH
+2. Use it for verification and repair if found
+3. Fall back to verification-only mode if not found (no repair capability)
+
+### Explicit Path
+
+For Tauri apps bundling binaries as sidecars, or when `par2` is in a non-standard location:
+
+```toml
+par2_path = "/usr/local/bin/par2"
+# Or for Tauri:
+# par2_path = "/path/to/sidecar/binaries/par2"
+```
+
+```json
+{
+  "par2_path": "/usr/local/bin/par2"
+}
+```
+
+### Disable PATH Search
+
+To only use explicitly configured binaries (useful for sandboxed environments):
+
+```toml
+search_path = false
+par2_path = "/opt/binaries/par2"
+```
+
+```json
+{
+  "search_path": false,
+  "par2_path": "/opt/binaries/par2"
+}
+```
+
+### Capabilities
+
+PAR2 handler capabilities depend on configuration:
+
+| Configuration | Verification | Repair | Handler |
+|---------------|--------------|--------|---------|
+| `par2` in PATH or `par2_path` set | ✅ Full | ✅ Full | `cli-par2` |
+| No `par2` binary available | ✅ Basic* | ❌ Not supported | `noop` |
+
+\* Basic verification assumes files are intact when PAR2 binary is unavailable. Full verification requires the `par2` binary.
+
+### Query Capabilities
+
+Use the `/api/v1/capabilities` endpoint to check current capabilities:
+
+```bash
+curl http://localhost:8080/api/v1/capabilities
+```
+
+Response:
+```json
+{
+  "parity": {
+    "can_verify": true,
+    "can_repair": true,
+    "handler": "cli-par2"
+  }
+}
+```
+
+Or query from Rust:
+
+```rust
+let downloader = UsenetDownloader::new(config).await?;
+let caps = downloader.capabilities();
+println!("PAR2 repair available: {}", caps.parity.can_repair);
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `par2_path` | String (path, optional) | `null` | Explicit path to par2 binary. If set, this path is used instead of searching PATH. |
+| `search_path` | Boolean | `true` | Whether to search system PATH for binaries when explicit paths are not set. Set to `false` for sandboxed or controlled environments. |
 
 ---
 
