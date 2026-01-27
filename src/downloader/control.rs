@@ -174,6 +174,11 @@ impl UsenetDownloader {
                 "No pending articles - proceeding to post-processing"
             );
 
+            // Set status synchronously so callers see Processing immediately
+            self.db
+                .update_status(id, Status::Processing.to_i32())
+                .await?;
+
             // Start post-processing pipeline asynchronously
             let downloader = self.clone();
             tokio::spawn(async move {
