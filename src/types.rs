@@ -80,7 +80,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DownloadId {
     fn encode_by_ref(
         &self,
         buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
         sqlx::Encode::<sqlx::Sqlite>::encode_by_ref(&self.0, buf)
     }
 }
