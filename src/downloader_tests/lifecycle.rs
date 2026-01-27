@@ -1001,7 +1001,7 @@ async fn test_graceful_pause_completes_current_article() {
     // which checks cancellation BEFORE starting each article, not during.
     // This means the current article always completes before pausing.
 
-    let (downloader, _temp_dir) = create_test_downloader().await;
+    let (_downloader, _temp_dir) = create_test_downloader().await;
 
     // Create a cancellation token
     let token = tokio_util::sync::CancellationToken::new();

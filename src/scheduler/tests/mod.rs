@@ -746,7 +746,7 @@ fn test_get_current_action_complex_scenario() {
         .with_second(0)
         .unwrap();
 
-    let current_weekday = Weekday::from_chrono(now.weekday());
+    let _current_weekday = Weekday::from_chrono(now.weekday());
 
     let rules = vec![
         // Rule 1: Disabled, should be ignored

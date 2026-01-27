@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stats_events = downloader.subscribe();
     tokio::spawn(async move {
         println!("[STATS] Starting statistics collector");
-        let mut total_downloaded: u64 = 0;
+        let mut _total_downloaded: u64 = 0;
         let mut completed_count: u32 = 0;
         let mut failed_count: u32 = 0;
 
@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     failed_count += 1;
                 }
                 Event::Downloading { speed_bps, .. } => {
-                    total_downloaded += speed_bps;
+                    _total_downloaded += speed_bps;
                 }
                 _ => {}
             }

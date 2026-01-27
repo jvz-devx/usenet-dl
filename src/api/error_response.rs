@@ -35,8 +35,6 @@ impl IntoResponse for ApiError {
 mod tests {
     use super::*;
     use crate::error::{DatabaseError, DownloadError, PostProcessError};
-    use axum::body::Body;
-    use axum::http::Request;
     use std::path::PathBuf;
 
     #[test]

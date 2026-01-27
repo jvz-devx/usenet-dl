@@ -12,7 +12,6 @@ async fn test_list_downloads_endpoint() {
 
     // Add some test downloads to the database
     use crate::db::NewDownload;
-    use crate::types::{DownloadOptions, Priority};
 
     let new_download1 = NewDownload {
         name: "Test Download 1".to_string(),

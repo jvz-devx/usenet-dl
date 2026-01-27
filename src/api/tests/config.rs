@@ -159,7 +159,7 @@ async fn test_patch_config_endpoint() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let returned_config: crate::config::Config = serde_json::from_slice(&body).unwrap();
+    let _returned_config: crate::config::Config = serde_json::from_slice(&body).unwrap();
     println!("    ✓ Response body is valid Config JSON");
 
     // Note: The config in UsenetDownloader is immutable (wrapped in Arc),

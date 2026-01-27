@@ -326,7 +326,7 @@ pub async fn pause_download(
                     Json(json!({"error": {"code": "not_found", "message": error_msg}})),
                 )
                     .into_response()
-            } else if error_msg.contains("Cannot pause") {
+            } else if error_msg.contains("cannot pause") {
                 (
                     StatusCode::CONFLICT,
                     Json(json!({"error": {"code": "invalid_state", "message": error_msg}})),
@@ -370,7 +370,7 @@ pub async fn resume_download(
                     Json(json!({"error": {"code": "not_found", "message": error_msg}})),
                 )
                     .into_response()
-            } else if error_msg.contains("Cannot resume") {
+            } else if error_msg.contains("cannot resume") {
                 (
                     StatusCode::CONFLICT,
                     Json(json!({"error": {"code": "invalid_state", "message": error_msg}})),

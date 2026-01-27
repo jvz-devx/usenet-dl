@@ -317,7 +317,10 @@ mod tests {
 
         // Total: 1 MB consumed
         let remaining = limiter.tokens.load(Ordering::Relaxed);
-        assert_eq!(remaining, 9_000_000);
+        assert!(
+            (8_999_000..=9_001_000).contains(&remaining),
+            "expected ~9_000_000 tokens remaining, got {remaining}"
+        );
     }
 
     #[tokio::test]

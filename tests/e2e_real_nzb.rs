@@ -33,6 +33,7 @@ use std::time::Duration;
 use usenet_dl::{DownloadOptions, Event, Status};
 
 /// Get test configuration from environment
+#[allow(dead_code)]
 struct TestConfig {
     nzb_path: PathBuf,
     timeout_secs: u64,
@@ -144,7 +145,7 @@ async fn test_real_nzb_download() {
 
     // Subscribe to events for progress reporting
     let mut events = downloader.subscribe();
-    let downloader_clone = downloader.clone();
+    let _downloader_clone = downloader.clone();
     let progress_task = tokio::spawn(async move {
         let mut last_percent = -1.0_f32;
         loop {

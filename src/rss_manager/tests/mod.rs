@@ -1125,7 +1125,6 @@ async fn test_rss_end_to_end_with_mock_server() {
     // It demonstrates what happens with a real indexer feed
 
     use std::net::TcpListener;
-    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener as TokioTcpListener;
 
