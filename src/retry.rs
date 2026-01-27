@@ -103,6 +103,13 @@ impl IsRetryable for Error {
             Error::InsufficientSpace { .. } => false,
             // Disk space check errors are permanent (file system issues)
             Error::DiskSpaceCheckFailed(_) => false,
+            // External tool errors might be retryable (temporary failures)
+            Error::ExternalTool(msg) => {
+                // Retry on timeouts, busy states, but not on "not found" errors
+                msg.contains("timeout") || msg.contains("busy") || msg.contains("temporary")
+            }
+            // Not supported errors are permanent (feature unavailable)
+            Error::NotSupported(_) => false,
             // Unknown errors - be conservative and don't retry
             Error::Other(_) => false,
         }
@@ -136,7 +143,10 @@ impl IsRetryable for Error {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn download_with_retry<F, Fut, T, E>(config: &RetryConfig, mut operation: F) -> Result<T, E>
+pub async fn download_with_retry<F, Fut, T, E>(
+    config: &RetryConfig,
+    mut operation: F,
+) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
@@ -149,10 +159,7 @@ where
         match operation().await {
             Ok(result) => {
                 if attempt > 0 {
-                    tracing::info!(
-                        attempts = attempt + 1,
-                        "Operation succeeded after retry"
-                    );
+                    tracing::info!(attempts = attempt + 1, "Operation succeeded after retry");
                 }
                 return Ok(result);
             }
@@ -461,10 +468,7 @@ mod tests {
 
     #[test]
     fn test_error_is_retryable_io() {
-        let timeout_err = Error::Io(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "timeout",
-        ));
+        let timeout_err = Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout"));
         assert!(timeout_err.is_retryable());
 
         let connection_refused = Error::Io(std::io::Error::new(
@@ -501,7 +505,9 @@ mod tests {
             key: None,
         }
         .is_retryable());
-        assert!(!Error::Database(DatabaseError::QueryFailed("db error".to_string())).is_retryable());
+        assert!(
+            !Error::Database(DatabaseError::QueryFailed("db error".to_string())).is_retryable()
+        );
         assert!(!Error::InvalidNzb("bad nzb".to_string()).is_retryable());
         assert!(!Error::NotFound("not found".to_string()).is_retryable());
         assert!(!Error::Download(DownloadError::NotFound { id: 123 }).is_retryable());

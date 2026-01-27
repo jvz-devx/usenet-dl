@@ -7,7 +7,7 @@
 //! - Adding an NZB to the queue
 //! - Monitoring download progress
 
-use usenet_dl::config::{Config, ServerConfig};
+use usenet_dl::config::{Config, DownloadConfig, ServerConfig};
 use usenet_dl::{DownloadOptions, Event, Priority, UsenetDownloader};
 
 #[tokio::main]
@@ -31,9 +31,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build configuration
     let config = Config {
         servers: vec![server],
-        download_dir: "downloads".into(),
-        temp_dir: "temp".into(),
-        max_concurrent_downloads: 3,
+        download: DownloadConfig {
+            download_dir: "downloads".into(),
+            temp_dir: "temp".into(),
+            max_concurrent_downloads: 3,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

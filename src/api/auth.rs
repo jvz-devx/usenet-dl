@@ -105,17 +105,15 @@ mod tests {
     #[tokio::test]
     async fn test_no_api_key_configured() {
         // When no API key is configured, all requests should pass through
-        let app = Router::new()
-            .route("/test", get(test_handler))
-            .layer(middleware::from_fn_with_state(
-                None::<String>,
-                require_api_key,
-            ));
+        let app =
+            Router::new()
+                .route("/test", get(test_handler))
+                .layer(middleware::from_fn_with_state(
+                    None::<String>,
+                    require_api_key,
+                ));
 
-        let request = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::builder().uri("/test").body(Body::empty()).unwrap();
 
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -175,10 +173,7 @@ mod tests {
             .route("/test", get(test_handler))
             .layer(middleware::from_fn_with_state(api_key, require_api_key));
 
-        let request = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::builder().uri("/test").body(Body::empty()).unwrap();
 
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

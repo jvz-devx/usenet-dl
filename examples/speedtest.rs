@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Notify;
-use usenet_dl::{Config, DownloadOptions, Event, ServerConfig, UsenetDownloader};
+use usenet_dl::config::{Config, DownloadConfig, PersistenceConfig, ServerConfig};
+use usenet_dl::{DownloadOptions, Event, UsenetDownloader};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,10 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             priority: 0,
             pipeline_depth: 10,
         }],
-        database_path: temp_dir.path().join("test.db"),
-        download_dir: download_dir.clone(),
-        temp_dir: temp_dir.path().join("temp"),
-        max_concurrent_downloads: 1,
+        persistence: PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            ..Default::default()
+        },
+        download: DownloadConfig {
+            download_dir: download_dir.clone(),
+            temp_dir: temp_dir.path().join("temp"),
+            max_concurrent_downloads: 1,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -98,7 +105,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     if (percent - last_percent).abs() >= 5.0 || last_percent < 0.0 {
                         let speed_mbps = speed_bps as f64 / 1_000_000.0;
-                        println!("  Progress: {:5.1}%  Speed: {:7.2} MB/s", percent, speed_mbps);
+                        println!(
+                            "  Progress: {:5.1}%  Speed: {:7.2} MB/s",
+                            percent, speed_mbps
+                        );
                         last_percent = percent;
                     }
 
@@ -173,7 +183,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Results");
     println!("═══════════════════════════════════════════════════════════");
     println!("  Time:       {:.2} seconds", secs);
-    println!("  On disk:    {:.2} MB", total_disk_bytes as f64 / 1_000_000.0);
+    println!(
+        "  On disk:    {:.2} MB",
+        total_disk_bytes as f64 / 1_000_000.0
+    );
     println!("  Avg Speed:  {:.2} MB/s", speed_mbps);
     println!("  Peak Speed: {:.2} MB/s", peak_speed);
     println!("═══════════════════════════════════════════════════════════");

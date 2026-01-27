@@ -39,7 +39,9 @@ use crate::config::{WatchFolderAction, WatchFolderConfig};
 use crate::error::{Error, Result};
 use crate::types::DownloadOptions;
 use crate::UsenetDownloader;
-use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -69,10 +71,7 @@ impl FolderWatcher {
     ///
     /// # Errors
     /// Returns error if the filesystem watcher cannot be initialized
-    pub fn new(
-        downloader: Arc<UsenetDownloader>,
-        configs: Vec<WatchFolderConfig>,
-    ) -> Result<Self> {
+    pub fn new(downloader: Arc<UsenetDownloader>, configs: Vec<WatchFolderConfig>) -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         // Create watcher with debouncing to avoid duplicate events
@@ -104,8 +103,9 @@ impl FolderWatcher {
         for config in &self.configs {
             // Create directory if it doesn't exist
             if !config.path.exists() {
-                std::fs::create_dir_all(&config.path)
-                    .map_err(|e| Error::FolderWatch(format!("Failed to create watch folder: {}", e)))?;
+                std::fs::create_dir_all(&config.path).map_err(|e| {
+                    Error::FolderWatch(format!("Failed to create watch folder: {}", e))
+                })?;
                 info!("Created watch folder: {}", config.path.display());
             }
 
@@ -114,7 +114,8 @@ impl FolderWatcher {
                 .watch(&config.path, RecursiveMode::NonRecursive)
                 .map_err(|e| Error::FolderWatch(format!("Failed to watch folder: {}", e)))?;
 
-            info!("Watching folder: {} (category: {:?})",
+            info!(
+                "Watching folder: {} (category: {:?})",
                 config.path.display(),
                 config.category.as_deref().unwrap_or("default")
             );
@@ -219,11 +220,19 @@ impl FolderWatcher {
 
                 // Handle after_import action
                 if let Err(e) = self.handle_after_import(path, &config).await {
-                    error!("Failed to handle after_import action for {}: {}", path.display(), e);
+                    error!(
+                        "Failed to handle after_import action for {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
             Err(e) => {
-                error!("Failed to add NZB from watch folder {}: {}", path.display(), e);
+                error!(
+                    "Failed to add NZB from watch folder {}: {}",
+                    path.display(),
+                    e
+                );
                 return Err(e);
             }
         }
@@ -236,9 +245,9 @@ impl FolderWatcher {
     /// Searches through configured watch folders to find the one containing this file.
     /// Returns the first matching configuration or an error if no match is found.
     fn find_config_for_path(&self, path: &Path) -> Result<&WatchFolderConfig> {
-        let parent = path.parent().ok_or_else(|| {
-            Error::FolderWatch("File has no parent directory".to_string())
-        })?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| Error::FolderWatch("File has no parent directory".to_string()))?;
 
         self.configs
             .iter()
@@ -274,14 +283,15 @@ impl FolderWatcher {
 
                 // Create processed directory if it doesn't exist
                 if !processed_dir.exists() {
-                    tokio::fs::create_dir(&processed_dir)
-                        .await
-                        .map_err(|e| Error::FolderWatch(format!("Failed to create processed directory: {}", e)))?;
+                    tokio::fs::create_dir(&processed_dir).await.map_err(|e| {
+                        Error::FolderWatch(format!("Failed to create processed directory: {}", e))
+                    })?;
                 }
 
-                let dest = processed_dir.join(path.file_name().ok_or_else(|| {
-                    Error::FolderWatch("File has no filename".to_string())
-                })?);
+                let dest = processed_dir.join(
+                    path.file_name()
+                        .ok_or_else(|| Error::FolderWatch("File has no filename".to_string()))?,
+                );
 
                 debug!("Moving NZB file: {} -> {}", path.display(), dest.display());
                 tokio::fs::rename(path, &dest)
@@ -314,9 +324,9 @@ mod tests {
     async fn create_test_downloader() -> Arc<UsenetDownloader> {
         let temp_dir = TempDir::new().unwrap();
         let mut config = Config::default();
-        config.database_path = temp_dir.path().join("test.db");
-        config.download_dir = temp_dir.path().join("downloads");
-        config.temp_dir = temp_dir.path().join("temp");
+        config.persistence.database_path = temp_dir.path().join("test.db");
+        config.download.download_dir = temp_dir.path().join("downloads");
+        config.download.temp_dir = temp_dir.path().join("temp");
 
         let downloader = UsenetDownloader::new(config).await.unwrap();
         Arc::new(downloader)
@@ -402,9 +412,9 @@ mod tests {
         std::fs::create_dir_all(&watch_path).unwrap();
 
         let mut config = Config::default();
-        config.database_path = temp_dir.path().join("test.db");
-        config.download_dir = temp_dir.path().join("downloads");
-        config.temp_dir = temp_dir.path().join("temp");
+        config.persistence.database_path = temp_dir.path().join("test.db");
+        config.download.download_dir = temp_dir.path().join("downloads");
+        config.download.temp_dir = temp_dir.path().join("temp");
 
         let downloader = Arc::new(UsenetDownloader::new(config).await.unwrap());
 
@@ -450,7 +460,10 @@ mod tests {
         sleep(Duration::from_millis(500)).await;
 
         // Verify the NZB was deleted (Delete action)
-        assert!(!nzb_path.exists(), "NZB file should have been deleted after import");
+        assert!(
+            !nzb_path.exists(),
+            "NZB file should have been deleted after import"
+        );
 
         // Verify download was added to queue
         let downloads = downloader.db.list_downloads().await.unwrap();

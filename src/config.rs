@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration};
 use utoipa::ToSchema;
 
-/// Main configuration for UsenetDownloader
+/// Download behavior configuration (directories, concurrency, post-processing)
+///
+/// Groups settings related to how downloads are fetched, stored, and processed.
+/// Used as a nested sub-config within [`Config`].
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-pub struct Config {
-    /// NNTP server configurations (at least one required)
-    pub servers: Vec<ServerConfig>,
-
+pub struct DownloadConfig {
     /// Download directory (default: "./downloads")
     #[serde(default = "default_download_dir")]
     pub download_dir: PathBuf,
@@ -26,10 +26,6 @@ pub struct Config {
     /// Speed limit in bytes per second (None = unlimited)
     #[serde(default)]
     pub speed_limit_bps: Option<u64>,
-
-    /// Retry configuration
-    #[serde(default)]
-    pub retry: RetryConfig,
 
     /// Default post-processing mode
     #[serde(default)]
@@ -47,30 +43,33 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub delete_samples: bool,
 
-    /// Extraction configuration
-    #[serde(default)]
-    pub extraction: ExtractionConfig,
-
     /// File collision handling
     #[serde(default)]
     pub file_collision: FileCollisionAction,
+}
 
-    /// Filename deobfuscation configuration
-    #[serde(default)]
-    pub deobfuscation: DeobfuscationConfig,
+impl Default for DownloadConfig {
+    fn default() -> Self {
+        Self {
+            download_dir: default_download_dir(),
+            temp_dir: default_temp_dir(),
+            max_concurrent_downloads: default_max_concurrent(),
+            speed_limit_bps: None,
+            default_post_process: PostProcess::default(),
+            failed_action: FailedDownloadAction::default(),
+            failed_directory: None,
+            delete_samples: true,
+            file_collision: FileCollisionAction::default(),
+        }
+    }
+}
 
-    /// Duplicate detection configuration
-    #[serde(default)]
-    pub duplicate: DuplicateConfig,
-
-    /// Disk space checking configuration
-    #[serde(default)]
-    pub disk_space: DiskSpaceConfig,
-
-    /// Cleanup configuration for intermediate files
-    #[serde(default)]
-    pub cleanup: CleanupConfig,
-
+/// External tool paths (unrar, 7z, par2) and password configuration
+///
+/// Groups settings for external binaries and password handling.
+/// Used as a nested sub-config within [`Config`].
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ToolsConfig {
     /// Path to global password file (one password per line)
     #[serde(default)]
     pub password_file: Option<PathBuf>,
@@ -87,26 +86,34 @@ pub struct Config {
     #[serde(default)]
     pub sevenzip_path: Option<PathBuf>,
 
-    /// Database path (default: "./usenet-dl.db")
-    #[serde(default = "default_database_path")]
-    pub database_path: PathBuf,
-
-    /// REST API configuration
+    /// Path to par2 executable (auto-detected if None)
     #[serde(default)]
-    pub api: ApiConfig,
+    pub par2_path: Option<PathBuf>,
 
-    /// Schedule rules for time-based speed limits
-    #[serde(default)]
-    pub schedule_rules: Vec<ScheduleRule>,
+    /// Whether to search PATH for external binaries if explicit paths not set (default: true)
+    #[serde(default = "default_true")]
+    pub search_path: bool,
+}
 
-    /// Watch folders for auto-importing NZBs
-    #[serde(default)]
-    pub watch_folders: Vec<WatchFolderConfig>,
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            password_file: None,
+            try_empty_password: true,
+            unrar_path: None,
+            sevenzip_path: None,
+            par2_path: None,
+            search_path: true,
+        }
+    }
+}
 
-    /// RSS feed configurations
-    #[serde(default)]
-    pub rss_feeds: Vec<RssFeedConfig>,
-
+/// Notification configuration (webhooks and scripts)
+///
+/// Groups settings for external notifications triggered by download events.
+/// Used as a nested sub-config within [`Config`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct NotificationConfig {
     /// Webhook configurations
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
@@ -114,43 +121,77 @@ pub struct Config {
     /// Script configurations
     #[serde(default)]
     pub scripts: Vec<ScriptConfig>,
+}
 
-    /// Category configurations
-    #[serde(default)]
-    pub categories: HashMap<String, CategoryConfig>,
+/// Main configuration for UsenetDownloader
+///
+/// Fields are organized into logical sub-configs for maintainability:
+/// - [`download`](DownloadConfig) — directories, concurrency, post-processing
+/// - [`tools`](ToolsConfig) — external binary paths, password handling
+/// - [`notifications`](NotificationConfig) — webhooks and scripts
+///
+/// All sub-config fields are flattened for backward-compatible serialization,
+/// meaning the JSON/TOML format remains unchanged (no nesting).
+/// Individual fields are also accessible directly on `Config` via `Deref`-style
+/// accessor methods for convenience.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct Config {
+    /// NNTP server configurations (at least one required)
+    pub servers: Vec<ServerConfig>,
+
+    /// Download behavior settings (directories, concurrency, post-processing)
+    #[serde(flatten)]
+    pub download: DownloadConfig,
+
+    /// External tool paths and password handling
+    #[serde(flatten)]
+    pub tools: ToolsConfig,
+
+    /// Notification settings (webhooks and scripts)
+    #[serde(flatten)]
+    pub notifications: NotificationConfig,
+
+    /// Content pipeline processing (extraction, cleanup, validation)
+    #[serde(flatten)]
+    pub processing: ProcessingConfig,
+
+    /// Data storage and state management
+    pub persistence: PersistenceConfig,
+
+    /// Automated content discovery and ingestion
+    #[serde(flatten)]
+    pub automation: AutomationConfig,
+
+    /// API and external server integration
+    #[serde(flatten)]
+    pub server: ServerIntegrationConfig,
+}
+
+// Convenience accessors — allow existing code to use `config.download_dir` etc.
+// without changing call sites. These delegate to the sub-config structs.
+impl Config {
+    /// Download directory
+    pub fn download_dir(&self) -> &PathBuf {
+        &self.download.download_dir
+    }
+
+    /// Temporary directory
+    pub fn temp_dir(&self) -> &PathBuf {
+        &self.download.temp_dir
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             servers: vec![],
-            download_dir: default_download_dir(),
-            temp_dir: default_temp_dir(),
-            max_concurrent_downloads: default_max_concurrent(),
-            speed_limit_bps: None,
-            retry: RetryConfig::default(),
-            default_post_process: PostProcess::default(),
-            failed_action: FailedDownloadAction::default(),
-            failed_directory: None,
-            delete_samples: true,
-            extraction: ExtractionConfig::default(),
-            file_collision: FileCollisionAction::default(),
-            deobfuscation: DeobfuscationConfig::default(),
-            duplicate: DuplicateConfig::default(),
-            disk_space: DiskSpaceConfig::default(),
-            cleanup: CleanupConfig::default(),
-            password_file: None,
-            try_empty_password: true,
-            unrar_path: None,
-            sevenzip_path: None,
-            database_path: default_database_path(),
-            api: ApiConfig::default(),
-            schedule_rules: vec![],
-            watch_folders: vec![],
-            rss_feeds: vec![],
-            webhooks: vec![],
-            scripts: vec![],
-            categories: HashMap::new(),
+            download: DownloadConfig::default(),
+            tools: ToolsConfig::default(),
+            notifications: NotificationConfig::default(),
+            processing: ProcessingConfig::default(),
+            persistence: PersistenceConfig::default(),
+            automation: AutomationConfig::default(),
+            server: ServerIntegrationConfig::default(),
         }
     }
 }
@@ -471,6 +512,122 @@ impl Default for CleanupConfig {
     }
 }
 
+/// Content pipeline processing configuration
+///
+/// Groups settings related to post-download file processing, validation,
+/// and cleanup. All settings in this config are used together during the
+/// post-processing pipeline.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ProcessingConfig {
+    /// Archive extraction configuration
+    #[serde(default)]
+    pub extraction: ExtractionConfig,
+
+    /// Duplicate detection configuration (pre-download validation)
+    #[serde(default)]
+    pub duplicate: DuplicateConfig,
+
+    /// Disk space checking configuration (pre-download validation)
+    #[serde(default)]
+    pub disk_space: DiskSpaceConfig,
+
+    /// Retry configuration for transient failures
+    #[serde(default)]
+    pub retry: RetryConfig,
+
+    /// Cleanup configuration for intermediate files
+    #[serde(default)]
+    pub cleanup: CleanupConfig,
+}
+
+impl Default for ProcessingConfig {
+    fn default() -> Self {
+        Self {
+            extraction: ExtractionConfig::default(),
+            duplicate: DuplicateConfig::default(),
+            disk_space: DiskSpaceConfig::default(),
+            retry: RetryConfig::default(),
+            cleanup: CleanupConfig::default(),
+        }
+    }
+}
+
+/// Automated content discovery and ingestion configuration
+///
+/// Groups settings related to automated content sources (RSS, watch folders)
+/// and content naming intelligence (deobfuscation).
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct AutomationConfig {
+    /// RSS feed configurations
+    #[serde(default)]
+    pub rss_feeds: Vec<RssFeedConfig>,
+
+    /// Watch folders for auto-importing NZBs
+    #[serde(default)]
+    pub watch_folders: Vec<WatchFolderConfig>,
+
+    /// Filename deobfuscation configuration
+    #[serde(default)]
+    pub deobfuscation: DeobfuscationConfig,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            rss_feeds: vec![],
+            watch_folders: vec![],
+            deobfuscation: DeobfuscationConfig::default(),
+        }
+    }
+}
+
+/// Data storage and state management configuration
+///
+/// Groups settings related to persistence, state, and runtime-mutable
+/// configurations.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct PersistenceConfig {
+    /// Database path (default: "./usenet-dl.db")
+    #[serde(default = "default_database_path")]
+    pub database_path: PathBuf,
+
+    /// Schedule rules for time-based speed limits
+    #[serde(default)]
+    pub schedule_rules: Vec<ScheduleRule>,
+
+    /// Category configurations
+    #[serde(default)]
+    pub categories: HashMap<String, CategoryConfig>,
+}
+
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self {
+            database_path: default_database_path(),
+            schedule_rules: vec![],
+            categories: HashMap::new(),
+        }
+    }
+}
+
+/// API and external server integration configuration
+///
+/// Groups settings for external access and control interfaces.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ServerIntegrationConfig {
+    /// REST API configuration
+    #[serde(default)]
+    pub api: ApiConfig,
+}
+
+impl Default for ServerIntegrationConfig {
+    fn default() -> Self {
+        Self {
+            api: ApiConfig::default(),
+        }
+    }
+}
+
 /// REST API configuration
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiConfig {
@@ -598,7 +755,7 @@ pub enum ScheduleAction {
     /// Set speed limit (bytes per second)
     SpeedLimit {
         /// Speed limit in bytes per second
-        limit_bps: u64
+        limit_bps: u64,
     },
     /// Unlimited speed
     Unlimited,
@@ -868,8 +1025,8 @@ fn default_burst_size() -> u32 {
 
 fn default_exempt_paths() -> Vec<String> {
     vec![
-        "/api/v1/events".to_string(),  // SSE is long-lived
-        "/api/v1/health".to_string(),  // Health checks should always work
+        "/api/v1/events".to_string(), // SSE is long-lived
+        "/api/v1/health".to_string(), // Health checks should always work
     ]
 }
 
@@ -1030,9 +1187,9 @@ mod tests {
         let config = Config::default();
 
         // Verify cleanup config is present in main config
-        assert!(config.cleanup.enabled);
-        assert!(!config.cleanup.target_extensions.is_empty());
-        assert!(!config.cleanup.archive_extensions.is_empty());
+        assert!(config.processing.cleanup.enabled);
+        assert!(!config.processing.cleanup.target_extensions.is_empty());
+        assert!(!config.processing.cleanup.archive_extensions.is_empty());
     }
 
     #[test]
@@ -1042,16 +1199,14 @@ mod tests {
             url: "https://indexer.example/rss".to_string(),
             check_interval: Duration::from_secs(900), // 15 minutes
             category: Some("tv".to_string()),
-            filters: vec![
-                RssFilter {
-                    name: "HD Shows".to_string(),
-                    include: vec!["720p|1080p".to_string()],
-                    exclude: vec!["CAM|TS".to_string()],
-                    min_size: Some(1024 * 1024 * 100), // 100 MB
-                    max_size: Some(1024 * 1024 * 1024 * 5), // 5 GB
-                    max_age: Some(Duration::from_secs(86400 * 7)), // 7 days
-                }
-            ],
+            filters: vec![RssFilter {
+                name: "HD Shows".to_string(),
+                include: vec!["720p|1080p".to_string()],
+                exclude: vec!["CAM|TS".to_string()],
+                min_size: Some(1024 * 1024 * 100),      // 100 MB
+                max_size: Some(1024 * 1024 * 1024 * 5), // 5 GB
+                max_age: Some(Duration::from_secs(86400 * 7)), // 7 days
+            }],
             auto_download: true,
             priority: Priority::High,
             enabled: true,
@@ -1074,8 +1229,8 @@ mod tests {
             name: "Movies".to_string(),
             include: vec!["BluRay".to_string(), "WEB-DL".to_string()],
             exclude: vec!["SCREENER".to_string()],
-            min_size: Some(1024 * 1024 * 500), // 500 MB
-            max_size: Some(1024 * 1024 * 1024 * 10), // 10 GB
+            min_size: Some(1024 * 1024 * 500),         // 500 MB
+            max_size: Some(1024 * 1024 * 1024 * 10),   // 10 GB
             max_age: Some(Duration::from_secs(86400)), // 1 day
         };
 
@@ -1093,7 +1248,7 @@ mod tests {
         let config = Config::default();
 
         // Verify rss_feeds field exists and is empty by default
-        assert!(config.rss_feeds.is_empty());
+        assert!(config.automation.rss_feeds.is_empty());
     }
 
     #[test]

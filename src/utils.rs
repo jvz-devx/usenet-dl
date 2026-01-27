@@ -4,6 +4,9 @@ use crate::config::FileCollisionAction;
 use crate::error::{Error, PostProcessError, Result};
 use std::path::{Path, PathBuf};
 
+/// Maximum number of rename attempts when resolving file collisions
+const MAX_RENAME_ATTEMPTS: u32 = 9999;
+
 /// Get a unique path for a file, handling collisions according to the specified action
 ///
 /// # Arguments
@@ -29,6 +32,7 @@ use std::path::{Path, PathBuf};
 /// // If /tmp/movie.mkv exists, returns /tmp/movie (1).mkv
 /// // If that exists too, returns /tmp/movie (2).mkv, etc.
 /// ```
+#[must_use]
 pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathBuf> {
     match action {
         FileCollisionAction::Overwrite => {
@@ -52,23 +56,24 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
             }
 
             // File exists, need to find a unique name
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| Error::PostProcess(PostProcessError::InvalidPath {
+            let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+                Error::PostProcess(PostProcessError::InvalidPath {
                     path: path.to_path_buf(),
                     reason: "Cannot extract file stem".to_string(),
-                }))?;
+                })
+            })?;
 
             let extension = path.extension().and_then(|e| e.to_str());
 
-            let parent = path.parent().ok_or_else(|| Error::PostProcess(PostProcessError::InvalidPath {
-                path: path.to_path_buf(),
-                reason: "Cannot extract parent directory".to_string(),
-            }))?;
+            let parent = path.parent().ok_or_else(|| {
+                Error::PostProcess(PostProcessError::InvalidPath {
+                    path: path.to_path_buf(),
+                    reason: "Cannot extract parent directory".to_string(),
+                })
+            })?;
 
             // Try adding (1), (2), (3), ... until we find a unique name
-            for i in 1..=9999 {
+            for i in 1..=MAX_RENAME_ATTEMPTS {
                 let new_name = match extension {
                     Some(ext) => format!("{} ({}).{}", stem, i, ext),
                     None => format!("{} ({})", stem, i),
@@ -79,7 +84,7 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
                 }
             }
 
-            // If we've tried 9999 names and they all exist, give up
+            // If we've tried MAX_RENAME_ATTEMPTS names and they all exist, give up
             Err(Error::PostProcess(PostProcessError::FileCollision {
                 path: path.to_path_buf(),
                 reason: "Could not find unique filename after 9999 attempts".to_string(),
@@ -113,6 +118,7 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
 /// assert!(is_sample(Path::new("/downloads/Movie/movie-sample.mkv")));
 /// assert!(!is_sample(Path::new("/downloads/Movie/movie.mkv")));
 /// ```
+#[must_use]
 pub fn is_sample(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -122,14 +128,7 @@ pub fn is_sample(path: &Path) -> bool {
 
     // Common sample folder/file names
     const SAMPLE_PATTERNS: &[&str] = &[
-        "sample",
-        "samples",
-        "subs",
-        "proof",
-        "proofs",
-        "cover",
-        "covers",
-        "eac3to",
+        "sample", "samples", "subs", "proof", "proofs", "cover", "covers", "eac3to",
     ];
 
     // Check for exact matches (case-insensitive)
@@ -176,7 +175,8 @@ pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -
             for part in value.split(';') {
                 let part = part.trim();
                 if part.starts_with("filename=") {
-                    let filename = part.trim_start_matches("filename=")
+                    let filename = part
+                        .trim_start_matches("filename=")
                         .trim_matches('"')
                         .to_string();
                     // Remove extension
@@ -249,6 +249,7 @@ pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -
 /// let available = get_available_space(Path::new("/downloads"))?;
 /// println!("Available space: {} GB", available / (1024 * 1024 * 1024));
 /// ```
+#[must_use]
 pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
     #[cfg(unix)]
     {
@@ -515,10 +516,7 @@ mod tests {
         let result = get_available_space(Path::new("/nonexistent/path/that/should/not/exist"));
 
         // Should return an error
-        assert!(
-            result.is_err(),
-            "Should return error for nonexistent path"
-        );
+        assert!(result.is_err(), "Should return error for nonexistent path");
     }
 
     #[test]
@@ -527,6 +525,9 @@ mod tests {
         let available = get_available_space(Path::new(".")).unwrap();
 
         // Should succeed and return reasonable value
-        assert!(available > 0, "Current directory should have available space");
+        assert!(
+            available > 0,
+            "Current directory should have available space"
+        );
     }
 }

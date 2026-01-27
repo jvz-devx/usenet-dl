@@ -14,10 +14,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use usenet_dl::api::start_api_server;
 use usenet_dl::config::{
-    ApiConfig, Config, DeobfuscationConfig, DiskSpaceConfig, DuplicateAction, DuplicateConfig,
-    DuplicateMethod, ExtractionConfig, FailedDownloadAction, FileCollisionAction, PostProcess,
-    RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig, ScriptEvent,
-    ServerConfig, WatchFolderAction, WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
+    ApiConfig, AutomationConfig, CleanupConfig, Config, DeobfuscationConfig, DiskSpaceConfig,
+    DownloadConfig, DuplicateAction, DuplicateConfig, DuplicateMethod, ExtractionConfig,
+    FailedDownloadAction, FileCollisionAction, NotificationConfig, PersistenceConfig, PostProcess,
+    ProcessingConfig, RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig,
+    ScriptEvent, ServerConfig, ServerIntegrationConfig, ToolsConfig, WatchFolderAction,
+    WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
 };
 use usenet_dl::{Priority, UsenetDownloader};
 
@@ -75,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let disk_space_config = DiskSpaceConfig {
         enabled: true,
         min_free_space: 5 * 1024 * 1024 * 1024, // 5 GB buffer
-        size_multiplier: 2.5,                    // Account for extraction overhead
+        size_multiplier: 2.5,                   // Account for extraction overhead
     };
 
     // Duplicate detection
@@ -158,66 +160,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Servers
         servers: vec![primary_server, backup_server],
 
-        // Directories
-        download_dir: PathBuf::from("/data/downloads"),
-        temp_dir: PathBuf::from("/data/temp"),
-        database_path: PathBuf::from("/data/usenet-dl.db"),
+        // Download behavior (directories, concurrency, post-processing)
+        download: DownloadConfig {
+            download_dir: PathBuf::from("/data/downloads"),
+            temp_dir: PathBuf::from("/data/temp"),
+            max_concurrent_downloads: 3,
+            speed_limit_bps: None, // Controlled by scheduler
+            default_post_process: PostProcess::UnpackAndCleanup,
+            failed_action: FailedDownloadAction::Keep,
+            failed_directory: Some(PathBuf::from("/data/failed")),
+            delete_samples: true,
+            file_collision: FileCollisionAction::Rename,
+        },
 
-        // Download settings
-        max_concurrent_downloads: 3,
-        speed_limit_bps: None, // Controlled by scheduler
-
-        // Resilience
-        retry: retry_config,
-
-        // Post-processing
-        default_post_process: PostProcess::UnpackAndCleanup,
-        failed_action: FailedDownloadAction::Keep,
-        failed_directory: Some(PathBuf::from("/data/failed")),
-        delete_samples: true,
-
-        // Extraction
-        extraction: extraction_config,
-
-        // File handling
-        file_collision: FileCollisionAction::Rename,
-        deobfuscation: deobfuscation_config,
-        duplicate: duplicate_config,
-
-        // Safety
-        disk_space: disk_space_config,
-
-        // Passwords
-        password_file: Some(PathBuf::from("/etc/usenet-dl/passwords.txt")),
-        try_empty_password: true,
-
-        // API
-        api: ApiConfig {
-            bind_address: "0.0.0.0:6789".parse().unwrap(),
-            api_key: Some("your-secret-key".to_string()),
-            swagger_ui: true,
+        // External tools and passwords
+        tools: ToolsConfig {
+            password_file: Some(PathBuf::from("/etc/usenet-dl/passwords.txt")),
+            try_empty_password: true,
             ..Default::default()
         },
 
-        // Automation
-        watch_folders: vec![movies_watch],
-        rss_feeds: vec![tv_rss],
-        schedule_rules: vec![night_schedule, work_schedule],
+        // Notifications (webhooks and scripts)
+        notifications: NotificationConfig {
+            webhooks: vec![webhook],
+            scripts: vec![script],
+        },
 
-        // Notifications
-        webhooks: vec![webhook],
-        scripts: vec![script],
+        // Persistence (database and schedules)
+        persistence: PersistenceConfig {
+            database_path: PathBuf::from("/data/usenet-dl.db"),
+            schedule_rules: vec![night_schedule, work_schedule],
+            ..Default::default()
+        },
+
+        // Processing (retry, extraction, duplicates, disk space)
+        processing: ProcessingConfig {
+            retry: retry_config,
+            extraction: extraction_config,
+            duplicate: duplicate_config,
+            disk_space: disk_space_config,
+            cleanup: CleanupConfig::default(),
+        },
+
+        // Automation (watch folders, RSS, deobfuscation)
+        automation: AutomationConfig {
+            watch_folders: vec![movies_watch],
+            rss_feeds: vec![tv_rss],
+            deobfuscation: deobfuscation_config,
+        },
+
+        // Server integration (API)
+        server: ServerIntegrationConfig {
+            api: ApiConfig {
+                bind_address: "0.0.0.0:6789".parse().unwrap(),
+                api_key: Some("your-secret-key".to_string()),
+                swagger_ui: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
 
         ..Default::default()
     };
 
     println!("Configuration:");
     println!("  Servers: {}", config.servers.len());
-    println!("  Max concurrent: {}", config.max_concurrent_downloads);
-    println!("  Watch folders: {}", config.watch_folders.len());
-    println!("  RSS feeds: {}", config.rss_feeds.len());
-    println!("  Schedule rules: {}", config.schedule_rules.len());
-    println!("  API: {}", config.api.bind_address);
+    println!("  Max concurrent: {}", config.download.max_concurrent_downloads);
+    println!("  Watch folders: {}", config.automation.watch_folders.len());
+    println!("  RSS feeds: {}", config.automation.rss_feeds.len());
+    println!("  Schedule rules: {}", config.persistence.schedule_rules.len());
+    println!("  API: {}", config.server.api.bind_address);
 
     // Create downloader with this configuration
     let downloader = Arc::new(UsenetDownloader::new(config.clone()).await?);

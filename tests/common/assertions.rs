@@ -40,7 +40,11 @@ pub async fn wait_for_completion(
                 Ok(Event::Complete { id: event_id, .. }) if event_id == id => {
                     return WaitResult::Completed;
                 }
-                Ok(Event::Failed { id: event_id, error, .. }) if event_id == id => {
+                Ok(Event::Failed {
+                    id: event_id,
+                    error,
+                    ..
+                }) if event_id == id => {
                     return WaitResult::Failed(error);
                 }
                 Ok(_) => {

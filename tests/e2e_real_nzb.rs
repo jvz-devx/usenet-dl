@@ -147,7 +147,11 @@ async fn test_real_nzb_download() {
         let mut last_percent = -1.0_f32;
         loop {
             match events.recv().await {
-                Ok(Event::Downloading { id: _, percent, speed_bps }) => {
+                Ok(Event::Downloading {
+                    id: _,
+                    percent,
+                    speed_bps,
+                }) => {
                     // Only print on significant progress change
                     if (percent - last_percent).abs() >= 1.0 || last_percent < 0.0 {
                         let speed_mbps = speed_bps as f64 / 1_000_000.0;
@@ -200,11 +204,10 @@ async fn test_real_nzb_download() {
                     println!("  Files:");
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        let size = std::fs::metadata(&path)
-                            .map(|m| m.len())
-                            .unwrap_or(0);
+                        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                         let size_mb = size as f64 / 1_000_000.0;
-                        println!("    - {} ({:.2} MB)",
+                        println!(
+                            "    - {} ({:.2} MB)",
                             path.file_name().unwrap_or_default().to_string_lossy(),
                             size_mb
                         );
@@ -218,7 +221,10 @@ async fn test_real_nzb_download() {
         }
         WaitResult::Timeout => {
             println!("  Result: TIMEOUT");
-            println!("  Download did not complete within {} seconds", config.timeout_secs);
+            println!(
+                "  Download did not complete within {} seconds",
+                config.timeout_secs
+            );
 
             // Show current status
             if let Ok(downloads) = downloader.db.list_downloads().await {
@@ -291,8 +297,11 @@ async fn test_real_nzb_pause_resume() {
     // Check status
     if let Ok(downloads) = downloader.db.list_downloads().await {
         if let Some(d) = downloads.iter().find(|d| d.id == id) {
-            println!("Status after pause: {:?}, Progress: {:.1}%",
-                Status::from_i32(d.status), d.progress);
+            println!(
+                "Status after pause: {:?}, Progress: {:.1}%",
+                Status::from_i32(d.status),
+                d.progress
+            );
         }
     }
 
@@ -312,8 +321,11 @@ async fn test_real_nzb_pause_resume() {
 
     if let Ok(downloads) = downloader.db.list_downloads().await {
         if let Some(d) = downloads.iter().find(|d| d.id == id) {
-            println!("Status after resume: {:?}, Progress: {:.1}%",
-                Status::from_i32(d.status), d.progress);
+            println!(
+                "Status after resume: {:?}, Progress: {:.1}%",
+                Status::from_i32(d.status),
+                d.progress
+            );
         }
     }
 
@@ -359,7 +371,10 @@ async fn test_real_nzb_info() {
 
     println!("  Files: {}", file_count);
     println!("  Segments: {}", segment_count);
-    println!("  Estimated size: {:.2} MB", total_bytes as f64 / 1_000_000.0);
+    println!(
+        "  Estimated size: {:.2} MB",
+        total_bytes as f64 / 1_000_000.0
+    );
 
     // Check for password
     if content.contains("<meta type=\"password\">") {

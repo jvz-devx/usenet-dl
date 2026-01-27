@@ -6,6 +6,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Minimum string length required to reliably detect high entropy.
+/// Shorter strings can appear random by chance.
+const MIN_ENTROPY_STRING_LENGTH: usize = 24;
+
+/// Lower bound for balanced character type distribution (approximately 1/3).
+const ENTROPY_RATIO_LOWER_BOUND: f32 = 0.28;
+
+/// Upper bound for balanced upper/lower case distribution.
+const ENTROPY_RATIO_UPPER_BOUND_LETTERS: f32 = 0.38;
+
+/// Lower bound for upper/lower case distribution.
+const ENTROPY_RATIO_LOWER_BOUND_LETTERS: f32 = 0.31;
+
 /// Check if a filename appears to be obfuscated (random/meaningless)
 ///
 /// Uses multiple heuristics:
@@ -24,6 +37,7 @@ use std::path::{Path, PathBuf};
 /// assert!(is_obfuscated("xkcd1234mnbvcxz.avi"));
 /// assert!(!is_obfuscated("Movie.Name.2024.1080p.BluRay.x264.mkv"));
 /// ```
+#[must_use]
 pub fn is_obfuscated(filename: &str) -> bool {
     let stem = Path::new(filename)
         .file_stem()
@@ -53,7 +67,7 @@ pub fn is_obfuscated(filename: &str) -> bool {
 /// This is intentionally conservative - it's better to miss some obfuscated files
 /// than to false-positive on normal structured filenames.
 fn is_high_entropy(s: &str) -> bool {
-    if s.len() < 24 {
+    if s.len() < MIN_ENTROPY_STRING_LENGTH {
         // Need longer strings to be confident about randomness
         // Short strings can have apparent uniformity by chance
         return false;
@@ -74,7 +88,7 @@ fn is_high_entropy(s: &str) -> bool {
     }
 
     let total = (upper + lower + digit) as f32;
-    if total < 24.0 {
+    if total < MIN_ENTROPY_STRING_LENGTH as f32 {
         return false;
     }
 
@@ -93,9 +107,12 @@ fn is_high_entropy(s: &str) -> bool {
 
     // Each type must be within tight range of 1/3
     // Real filenames rarely have this perfect balance
-    let balanced_upper = upper_ratio >= 0.31 && upper_ratio <= 0.38;
-    let balanced_lower = lower_ratio >= 0.31 && lower_ratio <= 0.38;
-    let balanced_digit = digit_ratio >= 0.28 && digit_ratio <= 0.38;
+    let balanced_upper = upper_ratio >= ENTROPY_RATIO_LOWER_BOUND_LETTERS
+        && upper_ratio <= ENTROPY_RATIO_UPPER_BOUND_LETTERS;
+    let balanced_lower = lower_ratio >= ENTROPY_RATIO_LOWER_BOUND_LETTERS
+        && lower_ratio <= ENTROPY_RATIO_UPPER_BOUND_LETTERS;
+    let balanced_digit = digit_ratio >= ENTROPY_RATIO_LOWER_BOUND
+        && digit_ratio <= ENTROPY_RATIO_UPPER_BOUND_LETTERS;
 
     balanced_upper && balanced_lower && balanced_digit
 }
@@ -115,7 +132,9 @@ fn looks_like_uuid(s: &str) -> bool {
             && parts[3].len() == 4
             && parts[4].len() == 12
         {
-            return parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
+            return parts
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
         }
     }
 
@@ -274,7 +293,9 @@ mod tests {
         // Not UUIDs
         assert!(!looks_like_uuid("not-a-uuid-at-all"));
         assert!(!looks_like_uuid("550e8400-e29b-41d4-a716")); // Too short
-        assert!(!looks_like_uuid("550e8400-e29b-41d4-a716-446655440000-extra")); // Too long
+        assert!(!looks_like_uuid(
+            "550e8400-e29b-41d4-a716-446655440000-extra"
+        )); // Too long
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub enum Error {
     /// Configuration error with context about which setting is invalid
     #[error("configuration error: {message}")]
     Config {
+        /// Human-readable error message describing the configuration issue
         message: String,
         /// The configuration key that caused the error (e.g., "download_dir")
         key: Option<String>,
@@ -86,11 +87,24 @@ pub enum Error {
 
     /// Insufficient disk space
     #[error("insufficient disk space: need {required} bytes, have {available} bytes")]
-    InsufficientSpace { required: u64, available: u64 },
+    InsufficientSpace {
+        /// Number of bytes required for the operation
+        required: u64,
+        /// Number of bytes currently available on disk
+        available: u64
+    },
 
     /// Failed to check disk space
     #[error("failed to check disk space: {0}")]
     DiskSpaceCheckFailed(String),
+
+    /// External tool execution failed (par2, unrar, etc.)
+    #[error("external tool error: {0}")]
+    ExternalTool(String),
+
+    /// Operation not supported (missing binary, not implemented, etc.)
+    #[error("not supported: {0}")]
+    NotSupported(String),
 
     /// Other error
     #[error("{0}")]
@@ -126,35 +140,66 @@ pub enum DatabaseError {
 pub enum DownloadError {
     /// Download not found in queue or database
     #[error("download {id} not found")]
-    NotFound { id: i64 },
+    NotFound {
+        /// The download ID that was not found
+        id: i64
+    },
 
     /// Download files not found on disk
     #[error("download {id} files not found at {path}")]
-    FilesNotFound { id: i64, path: PathBuf },
+    FilesNotFound {
+        /// The download ID whose files were not found
+        id: i64,
+        /// The path where the files were expected to be
+        path: PathBuf
+    },
 
     /// Download already in requested state
     #[error("download {id} is already {state}")]
-    AlreadyInState { id: i64, state: String },
+    AlreadyInState {
+        /// The download ID that is already in the requested state
+        id: i64,
+        /// The current state (e.g., "paused", "completed")
+        state: String
+    },
 
     /// Cannot perform operation in current state
     #[error("cannot {operation} download {id} in state {current_state}")]
     InvalidState {
+        /// The download ID that is in an invalid state for the operation
         id: i64,
+        /// The operation that was attempted (e.g., "pause", "resume", "retry")
         operation: String,
+        /// The current state that prevents the operation (e.g., "downloading", "completed")
         current_state: String,
     },
 
     /// Insufficient disk space to start download
     #[error("insufficient disk space: need {required} bytes, have {available} bytes")]
-    InsufficientSpace { required: u64, available: u64 },
+    InsufficientSpace {
+        /// Number of bytes required for the download
+        required: u64,
+        /// Number of bytes currently available on disk
+        available: u64
+    },
 
     /// Download failed during article retrieval
     #[error("download {id} failed: {reason}")]
-    Failed { id: i64, reason: String },
+    Failed {
+        /// The download ID that failed
+        id: i64,
+        /// The reason for the failure
+        reason: String
+    },
 
     /// Network timeout during download
     #[error("download {id} timed out after {seconds}s")]
-    Timeout { id: i64, seconds: u64 },
+    Timeout {
+        /// The download ID that timed out
+        id: i64,
+        /// The timeout duration in seconds
+        seconds: u64
+    },
 }
 
 /// Post-processing errors (PAR2 verify, repair, extraction, etc.)
@@ -162,47 +207,91 @@ pub enum DownloadError {
 pub enum PostProcessError {
     /// PAR2 verification failed
     #[error("PAR2 verification failed for download {id}: {reason}")]
-    VerificationFailed { id: i64, reason: String },
+    VerificationFailed {
+        /// The download ID for which verification failed
+        id: i64,
+        /// The reason verification failed
+        reason: String
+    },
 
     /// PAR2 repair failed
     #[error("PAR2 repair failed for download {id}: {reason}")]
-    RepairFailed { id: i64, reason: String },
+    RepairFailed {
+        /// The download ID for which repair failed
+        id: i64,
+        /// The reason repair failed
+        reason: String
+    },
 
     /// Archive extraction failed
     #[error("extraction failed for {archive}: {reason}")]
-    ExtractionFailed { archive: PathBuf, reason: String },
+    ExtractionFailed {
+        /// The archive file that failed to extract
+        archive: PathBuf,
+        /// The reason extraction failed
+        reason: String
+    },
 
     /// Wrong password for encrypted archive
     #[error("wrong password for encrypted archive {archive}")]
-    WrongPassword { archive: PathBuf },
+    WrongPassword {
+        /// The encrypted archive that could not be opened
+        archive: PathBuf
+    },
 
     /// All passwords failed for archive extraction
     #[error("all {count} passwords failed for archive {archive}")]
-    AllPasswordsFailed { archive: PathBuf, count: usize },
+    AllPasswordsFailed {
+        /// The encrypted archive that could not be opened
+        archive: PathBuf,
+        /// The number of passwords that were tried
+        count: usize
+    },
 
     /// No passwords available for encrypted archive
     #[error("no passwords available for encrypted archive {archive}")]
-    NoPasswordsAvailable { archive: PathBuf },
+    NoPasswordsAvailable {
+        /// The encrypted archive that requires a password
+        archive: PathBuf
+    },
 
     /// File move/rename failed
     #[error("failed to move {source_path} to {dest_path}: {reason}")]
     MoveFailed {
+        /// The source path of the file being moved
         source_path: PathBuf,
+        /// The destination path where the file should be moved
         dest_path: PathBuf,
+        /// The reason the move failed
         reason: String,
     },
 
     /// File collision at destination
     #[error("file collision at {path}: {reason}")]
-    FileCollision { path: PathBuf, reason: String },
+    FileCollision {
+        /// The path where the collision occurred
+        path: PathBuf,
+        /// The reason for the collision (e.g., "file already exists")
+        reason: String
+    },
 
     /// Cleanup failed (non-fatal, usually logged as warning)
     #[error("cleanup failed for download {id}: {reason}")]
-    CleanupFailed { id: i64, reason: String },
+    CleanupFailed {
+        /// The download ID for which cleanup failed
+        id: i64,
+        /// The reason cleanup failed
+        reason: String
+    },
 
     /// Invalid path encountered during post-processing
     #[error("invalid path {path}: {reason}")]
-    InvalidPath { path: PathBuf, reason: String },
+    InvalidPath {
+        /// The invalid path that was encountered
+        path: PathBuf,
+        /// The reason the path is invalid
+        reason: String
+    },
 }
 
 /// API error response format
@@ -357,6 +446,10 @@ impl ToHttpStatus for Error {
             // 503 Service Unavailable
             Error::ShuttingDown => 503,
             Error::Download(DownloadError::Timeout { .. }) => 503,
+            Error::ExternalTool(_) => 503,
+
+            // 501 Not Implemented - Feature not supported
+            Error::NotSupported(_) => 501,
 
             // 500 for download failures
             Error::Download(DownloadError::Failed { .. }) => 500,
@@ -404,6 +497,8 @@ impl ToHttpStatus for Error {
             Error::Duplicate(_) => "duplicate",
             Error::InsufficientSpace { .. } => "insufficient_space",
             Error::DiskSpaceCheckFailed(_) => "disk_space_check_failed",
+            Error::ExternalTool(_) => "external_tool_error",
+            Error::NotSupported(_) => "not_supported",
             Error::Other(_) => "internal_error",
         }
     }
@@ -423,10 +518,12 @@ impl From<Error> for ApiError {
                 "download_id": id,
                 "path": path,
             })),
-            Error::Download(DownloadError::AlreadyInState { id, state }) => Some(serde_json::json!({
-                "download_id": id,
-                "state": state,
-            })),
+            Error::Download(DownloadError::AlreadyInState { id, state }) => {
+                Some(serde_json::json!({
+                    "download_id": id,
+                    "state": state,
+                }))
+            }
             Error::Download(DownloadError::InvalidState {
                 id,
                 operation,
@@ -436,13 +533,17 @@ impl From<Error> for ApiError {
                 "operation": operation,
                 "current_state": current_state,
             })),
-            Error::Download(DownloadError::InsufficientSpace { required, available }) => {
-                Some(serde_json::json!({
-                    "required_bytes": required,
-                    "available_bytes": available,
-                }))
-            }
-            Error::InsufficientSpace { required, available } => Some(serde_json::json!({
+            Error::Download(DownloadError::InsufficientSpace {
+                required,
+                available,
+            }) => Some(serde_json::json!({
+                "required_bytes": required,
+                "available_bytes": available,
+            })),
+            Error::InsufficientSpace {
+                required,
+                available,
+            } => Some(serde_json::json!({
                 "required_bytes": required,
                 "available_bytes": available,
             })),

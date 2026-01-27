@@ -38,9 +38,9 @@
 //! # }
 //! ```
 
-use crate::{config::RssFeedConfig, rss_manager::RssManager, UsenetDownloader};
-use std::sync::Arc;
+use crate::{rss_manager::RssManager, UsenetDownloader};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
@@ -64,10 +64,7 @@ impl RssScheduler {
     /// # Parameters
     /// - `downloader`: Reference to the UsenetDownloader for config access
     /// - `rss_manager`: Reference to the RSS manager for feed operations
-    pub fn new(
-        downloader: Arc<UsenetDownloader>,
-        rss_manager: Arc<RssManager>,
-    ) -> Self {
+    pub fn new(downloader: Arc<UsenetDownloader>, rss_manager: Arc<RssManager>) -> Self {
         Self {
             rss_manager,
             downloader,
@@ -78,7 +75,7 @@ impl RssScheduler {
     ///
     /// This runs in a loop checking each feed according to its check_interval.
     /// The scheduler will:
-    /// 1. Check if shutdown was requested (via downloader.accepting_new flag)
+    /// 1. Check if shutdown was requested (via downloader.queue_state.accepting_new flag)
     /// 2. For each enabled feed:
     ///    - Fetch and parse the feed
     ///    - Process new items (filter, mark as seen, auto-download)
@@ -96,13 +93,13 @@ impl RssScheduler {
 
         loop {
             // Check for shutdown signal via downloader's accepting_new flag
-            if !self.downloader.accepting_new.load(Ordering::SeqCst) {
+            if !self.downloader.queue_state.accepting_new.load(Ordering::SeqCst) {
                 info!("RSS scheduler shutting down");
                 break;
             }
 
-            // Get current feeds from config
-            let feeds: Vec<RssFeedConfig> = self.downloader.config.rss_feeds.clone();
+            // Get reference to current feeds from config (no clone needed)
+            let feeds = &self.downloader.config.automation.rss_feeds;
 
             if feeds.is_empty() {
                 debug!("No RSS feeds configured, scheduler idle");
@@ -113,7 +110,7 @@ impl RssScheduler {
             let now = SystemTime::now();
 
             // Check each feed
-            for feed in &feeds {
+            for feed in feeds {
                 // Skip disabled feeds
                 if !feed.enabled {
                     debug!(url = %feed.url, "RSS feed disabled, skipping");
@@ -158,11 +155,7 @@ impl RssScheduler {
                         );
 
                         // Process items (filter, mark as seen, auto-download)
-                        match self
-                            .rss_manager
-                            .process_feed_items(0, feed, items)
-                            .await
-                        {
+                        match self.rss_manager.process_feed_items(0, feed, items).await {
                             Ok(downloaded_count) => {
                                 if downloaded_count > 0 {
                                     info!(

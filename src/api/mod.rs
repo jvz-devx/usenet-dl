@@ -3,7 +3,7 @@
 //! Provides an OpenAPI 3.1 compliant REST API for managing downloads,
 //! configuration, and monitoring the download queue.
 
-use crate::{Config, UsenetDownloader, Result};
+use crate::{Config, Result, UsenetDownloader};
 use axum::{
     http::HeaderValue,
     middleware,
@@ -67,6 +67,7 @@ pub use state::AppState;
 /// - `DELETE /categories/:name` - Delete category
 ///
 /// ## System
+/// - `GET /capabilities` - Query system capabilities
 /// - `GET /health` - Health check
 /// - `GET /openapi.json` - OpenAPI specification
 /// - `GET /swagger-ui` - Interactive Swagger UI documentation (if enabled)
@@ -101,10 +102,7 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
             "/downloads/:id/priority",
             patch(routes::set_download_priority),
         )
-        .route(
-            "/downloads/:id/reprocess",
-            post(routes::reprocess_download),
-        )
+        .route("/downloads/:id/reprocess", post(routes::reprocess_download))
         .route("/downloads/:id/reextract", post(routes::reextract_download))
         // URL-based NZB adding
         .route("/downloads/url", post(routes::add_download_url))
@@ -128,6 +126,7 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         .route("/categories/:name", put(routes::create_or_update_category))
         .route("/categories/:name", delete(routes::delete_category))
         // System
+        .route("/capabilities", get(routes::get_capabilities))
         .route("/health", get(routes::health_check))
         .route("/openapi.json", get(routes::openapi_spec))
         .route("/events", get(routes::event_stream))
@@ -146,11 +145,8 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
 
     // Merge Swagger UI routes if enabled in config (before applying state)
     // Note: SwaggerUi will use the existing /openapi.json endpoint we already defined
-    let router = if config.api.swagger_ui {
-        router.merge(
-            SwaggerUi::new("/swagger-ui")
-                .url("/api/v1/openapi.json", ApiDoc::openapi())
-        )
+    let router = if config.server.api.swagger_ui {
+        router.merge(SwaggerUi::new("/swagger-ui").url("/api/v1/openapi.json", ApiDoc::openapi()))
     } else {
         router
     };
@@ -159,8 +155,8 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     let router = router.with_state(state);
 
     // Apply rate limiting middleware if enabled in config
-    let router = if config.api.rate_limit.enabled {
-        let limiter = Arc::new(rate_limit::RateLimiter::new(config.api.rate_limit.clone()));
+    let router = if config.server.api.rate_limit.enabled {
+        let limiter = Arc::new(rate_limit::RateLimiter::new(config.server.api.rate_limit.clone()));
         router.layer(middleware::from_fn_with_state(
             limiter,
             rate_limit::rate_limit_middleware,
@@ -170,9 +166,9 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     };
 
     // Apply authentication middleware if API key is configured
-    let router = if config.api.api_key.is_some() {
+    let router = if config.server.api.api_key.is_some() {
         router.layer(middleware::from_fn_with_state(
-            config.api.api_key.clone(),
+            config.server.api.api_key.clone(),
             auth::require_api_key,
         ))
     } else {
@@ -180,8 +176,8 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     };
 
     // Apply CORS middleware if enabled in config
-    if config.api.cors_enabled {
-        let cors = build_cors_layer(&config.api.cors_origins);
+    if config.server.api.cors_enabled {
+        let cors = build_cors_layer(&config.server.api.cors_origins);
         router.layer(cors)
     } else {
         router
@@ -210,10 +206,7 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
             .allow_headers(Any)
     } else {
         // Allow specific origins
-        let allowed: Vec<HeaderValue> = origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
+        let allowed: Vec<HeaderValue> = origins.iter().filter_map(|o| o.parse().ok()).collect();
 
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(allowed))
@@ -256,7 +249,7 @@ pub async fn start_api_server(
     downloader: Arc<UsenetDownloader>,
     config: Arc<Config>,
 ) -> Result<()> {
-    let bind_address = config.api.bind_address;
+    let bind_address = config.server.api.bind_address;
 
     tracing::info!(
         address = %bind_address,
@@ -284,7 +277,6 @@ pub async fn start_api_server(
     tracing::info!("API server stopped");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests;

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 use usenet_dl::{Config, ServerConfig, UsenetDownloader};
+use usenet_dl::config::{DownloadConfig, PersistenceConfig};
 
 /// Error type for test configuration
 #[derive(Debug)]
@@ -84,10 +85,17 @@ pub async fn create_live_downloader() -> Result<(Arc<UsenetDownloader>, TempDir)
 
     let config = Config {
         servers: vec![server],
-        database_path: temp_dir.path().join("test.db"),
-        download_dir: temp_dir.path().join("downloads"),
-        temp_dir: temp_dir.path().join("temp"),
-        max_concurrent_downloads: 2,
+        persistence: PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
+        download: DownloadConfig {
+            download_dir: temp_dir.path().join("downloads"),
+            temp_dir: temp_dir.path().join("temp"),
+            max_concurrent_downloads: 2,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -106,10 +114,17 @@ pub async fn create_downloader_bad_auth() -> Result<(Arc<UsenetDownloader>, Temp
 
     let config = Config {
         servers: vec![server],
-        database_path: temp_dir.path().join("test.db"),
-        download_dir: temp_dir.path().join("downloads"),
-        temp_dir: temp_dir.path().join("temp"),
-        max_concurrent_downloads: 1,
+        persistence: PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
+        download: DownloadConfig {
+            download_dir: temp_dir.path().join("downloads"),
+            temp_dir: temp_dir.path().join("temp"),
+            max_concurrent_downloads: 1,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -141,9 +156,12 @@ pub async fn create_docker_downloader(
             pipeline_depth: 10,
         }],
         database_path: temp_dir.path().join("test.db"),
-        download_dir: temp_dir.path().join("downloads"),
-        temp_dir: temp_dir.path().join("temp"),
-        max_concurrent_downloads: 2,
+        download: DownloadConfig {
+            download_dir: temp_dir.path().join("downloads"),
+            temp_dir: temp_dir.path().join("temp"),
+            max_concurrent_downloads: 2,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

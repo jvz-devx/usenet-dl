@@ -1,19 +1,23 @@
 { pkgs ? import <nixpkgs> {} }:
 
-pkgs.mkShell {
+let
+  rust-overlay = import (builtins.fetchTarball
+    "https://github.com/oxalica/rust-overlay/archive/master.tar.gz");
+  pkgs' = import <nixpkgs> { overlays = [ rust-overlay ]; };
+  rust-bin = pkgs'.rust-bin.stable."1.93.0".default.override {
+    extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
+  };
+in
+pkgs'.mkShell {
   name = "usenet-dl-dev";
 
-  buildInputs = with pkgs; [
+  buildInputs = with pkgs'; [
     # Node.js
     nodejs_24
     nodePackages.npm
 
-    # Rust toolchain (stable from nixpkgs)
-    rustc
-    cargo
-    rust-analyzer
-    clippy
-    rustfmt
+    # Rust 1.93 toolchain
+    rust-bin
 
     # Build essentials
     pkg-config
@@ -44,15 +48,7 @@ pkgs.mkShell {
   # Use mold for faster linking
   RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
 
-  # For rust-analyzer
-  RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-
   shellHook = ''
-    # Fix ralph scripts with incorrect shebangs
-    if [ -d "$HOME/ralph" ]; then
-      sed -i "s|#!/bin/bash|#!${pkgs.bash}/bin/bash|g" "$HOME/ralph"/*.sh 2>/dev/null || true
-    fi
-
     # Ensure npm global installs go to a local directory
     export NPM_CONFIG_PREFIX="$HOME/.npm-global"
     export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"

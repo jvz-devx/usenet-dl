@@ -1,14 +1,14 @@
 [package]
 name = "usenet-dl"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["usenet-dl contributors"]
 license = "MIT OR Apache-2.0"
 description = "Backend library for SABnzbd/NZBGet-like applications - highly configurable Usenet download manager"
 repository = "https://github.com/yourusername/usenet-dl"
 keywords = ["usenet", "nntp", "nzb", "download", "sabnzbd"]
 categories = ["network-programming", "web-programming"]
-rust-version = "1.70"
+rust-version = "1.93"
 
 [dependencies]
 # Core NNTP functionality
@@ -26,6 +26,10 @@ sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
 unrar = "0.5"
 sevenz-rust = { version = "0.5", features = ["aes256"] }
 zip = "0.6"
+
+# Binary discovery and async traits
+which = "6"
+async-trait = "0.1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
