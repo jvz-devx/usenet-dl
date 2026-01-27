@@ -3,7 +3,7 @@
 //! Provides an OpenAPI 3.1 compliant REST API for managing downloads,
 //! configuration, and monitoring the download queue.
 
-use crate::{Config, UsenetDownloader, Result};
+use crate::{Config, Result, UsenetDownloader};
 use axum::{
     http::HeaderValue,
     middleware,
@@ -102,10 +102,7 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
             "/downloads/:id/priority",
             patch(routes::set_download_priority),
         )
-        .route(
-            "/downloads/:id/reprocess",
-            post(routes::reprocess_download),
-        )
+        .route("/downloads/:id/reprocess", post(routes::reprocess_download))
         .route("/downloads/:id/reextract", post(routes::reextract_download))
         // URL-based NZB adding
         .route("/downloads/url", post(routes::add_download_url))
@@ -149,10 +146,7 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     // Merge Swagger UI routes if enabled in config (before applying state)
     // Note: SwaggerUi will use the existing /openapi.json endpoint we already defined
     let router = if config.api.swagger_ui {
-        router.merge(
-            SwaggerUi::new("/swagger-ui")
-                .url("/api/v1/openapi.json", ApiDoc::openapi())
-        )
+        router.merge(SwaggerUi::new("/swagger-ui").url("/api/v1/openapi.json", ApiDoc::openapi()))
     } else {
         router
     };
@@ -212,10 +206,7 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
             .allow_headers(Any)
     } else {
         // Allow specific origins
-        let allowed: Vec<HeaderValue> = origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
+        let allowed: Vec<HeaderValue> = origins.iter().filter_map(|o| o.parse().ok()).collect();
 
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(allowed))
@@ -286,7 +277,6 @@ pub async fn start_api_server(
     tracing::info!("API server stopped");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests;

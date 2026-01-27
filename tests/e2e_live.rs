@@ -132,15 +132,20 @@ async fn test_download_single_article() {
         return;
     }
 
-    let (downloader, temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     // Use a minimal NZB - in a real test you'd use an NZB with valid message IDs
     // For now, we'll test that the download flow works even if articles don't exist
     let nzb = common::MINIMAL_NZB;
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "single_article_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "single_article_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -156,7 +161,10 @@ async fn test_download_single_article() {
         WaitResult::Completed => {
             println!("Download completed successfully!");
             // Verify files were created
-            let download_dir = temp_dir.path().join("downloads").join("single_article_test");
+            let download_dir = temp_dir
+                .path()
+                .join("downloads")
+                .join("single_article_test");
             println!("Download dir: {:?}", download_dir);
         }
         WaitResult::Failed(error) => {
@@ -184,13 +192,18 @@ async fn test_download_multi_segment() {
         return;
     }
 
-    let (downloader, _temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, _temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     let nzb = common::MULTI_SEGMENT_NZB;
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "multi_segment_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "multi_segment_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -216,8 +229,9 @@ async fn test_missing_article_404() {
         return;
     }
 
-    let (downloader, _temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, _temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     // Create NZB with definitely non-existent message ID
     let nzb = common::create_single_article_nzb(
@@ -227,7 +241,11 @@ async fn test_missing_article_404() {
     );
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "missing_article_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "missing_article_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -269,13 +287,18 @@ async fn test_download_pause_resume() {
         return;
     }
 
-    let (downloader, _temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, _temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     let nzb = common::MULTI_SEGMENT_NZB;
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "pause_resume_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "pause_resume_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -322,8 +345,9 @@ async fn test_concurrent_downloads() {
         return;
     }
 
-    let (downloader, _temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, _temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     // Add multiple downloads with different priorities
     let nzb = common::MINIMAL_NZB;
@@ -402,8 +426,9 @@ async fn test_full_pipeline_rar() {
         return;
     }
 
-    let (downloader, temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     // This test would need a real NZB with RAR content
     // For now, we just verify the flow works
@@ -425,8 +450,9 @@ async fn test_full_pipeline_with_par2() {
         return;
     }
 
-    let (downloader, temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     // This test would need a real NZB with PAR2 files
     println!("Full pipeline PAR2 test - would need real PAR2 content NZB");
@@ -449,8 +475,9 @@ async fn test_speed_limit_during_download() {
         return;
     }
 
-    let (downloader, _temp_dir) =
-        create_live_downloader().await.expect("Failed to create downloader");
+    let (downloader, _temp_dir) = create_live_downloader()
+        .await
+        .expect("Failed to create downloader");
 
     // Set a speed limit (1 MB/s)
     downloader.set_speed_limit(Some(1_000_000)).await;
@@ -458,7 +485,11 @@ async fn test_speed_limit_during_download() {
     let nzb = common::MULTI_SEGMENT_NZB;
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "speed_limit_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "speed_limit_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 

@@ -54,6 +54,7 @@ impl SpeedLimiter {
     /// // Unlimited
     /// let unlimited = SpeedLimiter::new(None);
     /// ```
+    #[must_use]
     pub fn new(limit_bps: Option<u64>) -> Self {
         let limit = limit_bps.unwrap_or(0);
         let now = Self::now_nanos();
@@ -150,12 +151,16 @@ impl SpeedLimiter {
             if current_tokens >= bytes {
                 // Sufficient tokens available - try to consume them atomically
                 let new_tokens = current_tokens - bytes;
-                if self.tokens.compare_exchange(
-                    current_tokens,
-                    new_tokens,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ).is_ok() {
+                if self
+                    .tokens
+                    .compare_exchange(
+                        current_tokens,
+                        new_tokens,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
                     // Successfully acquired tokens
                     return;
                 }
@@ -195,12 +200,11 @@ impl SpeedLimiter {
 
         if tokens_to_add > 0 {
             // Try to update last_refill timestamp atomically
-            if self.last_refill.compare_exchange(
-                last,
-                now,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ).is_ok() {
+            if self
+                .last_refill
+                .compare_exchange(last, now, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
                 // Add tokens, but cap at limit (bucket capacity)
                 let current_tokens = self.tokens.load(Ordering::SeqCst);
                 let new_tokens = (current_tokens + tokens_to_add).min(limit);
@@ -337,7 +341,11 @@ mod tests {
         let tokens_after_refill = limiter.tokens.load(Ordering::Relaxed);
 
         // Should have refilled close to full capacity (within 10% tolerance)
-        assert!(tokens_after_refill >= 900_000, "tokens_after_refill = {}", tokens_after_refill);
+        assert!(
+            tokens_after_refill >= 900_000,
+            "tokens_after_refill = {}",
+            tokens_after_refill
+        );
     }
 
     #[tokio::test]
@@ -390,7 +398,10 @@ mod tests {
 
         // Should take at least 1 second (tokens refill at 1 MB/s)
         // Allow some tolerance for test timing
-        assert!(elapsed >= Duration::from_millis(800),
-                "elapsed = {:?} (expected >= 800ms)", elapsed);
+        assert!(
+            elapsed >= Duration::from_millis(800),
+            "elapsed = {:?} (expected >= 800ms)",
+            elapsed
+        );
     }
 }

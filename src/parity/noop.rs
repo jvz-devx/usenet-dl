@@ -7,9 +7,8 @@ use std::path::Path;
 /// No-op PAR2 handler used when PAR2 support is unavailable
 ///
 /// This handler is used when no external PAR2 binary is available or configured.
-/// It provides graceful degradation by:
-/// - Returning success for verification (assumes files are complete)
-/// - Returning `Error::NotSupported` for repair operations
+/// It provides graceful degradation by returning `Error::NotSupported` for both
+/// verification and repair operations.
 ///
 /// This allows the post-processing pipeline to continue even when PAR2
 /// functionality is not available.
@@ -24,9 +23,9 @@ use std::path::Path;
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let handler = NoOpParityHandler;
 ///
-/// // Verify always succeeds
-/// let result = handler.verify(Path::new("download.par2")).await?;
-/// assert!(result.is_complete);
+/// // Verify returns NotSupported error
+/// let verify_result = handler.verify(Path::new("download.par2")).await;
+/// assert!(verify_result.is_err());
 ///
 /// // Repair returns NotSupported error
 /// let repair_result = handler.repair(Path::new("download.par2")).await;
@@ -39,15 +38,11 @@ pub struct NoOpParityHandler;
 #[async_trait]
 impl ParityHandler for NoOpParityHandler {
     async fn verify(&self, _par2_file: &Path) -> crate::Result<VerifyResult> {
-        // Return success - assume files are complete
-        Ok(VerifyResult {
-            is_complete: true,
-            damaged_blocks: 0,
-            recovery_blocks_available: 0,
-            repairable: false,
-            damaged_files: Vec::new(),
-            missing_files: Vec::new(),
-        })
+        Err(crate::Error::NotSupported(
+            "PAR2 verification requires external par2 binary. \
+             Configure par2_path in config or ensure par2 is in PATH."
+                .into(),
+        ))
     }
 
     async fn repair(&self, _par2_file: &Path) -> crate::Result<RepairResult> {
@@ -75,13 +70,11 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_verify_returns_success() {
+    async fn test_verify_returns_not_supported() {
         let handler = NoOpParityHandler;
         let result = handler.verify(Path::new("test.par2")).await;
-        assert!(result.is_ok());
-        let verify_result = result.unwrap();
-        assert!(verify_result.is_complete);
-        assert_eq!(verify_result.damaged_blocks, 0);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::Error::NotSupported(_))));
     }
 
     #[tokio::test]
@@ -105,10 +98,18 @@ mod tests {
         match result {
             Err(crate::Error::NotSupported(msg)) => {
                 // Verify error message contains key information
-                assert!(msg.contains("PAR2 repair"), "Error message should mention PAR2 repair");
-                assert!(msg.contains("external par2 binary"), "Error message should mention external binary requirement");
-                assert!(msg.contains("par2_path") || msg.contains("PATH"),
-                    "Error message should mention configuration or PATH");
+                assert!(
+                    msg.contains("PAR2 repair"),
+                    "Error message should mention PAR2 repair"
+                );
+                assert!(
+                    msg.contains("external par2 binary"),
+                    "Error message should mention external binary requirement"
+                );
+                assert!(
+                    msg.contains("par2_path") || msg.contains("PATH"),
+                    "Error message should mention configuration or PATH"
+                );
             }
             _ => panic!("Expected NotSupported error"),
         }

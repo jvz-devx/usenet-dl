@@ -437,10 +437,12 @@ impl From<Error> for ApiError {
                 "download_id": id,
                 "path": path,
             })),
-            Error::Download(DownloadError::AlreadyInState { id, state }) => Some(serde_json::json!({
-                "download_id": id,
-                "state": state,
-            })),
+            Error::Download(DownloadError::AlreadyInState { id, state }) => {
+                Some(serde_json::json!({
+                    "download_id": id,
+                    "state": state,
+                }))
+            }
             Error::Download(DownloadError::InvalidState {
                 id,
                 operation,
@@ -450,13 +452,17 @@ impl From<Error> for ApiError {
                 "operation": operation,
                 "current_state": current_state,
             })),
-            Error::Download(DownloadError::InsufficientSpace { required, available }) => {
-                Some(serde_json::json!({
-                    "required_bytes": required,
-                    "available_bytes": available,
-                }))
-            }
-            Error::InsufficientSpace { required, available } => Some(serde_json::json!({
+            Error::Download(DownloadError::InsufficientSpace {
+                required,
+                available,
+            }) => Some(serde_json::json!({
+                "required_bytes": required,
+                "available_bytes": available,
+            })),
+            Error::InsufficientSpace {
+                required,
+                available,
+            } => Some(serde_json::json!({
                 "required_bytes": required,
                 "available_bytes": available,
             })),

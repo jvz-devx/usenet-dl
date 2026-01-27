@@ -46,8 +46,12 @@ async fn test_debug_download() {
     // Check initial status
     if let Ok(downloads) = downloader.db.list_downloads().await {
         for d in &downloads {
-            println!("Initial - ID: {}, Status: {:?}, Progress: {}%",
-                d.id, Status::from_i32(d.status), d.progress);
+            println!(
+                "Initial - ID: {}, Status: {:?}, Progress: {}%",
+                d.id,
+                Status::from_i32(d.status),
+                d.progress
+            );
         }
     }
 
@@ -76,7 +80,8 @@ async fn test_debug_download() {
                 }
             }
         }
-    }).await;
+    })
+    .await;
 
     if timeout.is_err() {
         println!("Timeout waiting for events");

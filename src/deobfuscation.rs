@@ -115,7 +115,9 @@ fn looks_like_uuid(s: &str) -> bool {
             && parts[3].len() == 4
             && parts[4].len() == 12
         {
-            return parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
+            return parts
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
         }
     }
 
@@ -274,7 +276,9 @@ mod tests {
         // Not UUIDs
         assert!(!looks_like_uuid("not-a-uuid-at-all"));
         assert!(!looks_like_uuid("550e8400-e29b-41d4-a716")); // Too short
-        assert!(!looks_like_uuid("550e8400-e29b-41d4-a716-446655440000-extra")); // Too long
+        assert!(!looks_like_uuid(
+            "550e8400-e29b-41d4-a716-446655440000-extra"
+        )); // Too long
     }
 
     #[test]

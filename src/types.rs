@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use utoipa::ToSchema;
 
-use crate::config::{PostProcess, DuplicateMethod};
+use crate::config::{DuplicateMethod, PostProcess};
 
 /// Unique identifier for a download
 pub type DownloadId = i64;

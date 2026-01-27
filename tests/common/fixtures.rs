@@ -149,11 +149,7 @@ pub fn generate_yenc_content(data: &[u8], filename: &str) -> Vec<u8> {
     let mut result = Vec::new();
 
     // yEnc header
-    let header = format!(
-        "=ybegin line=128 size={} name={}\r\n",
-        data.len(),
-        filename
-    );
+    let header = format!("=ybegin line=128 size={} name={}\r\n", data.len(), filename);
     result.extend_from_slice(header.as_bytes());
 
     // Simple encoding: escape special characters

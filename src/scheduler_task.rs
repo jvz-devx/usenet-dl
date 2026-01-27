@@ -33,10 +33,13 @@
 //! # }
 //! ```
 
-use crate::{scheduler::{Scheduler, ScheduleAction}, UsenetDownloader};
+use crate::{
+    scheduler::{ScheduleAction, Scheduler},
+    UsenetDownloader,
+};
 use chrono::Local;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
 
@@ -59,10 +62,7 @@ impl SchedulerTask {
     /// # Parameters
     /// - `downloader`: Reference to the UsenetDownloader for action application
     /// - `scheduler`: Reference to the Scheduler for rule evaluation
-    pub fn new(
-        downloader: Arc<UsenetDownloader>,
-        scheduler: Arc<Scheduler>,
-    ) -> Self {
+    pub fn new(downloader: Arc<UsenetDownloader>, scheduler: Arc<Scheduler>) -> Self {
         Self {
             scheduler,
             downloader,
@@ -114,7 +114,10 @@ impl SchedulerTask {
                 }
                 last_action = current_action;
             } else {
-                debug!(?current_action, "Schedule action unchanged, no action needed");
+                debug!(
+                    ?current_action,
+                    "Schedule action unchanged, no action needed"
+                );
             }
 
             // Sleep for 1 minute before next check
@@ -165,7 +168,7 @@ mod tests {
         config::Config,
         scheduler::{ScheduleRule, Weekday},
     };
-    use chrono::{NaiveTime, Datelike, Timelike};
+    use chrono::{Datelike, NaiveTime, Timelike};
     use tempfile::tempdir;
 
     async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
@@ -187,10 +190,7 @@ mod tests {
         let (downloader, _temp_dir) = create_test_downloader().await;
         let scheduler = Scheduler::new(vec![]);
 
-        let task = SchedulerTask::new(
-            Arc::new(downloader),
-            Arc::new(scheduler),
-        );
+        let task = SchedulerTask::new(Arc::new(downloader), Arc::new(scheduler));
 
         // Just verify creation succeeds
         assert!(Arc::strong_count(&task.scheduler) >= 1);
@@ -207,10 +207,7 @@ mod tests {
         // Set shutdown signal immediately
         downloader_arc.accepting_new.store(false, Ordering::SeqCst);
 
-        let task = SchedulerTask::new(
-            downloader_arc.clone(),
-            Arc::new(scheduler),
-        );
+        let task = SchedulerTask::new(downloader_arc.clone(), Arc::new(scheduler));
 
         // Start the task
         let handle = tokio::spawn(async move {
@@ -218,12 +215,12 @@ mod tests {
         });
 
         // Task should exit gracefully without waiting the full minute
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            handle
-        ).await;
+        let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
 
-        assert!(result.is_ok(), "Scheduler task should exit on shutdown signal");
+        assert!(
+            result.is_ok(),
+            "Scheduler task should exit on shutdown signal"
+        );
     }
 
     #[tokio::test]
@@ -233,16 +230,10 @@ mod tests {
         // Create a rule that matches current time (always active)
         let now = Local::now();
         let current_weekday = Weekday::from_chrono(now.weekday());
-        let start_time = NaiveTime::from_hms_opt(
-            now.hour().saturating_sub(1),
-            0,
-            0
-        ).unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-        let end_time = NaiveTime::from_hms_opt(
-            (now.hour() + 1) % 24,
-            59,
-            59
-        ).unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+        let start_time = NaiveTime::from_hms_opt(now.hour().saturating_sub(1), 0, 0)
+            .unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let end_time = NaiveTime::from_hms_opt((now.hour() + 1) % 24, 59, 59)
+            .unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
 
         let rule = ScheduleRule {
             id: 1,
@@ -256,16 +247,14 @@ mod tests {
 
         let scheduler = Scheduler::new(vec![rule]);
         let downloader_arc = Arc::new(downloader);
-        let task = SchedulerTask::new(
-            downloader_arc.clone(),
-            Arc::new(scheduler),
-        );
+        let task = SchedulerTask::new(downloader_arc.clone(), Arc::new(scheduler));
 
         // Verify initial speed limit is None (unlimited)
         assert_eq!(downloader_arc.get_speed_limit(), None);
 
         // Apply the action manually (simulating what run() would do)
-        task.apply_action(&ScheduleAction::SpeedLimit(1_000_000)).await;
+        task.apply_action(&ScheduleAction::SpeedLimit(1_000_000))
+            .await;
 
         // Verify speed limit was applied
         assert_eq!(downloader_arc.get_speed_limit(), Some(1_000_000));
@@ -281,10 +270,7 @@ mod tests {
         assert_eq!(downloader_arc.get_speed_limit(), Some(500_000));
 
         let scheduler = Scheduler::new(vec![]);
-        let task = SchedulerTask::new(
-            downloader_arc.clone(),
-            Arc::new(scheduler),
-        );
+        let task = SchedulerTask::new(downloader_arc.clone(), Arc::new(scheduler));
 
         // Apply unlimited action
         task.apply_action(&ScheduleAction::Unlimited).await;
@@ -303,10 +289,7 @@ mod tests {
         assert_eq!(downloader_arc.get_speed_limit(), Some(1_000_000));
 
         let scheduler = Scheduler::new(vec![]);
-        let task = SchedulerTask::new(
-            downloader_arc.clone(),
-            Arc::new(scheduler),
-        );
+        let task = SchedulerTask::new(downloader_arc.clone(), Arc::new(scheduler));
 
         // Clear actions (simulating no rules matching)
         task.clear_schedule_actions().await;
@@ -329,10 +312,7 @@ mod tests {
         // Set shutdown signal immediately
         downloader_arc.accepting_new.store(false, Ordering::SeqCst);
 
-        let task = SchedulerTask::new(
-            downloader_arc.clone(),
-            scheduler_arc.clone(),
-        );
+        let task = SchedulerTask::new(downloader_arc.clone(), scheduler_arc.clone());
 
         // Start the task
         let handle = tokio::spawn(async move {
@@ -340,11 +320,11 @@ mod tests {
         });
 
         // Task should exit gracefully without waiting
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            handle
-        ).await;
+        let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
 
-        assert!(result.is_ok(), "Scheduler task should handle no rules gracefully");
+        assert!(
+            result.is_ok(),
+            "Scheduler task should handle no rules gracefully"
+        );
     }
 }

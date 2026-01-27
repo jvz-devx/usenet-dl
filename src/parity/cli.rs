@@ -1,6 +1,6 @@
 //! CLI-based PAR2 handler using external par2 binary
 
-use super::parser::{parse_par2_repair_output, parse_par2_verify_output};
+use super::parser::{parse_par2_repair_output, parse_par2_verify_output, ExitStatus};
 use super::traits::{ParityCapabilities, ParityHandler, RepairResult, VerifyResult};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -65,11 +65,13 @@ impl ParityHandler for CliParityHandler {
             .arg(par2_file)
             .output()
             .await
-            .map_err(|e| {
-                crate::Error::ExternalTool(format!("Failed to execute par2: {}", e))
-            })?;
+            .map_err(|e| crate::Error::ExternalTool(format!("Failed to execute par2: {}", e)))?;
 
-        parse_par2_verify_output(&output.stdout, &output.stderr, output.status.success())
+        parse_par2_verify_output(
+            &output.stdout,
+            &output.stderr,
+            ExitStatus::from(output.status.success()),
+        )
     }
 
     async fn repair(&self, par2_file: &Path) -> crate::Result<RepairResult> {
@@ -78,11 +80,13 @@ impl ParityHandler for CliParityHandler {
             .arg(par2_file)
             .output()
             .await
-            .map_err(|e| {
-                crate::Error::ExternalTool(format!("Failed to execute par2: {}", e))
-            })?;
+            .map_err(|e| crate::Error::ExternalTool(format!("Failed to execute par2: {}", e)))?;
 
-        parse_par2_repair_output(&output.stdout, &output.stderr, output.status.success())
+        parse_par2_repair_output(
+            &output.stdout,
+            &output.stderr,
+            ExitStatus::from(output.status.success()),
+        )
     }
 
     fn capabilities(&self) -> ParityCapabilities {
@@ -143,20 +147,33 @@ mod tests {
         match which_result {
             Ok(expected_path) => {
                 // If which finds it, from_path should return Some
-                assert!(from_path_result.is_some(), "from_path() should return Some when par2 is in PATH");
+                assert!(
+                    from_path_result.is_some(),
+                    "from_path() should return Some when par2 is in PATH"
+                );
 
                 let handler = from_path_result.unwrap();
-                assert_eq!(handler.binary_path, expected_path, "from_path() should use the path found by which");
+                assert_eq!(
+                    handler.binary_path, expected_path,
+                    "from_path() should use the path found by which"
+                );
 
                 // Verify the handler has correct capabilities
                 let caps = handler.capabilities();
                 assert!(caps.can_verify, "CLI handler should support verification");
                 assert!(caps.can_repair, "CLI handler should support repair");
-                assert_eq!(handler.name(), "cli-par2", "CLI handler should have correct name");
+                assert_eq!(
+                    handler.name(),
+                    "cli-par2",
+                    "CLI handler should have correct name"
+                );
             }
             Err(_) => {
                 // If which doesn't find it, from_path should return None
-                assert!(from_path_result.is_none(), "from_path() should return None when par2 is not in PATH");
+                assert!(
+                    from_path_result.is_none(),
+                    "from_path() should return None when par2 is not in PATH"
+                );
             }
         }
     }
@@ -306,13 +323,22 @@ mod tests {
             verify_result.is_complete,
             "Files should be complete and intact"
         );
-        assert_eq!(verify_result.damaged_blocks, 0, "No blocks should be damaged");
+        assert_eq!(
+            verify_result.damaged_blocks, 0,
+            "No blocks should be damaged"
+        );
         assert!(
             verify_result.recovery_blocks_available > 0,
             "Recovery blocks should be available"
         );
-        assert!(verify_result.damaged_files.is_empty(), "No files should be damaged");
-        assert!(verify_result.missing_files.is_empty(), "No files should be missing");
+        assert!(
+            verify_result.damaged_files.is_empty(),
+            "No files should be damaged"
+        );
+        assert!(
+            verify_result.missing_files.is_empty(),
+            "No files should be missing"
+        );
     }
 
     #[tokio::test]
@@ -371,7 +397,10 @@ mod tests {
         // Verify the damaged file
         let result = handler.verify(&par2_file_path).await;
 
-        assert!(result.is_ok(), "Verify should succeed even with damaged files");
+        assert!(
+            result.is_ok(),
+            "Verify should succeed even with damaged files"
+        );
         let verify_result = result.unwrap();
 
         assert!(
@@ -413,7 +442,8 @@ mod tests {
         let par2_file_path = temp_dir.path().join("test.txt.par2");
 
         // Create test file with known content
-        let original_content = b"Hello, PAR2! This is test content that will be damaged and repaired.\n";
+        let original_content =
+            b"Hello, PAR2! This is test content that will be damaged and repaired.\n";
         fs::write(&test_file_path, original_content).expect("Failed to write test file");
 
         // Create PAR2 recovery data with sufficient redundancy
@@ -452,8 +482,7 @@ mod tests {
 
         assert!(repair_result.success, "Repair should be successful");
         assert!(
-            !repair_result.repaired_files.is_empty()
-                || repair_result.failed_files.is_empty(),
+            !repair_result.repaired_files.is_empty() || repair_result.failed_files.is_empty(),
             "Should report repaired files or have no failed files"
         );
         assert!(
@@ -515,7 +544,10 @@ mod tests {
         // Verify with missing file
         let result = handler.verify(&par2_file_path).await;
 
-        assert!(result.is_ok(), "Verify should succeed and report missing file");
+        assert!(
+            result.is_ok(),
+            "Verify should succeed and report missing file"
+        );
         let verify_result = result.unwrap();
 
         assert!(

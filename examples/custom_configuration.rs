@@ -14,10 +14,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use usenet_dl::api::start_api_server;
 use usenet_dl::config::{
-    ApiConfig, Config, DeobfuscationConfig, DiskSpaceConfig, DuplicateAction, DuplicateConfig,
-    DuplicateMethod, ExtractionConfig, FailedDownloadAction, FileCollisionAction, PostProcess,
-    RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig, ScriptEvent,
-    ServerConfig, WatchFolderAction, WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
+    ApiConfig, Config, DeobfuscationConfig, DiskSpaceConfig, DownloadConfig, DuplicateAction,
+    DuplicateConfig, DuplicateMethod, ExtractionConfig, FailedDownloadAction, FileCollisionAction,
+    NotificationConfig, PostProcess, RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule,
+    ScriptConfig, ScriptEvent, ServerConfig, ToolsConfig, WatchFolderAction, WatchFolderConfig,
+    WebhookConfig, WebhookEvent, Weekday,
 };
 use usenet_dl::{Priority, UsenetDownloader};
 
@@ -75,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let disk_space_config = DiskSpaceConfig {
         enabled: true,
         min_free_space: 5 * 1024 * 1024 * 1024, // 5 GB buffer
-        size_multiplier: 2.5,                    // Account for extraction overhead
+        size_multiplier: 2.5,                   // Account for extraction overhead
     };
 
     // Duplicate detection
@@ -158,38 +159,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Servers
         servers: vec![primary_server, backup_server],
 
-        // Directories
-        download_dir: PathBuf::from("/data/downloads"),
-        temp_dir: PathBuf::from("/data/temp"),
-        database_path: PathBuf::from("/data/usenet-dl.db"),
+        // Download behavior (directories, concurrency, post-processing)
+        download: DownloadConfig {
+            download_dir: PathBuf::from("/data/downloads"),
+            temp_dir: PathBuf::from("/data/temp"),
+            max_concurrent_downloads: 3,
+            speed_limit_bps: None, // Controlled by scheduler
+            default_post_process: PostProcess::UnpackAndCleanup,
+            failed_action: FailedDownloadAction::Keep,
+            failed_directory: Some(PathBuf::from("/data/failed")),
+            delete_samples: true,
+            file_collision: FileCollisionAction::Rename,
+        },
 
-        // Download settings
-        max_concurrent_downloads: 3,
-        speed_limit_bps: None, // Controlled by scheduler
+        // External tools and passwords
+        tools: ToolsConfig {
+            password_file: Some(PathBuf::from("/etc/usenet-dl/passwords.txt")),
+            try_empty_password: true,
+            ..Default::default()
+        },
+
+        // Notifications (webhooks and scripts)
+        notifications: NotificationConfig {
+            webhooks: vec![webhook],
+            scripts: vec![script],
+        },
+
+        // Database
+        database_path: PathBuf::from("/data/usenet-dl.db"),
 
         // Resilience
         retry: retry_config,
-
-        // Post-processing
-        default_post_process: PostProcess::UnpackAndCleanup,
-        failed_action: FailedDownloadAction::Keep,
-        failed_directory: Some(PathBuf::from("/data/failed")),
-        delete_samples: true,
 
         // Extraction
         extraction: extraction_config,
 
         // File handling
-        file_collision: FileCollisionAction::Rename,
         deobfuscation: deobfuscation_config,
         duplicate: duplicate_config,
 
         // Safety
         disk_space: disk_space_config,
-
-        // Passwords
-        password_file: Some(PathBuf::from("/etc/usenet-dl/passwords.txt")),
-        try_empty_password: true,
 
         // API
         api: ApiConfig {
@@ -203,10 +213,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         watch_folders: vec![movies_watch],
         rss_feeds: vec![tv_rss],
         schedule_rules: vec![night_schedule, work_schedule],
-
-        // Notifications
-        webhooks: vec![webhook],
-        scripts: vec![script],
 
         ..Default::default()
     };

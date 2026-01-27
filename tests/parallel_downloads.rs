@@ -18,8 +18,8 @@
 mod common;
 
 use common::{
-    create_nzb_from_segments, wait_for_completion, wait_for_downloading, collect_events_until,
-    WaitResult, TEST_ARTICLE_CONTENT, generate_yenc_content,
+    collect_events_until, create_nzb_from_segments, generate_yenc_content, wait_for_completion,
+    wait_for_downloading, WaitResult, TEST_ARTICLE_CONTENT,
 };
 use serial_test::serial;
 use std::io::{BufRead, BufReader, Write};
@@ -80,20 +80,12 @@ fn is_docker_server_available() -> bool {
 }
 
 /// Post an article to the Docker NNTP server via raw NNTP commands
-fn post_article_to_server(
-    group: &str,
-    subject: &str,
-    body: &[u8],
-) -> Result<String, String> {
+fn post_article_to_server(group: &str, subject: &str, body: &[u8]) -> Result<String, String> {
     let mut stream = TcpStream::connect(format!("{}:{}", DOCKER_NNTP_HOST, DOCKER_NNTP_PORT))
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
     let mut reader = BufReader::new(stream.try_clone().unwrap());
 
@@ -104,19 +96,20 @@ fn post_article_to_server(
         .map_err(|e| format!("Failed to read greeting: {}", e))?;
 
     // Switch to group
-    writeln!(stream, "GROUP {}", group)
-        .map_err(|e| format!("Failed to send GROUP: {}", e))?;
+    writeln!(stream, "GROUP {}", group).map_err(|e| format!("Failed to send GROUP: {}", e))?;
     line.clear();
     reader
         .read_line(&mut line)
         .map_err(|e| format!("Failed to read GROUP response: {}", e))?;
 
     // Generate message ID with timestamp
-    let message_id = format!("<test-{}@usenet-dl.test>", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let message_id = format!(
+        "<test-{}@usenet-dl.test>",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
 
     // Start posting
-    writeln!(stream, "POST")
-        .map_err(|e| format!("Failed to send POST: {}", e))?;
+    writeln!(stream, "POST").map_err(|e| format!("Failed to send POST: {}", e))?;
     line.clear();
     reader
         .read_line(&mut line)
@@ -135,15 +128,13 @@ fn post_article_to_server(
         .map_err(|e| format!("Failed to send Message-ID: {}", e))?;
     writeln!(stream, "From: test@usenet-dl.test")
         .map_err(|e| format!("Failed to send From: {}", e))?;
-    writeln!(stream)
-        .map_err(|e| format!("Failed to send header separator: {}", e))?;
+    writeln!(stream).map_err(|e| format!("Failed to send header separator: {}", e))?;
 
     // Send body
     stream
         .write_all(body)
         .map_err(|e| format!("Failed to send body: {}", e))?;
-    writeln!(stream, "\r\n.")
-        .map_err(|e| format!("Failed to send terminator: {}", e))?;
+    writeln!(stream, "\r\n.").map_err(|e| format!("Failed to send terminator: {}", e))?;
 
     // Read response
     line.clear();
@@ -194,19 +185,18 @@ async fn test_parallel_article_download() {
 
     // Create NZB with all message IDs (convert to Vec of tuples with size)
     let segments: Vec<(String, u64)> = message_ids.iter().map(|id| (id.clone(), 1000)).collect();
-    let nzb_content = create_nzb_from_segments(
-        "ParallelTest",
-        "test.nzb",
-        "test.group",
-        &segments,
-    );
+    let nzb_content = create_nzb_from_segments("ParallelTest", "test.nzb", "test.group", &segments);
 
     // Subscribe to events to track progress
     let mut events = downloader.subscribe();
 
     // Add NZB and start download
     let download_id = downloader
-        .add_nzb_content(nzb_content.as_bytes(), "test.nzb", DownloadOptions::default())
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -315,16 +305,16 @@ async fn test_concurrency_limit_respected() {
     }
 
     let segments: Vec<(String, u64)> = message_ids.iter().map(|id| (id.clone(), 1000)).collect();
-    let nzb_content = create_nzb_from_segments(
-        "ConcurrencyTest",
-        "test.nzb",
-        "test.group",
-        &segments,
-    );
+    let nzb_content =
+        create_nzb_from_segments("ConcurrencyTest", "test.nzb", "test.group", &segments);
 
     // Add NZB and start download
     let download_id = downloader
-        .add_nzb_content(nzb_content.as_bytes(), "test.nzb", DownloadOptions::default())
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -375,16 +365,16 @@ async fn test_cancellation_during_parallel_download() {
     }
 
     let segments: Vec<(String, u64)> = message_ids.iter().map(|id| (id.clone(), 1000)).collect();
-    let nzb_content = create_nzb_from_segments(
-        "CancellationTest",
-        "test.nzb",
-        "test.group",
-        &segments,
-    );
+    let nzb_content =
+        create_nzb_from_segments("CancellationTest", "test.nzb", "test.group", &segments);
 
     // Add NZB and start download
     let download_id = downloader
-        .add_nzb_content(nzb_content.as_bytes(), "test.nzb", DownloadOptions::default())
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -460,16 +450,16 @@ async fn test_partial_failure_handling() {
     message_ids.push("<nonexistent2@test>".to_string());
 
     let segments: Vec<(String, u64)> = message_ids.iter().map(|id| (id.clone(), 1000)).collect();
-    let nzb_content = create_nzb_from_segments(
-        "PartialFailureTest",
-        "test.nzb",
-        "test.group",
-        &segments,
-    );
+    let nzb_content =
+        create_nzb_from_segments("PartialFailureTest", "test.nzb", "test.group", &segments);
 
     // Add NZB and start download
     let download_id = downloader
-        .add_nzb_content(nzb_content.as_bytes(), "test.nzb", DownloadOptions::default())
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -520,39 +510,31 @@ async fn test_progress_reporting_accuracy() {
     }
 
     let segments: Vec<(String, u64)> = message_ids.iter().map(|id| (id.clone(), 1000)).collect();
-    let nzb_content = create_nzb_from_segments(
-        "ProgressTest",
-        "test.nzb",
-        "test.group",
-        &segments,
-    );
+    let nzb_content = create_nzb_from_segments("ProgressTest", "test.nzb", "test.group", &segments);
 
     // Add NZB and start download
     let download_id = downloader
-        .add_nzb_content(nzb_content.as_bytes(), "test.nzb", DownloadOptions::default())
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "test.nzb",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
     let _processor = downloader.start_queue_processor();
 
     // Collect all progress events
-    let events_vec = collect_events_until(
-        &downloader,
-        Duration::from_secs(30),
-        |event| matches!(event, Event::Complete { .. } | Event::Failed { .. }),
-    )
+    let events_vec = collect_events_until(&downloader, Duration::from_secs(30), |event| {
+        matches!(event, Event::Complete { .. } | Event::Failed { .. })
+    })
     .await;
 
     // Filter progress events
     let progress_events: Vec<_> = events_vec
         .iter()
         .filter_map(|event| {
-            if let Event::Downloading {
-                id,
-                percent,
-                ..
-            } = event
-            {
+            if let Event::Downloading { id, percent, .. } = event {
                 if *id == download_id {
                     Some(*percent)
                 } else {
@@ -638,19 +620,18 @@ async fn test_stress_large_nzb_download() {
         .map(|id| (id.clone(), content_size as u64))
         .collect();
 
-    let nzb_content = create_nzb_from_segments(
-        "StressTest",
-        "stress.bin",
-        "test.group",
-        &segments,
-    );
+    let nzb_content = create_nzb_from_segments("StressTest", "stress.bin", "test.group", &segments);
 
     // Subscribe to events to track progress and measure throughput
     let mut events = downloader.subscribe();
 
     // Add NZB and start download
     let download_id = downloader
-        .add_nzb_content(nzb_content.as_bytes(), "stress.nzb", DownloadOptions::default())
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "stress.nzb",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -715,10 +696,7 @@ async fn test_stress_large_nzb_download() {
         "Download should complete within timeout"
     );
 
-    assert!(
-        download_result.unwrap().is_ok(),
-        "Download should not fail"
-    );
+    assert!(download_result.unwrap().is_ok(), "Download should not fail");
 
     // Calculate and display statistics
     let total_bytes = (article_count * content_size) as f64;
@@ -732,7 +710,10 @@ async fn test_stress_large_nzb_download() {
     println!("Average speed: {:.2} MB/s", avg_speed_mbps);
     println!("Peak speed: {:.2} MB/s", max_speed_mbps);
     println!("Connections used: 20");
-    println!("Articles/second: {:.2}", article_count as f64 / elapsed.as_secs_f64());
+    println!(
+        "Articles/second: {:.2}",
+        article_count as f64 / elapsed.as_secs_f64()
+    );
 
     // Verify progress events were received
     assert!(
@@ -785,7 +766,10 @@ async fn test_stress_large_nzb_download() {
 
     println!("\n✓ Stress test completed successfully!");
     println!("✓ Memory usage stayed constant (articles written to disk)");
-    println!("✓ Progress tracking accurate across {} events", progress_events.len());
+    println!(
+        "✓ Progress tracking accurate across {} events",
+        progress_events.len()
+    );
     println!("✓ All {} articles downloaded successfully", article_count);
 
     downloader.shutdown().await.expect("Failed to shutdown");

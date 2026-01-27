@@ -166,9 +166,9 @@ impl utoipa::Modify for SecurityAddon {
                 "api_key",
                 utoipa::openapi::security::SecurityScheme::ApiKey(
                     utoipa::openapi::security::ApiKey::Header(
-                        utoipa::openapi::security::ApiKeyValue::new("X-Api-Key")
-                    )
-                )
+                        utoipa::openapi::security::ApiKeyValue::new("X-Api-Key"),
+                    ),
+                ),
             );
         }
     }
@@ -189,7 +189,10 @@ mod tests {
         let spec = ApiDoc::openapi();
 
         // Verify that the spec has paths defined
-        assert!(!spec.paths.paths.is_empty(), "OpenAPI spec should have paths defined");
+        assert!(
+            !spec.paths.paths.is_empty(),
+            "OpenAPI spec should have paths defined"
+        );
     }
 
     #[test]
@@ -197,10 +200,16 @@ mod tests {
         let spec = ApiDoc::openapi();
 
         // Verify that the spec has components (schemas) defined
-        assert!(spec.components.is_some(), "OpenAPI spec should have components defined");
+        assert!(
+            spec.components.is_some(),
+            "OpenAPI spec should have components defined"
+        );
 
         let components = spec.components.unwrap();
-        assert!(!components.schemas.is_empty(), "OpenAPI spec should have schemas defined");
+        assert!(
+            !components.schemas.is_empty(),
+            "OpenAPI spec should have schemas defined"
+        );
     }
 
     #[test]
@@ -211,11 +220,17 @@ mod tests {
         assert!(spec.tags.is_some(), "OpenAPI spec should have tags defined");
 
         let tags = spec.tags.unwrap();
-        assert!(!tags.is_empty(), "OpenAPI spec should have at least one tag");
+        assert!(
+            !tags.is_empty(),
+            "OpenAPI spec should have at least one tag"
+        );
 
         // Check for expected tags
         let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
-        assert!(tag_names.contains(&"downloads"), "Should have 'downloads' tag");
+        assert!(
+            tag_names.contains(&"downloads"),
+            "Should have 'downloads' tag"
+        );
         assert!(tag_names.contains(&"queue"), "Should have 'queue' tag");
         assert!(tag_names.contains(&"config"), "Should have 'config' tag");
         assert!(tag_names.contains(&"system"), "Should have 'system' tag");
@@ -239,8 +254,10 @@ mod tests {
         assert!(spec.components.is_some());
         let components = spec.components.unwrap();
 
-        assert!(components.security_schemes.contains_key("api_key"),
-                "Should have 'api_key' security scheme defined");
+        assert!(
+            components.security_schemes.contains_key("api_key"),
+            "Should have 'api_key' security scheme defined"
+        );
     }
 
     #[test]
@@ -252,8 +269,8 @@ mod tests {
         assert!(!json.is_empty(), "JSON output should not be empty");
 
         // Verify it's valid JSON
-        let _value: serde_json::Value = serde_json::from_str(&json)
-            .expect("Generated JSON should be valid");
+        let _value: serde_json::Value =
+            serde_json::from_str(&json).expect("Generated JSON should be valid");
     }
 
     #[test]
@@ -264,6 +281,9 @@ mod tests {
         let json = serde_json::to_value(&spec).expect("Should serialize to JSON");
         let version = json.get("openapi").and_then(|v| v.as_str());
         assert!(version.is_some(), "Should have openapi version field");
-        assert!(version.unwrap().starts_with("3."), "Should use OpenAPI 3.x version");
+        assert!(
+            version.unwrap().starts_with("3."),
+            "Should use OpenAPI 3.x version"
+        );
     }
 }

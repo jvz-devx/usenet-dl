@@ -39,8 +39,8 @@
 //! ```
 
 use crate::{config::RssFeedConfig, rss_manager::RssManager, UsenetDownloader};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
@@ -64,10 +64,7 @@ impl RssScheduler {
     /// # Parameters
     /// - `downloader`: Reference to the UsenetDownloader for config access
     /// - `rss_manager`: Reference to the RSS manager for feed operations
-    pub fn new(
-        downloader: Arc<UsenetDownloader>,
-        rss_manager: Arc<RssManager>,
-    ) -> Self {
+    pub fn new(downloader: Arc<UsenetDownloader>, rss_manager: Arc<RssManager>) -> Self {
         Self {
             rss_manager,
             downloader,
@@ -158,11 +155,7 @@ impl RssScheduler {
                         );
 
                         // Process items (filter, mark as seen, auto-download)
-                        match self
-                            .rss_manager
-                            .process_feed_items(0, feed, items)
-                            .await
-                        {
+                        match self.rss_manager.process_feed_items(0, feed, items).await {
                             Ok(downloaded_count) => {
                                 if downloaded_count > 0 {
                                     info!(

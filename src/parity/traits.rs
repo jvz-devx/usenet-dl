@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use std::path::Path;
 
 /// Result of PAR2 verification
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct VerifyResult {
     /// Whether all files are intact
@@ -21,6 +22,7 @@ pub struct VerifyResult {
 }
 
 /// Result of PAR2 repair
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct RepairResult {
     /// Whether repair was successful

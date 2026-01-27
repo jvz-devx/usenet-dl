@@ -13,8 +13,8 @@ use axum::{
 /// Implement IntoResponse for Error to automatically convert errors to HTTP responses
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let status_code = StatusCode::from_u16(self.status_code())
-            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status_code =
+            StatusCode::from_u16(self.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
         let api_error: ApiError = self.into();
 
@@ -125,10 +125,7 @@ mod tests {
         assert!(api_error.error.details.is_some());
 
         let details = api_error.error.details.unwrap();
-        assert!(details["archive"]
-            .as_str()
-            .unwrap()
-            .contains("archive.rar"));
+        assert!(details["archive"].as_str().unwrap().contains("archive.rar"));
     }
 
     #[tokio::test]

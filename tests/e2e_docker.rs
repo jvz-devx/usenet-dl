@@ -27,8 +27,8 @@
 mod common;
 
 use common::{
-    create_nzb_from_segments, wait_for_completion, WaitResult,
-    TEST_ARTICLE_CONTENT, generate_yenc_content,
+    create_nzb_from_segments, generate_yenc_content, wait_for_completion, WaitResult,
+    TEST_ARTICLE_CONTENT,
 };
 use serial_test::serial;
 use std::io::{BufRead, BufReader, Write};
@@ -73,7 +73,9 @@ async fn create_docker_downloader() -> Result<(Arc<UsenetDownloader>, TempDir), 
 /// Check if Docker NNTP server is available
 fn is_docker_server_available() -> bool {
     TcpStream::connect_timeout(
-        &format!("{}:{}", DOCKER_NNTP_HOST, DOCKER_NNTP_PORT).parse().unwrap(),
+        &format!("{}:{}", DOCKER_NNTP_HOST, DOCKER_NNTP_PORT)
+            .parse()
+            .unwrap(),
         Duration::from_secs(2),
     )
     .is_ok()
@@ -82,26 +84,20 @@ fn is_docker_server_available() -> bool {
 /// Post an article to the Docker NNTP server via raw NNTP commands
 ///
 /// Returns the message ID of the posted article
-fn post_article_to_server(
-    group: &str,
-    subject: &str,
-    body: &[u8],
-) -> Result<String, String> {
+fn post_article_to_server(group: &str, subject: &str, body: &[u8]) -> Result<String, String> {
     let mut stream = TcpStream::connect(format!("{}:{}", DOCKER_NNTP_HOST, DOCKER_NNTP_PORT))
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
     let mut reader = BufReader::new(stream.try_clone().unwrap());
 
     // Read greeting
     let mut response = String::new();
-    reader.read_line(&mut response).map_err(|e| format!("Read error: {}", e))?;
+    reader
+        .read_line(&mut response)
+        .map_err(|e| format!("Read error: {}", e))?;
     if !response.starts_with("200") && !response.starts_with("201") {
         return Err(format!("Unexpected greeting: {}", response));
     }
@@ -114,9 +110,13 @@ fn post_article_to_server(
     );
 
     // Send POST command
-    stream.write_all(b"POST\r\n").map_err(|e| format!("Write error: {}", e))?;
+    stream
+        .write_all(b"POST\r\n")
+        .map_err(|e| format!("Write error: {}", e))?;
     response.clear();
-    reader.read_line(&mut response).map_err(|e| format!("Read error: {}", e))?;
+    reader
+        .read_line(&mut response)
+        .map_err(|e| format!("Read error: {}", e))?;
     if !response.starts_with("340") {
         return Err(format!("POST not allowed: {}", response));
     }
@@ -135,18 +135,28 @@ fn post_article_to_server(
         chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")
     );
 
-    stream.write_all(article.as_bytes()).map_err(|e| format!("Write error: {}", e))?;
-    stream.write_all(body).map_err(|e| format!("Write error: {}", e))?;
+    stream
+        .write_all(article.as_bytes())
+        .map_err(|e| format!("Write error: {}", e))?;
+    stream
+        .write_all(body)
+        .map_err(|e| format!("Write error: {}", e))?;
 
     // End article with lone dot
     if !body.ends_with(b"\r\n") {
-        stream.write_all(b"\r\n").map_err(|e| format!("Write error: {}", e))?;
+        stream
+            .write_all(b"\r\n")
+            .map_err(|e| format!("Write error: {}", e))?;
     }
-    stream.write_all(b".\r\n").map_err(|e| format!("Write error: {}", e))?;
+    stream
+        .write_all(b".\r\n")
+        .map_err(|e| format!("Write error: {}", e))?;
 
     // Read response
     response.clear();
-    reader.read_line(&mut response).map_err(|e| format!("Read error: {}", e))?;
+    reader
+        .read_line(&mut response)
+        .map_err(|e| format!("Read error: {}", e))?;
     if !response.starts_with("240") {
         return Err(format!("Article not accepted: {}", response));
     }
@@ -167,7 +177,10 @@ fn post_article_to_server(
 #[serial]
 async fn test_docker_server_connection() {
     if !is_docker_server_available() {
-        eprintln!("Skipping: Docker NNTP server not available at {}:{}", DOCKER_NNTP_HOST, DOCKER_NNTP_PORT);
+        eprintln!(
+            "Skipping: Docker NNTP server not available at {}:{}",
+            DOCKER_NNTP_HOST, DOCKER_NNTP_PORT
+        );
         eprintln!("Start it with: docker-compose -f docker/docker-compose.test.yml up -d");
         return;
     }
@@ -199,12 +212,9 @@ async fn test_post_and_download() {
     }
 
     // Post a test article
-    let message_id = post_article_to_server(
-        "alt.test",
-        "usenet-dl test article",
-        TEST_ARTICLE_CONTENT,
-    )
-    .expect("Failed to post article");
+    let message_id =
+        post_article_to_server("alt.test", "usenet-dl test article", TEST_ARTICLE_CONTENT)
+            .expect("Failed to post article");
 
     println!("Posted article with message ID: {}", message_id);
 
@@ -222,7 +232,11 @@ async fn test_post_and_download() {
         .expect("Failed to create downloader");
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "post_download_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "post_download_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 
@@ -341,7 +355,11 @@ async fn test_multi_segment_assembly() {
         .expect("Failed to create downloader");
 
     let id = downloader
-        .add_nzb_content(nzb.as_bytes(), "multi_segment_test", DownloadOptions::default())
+        .add_nzb_content(
+            nzb.as_bytes(),
+            "multi_segment_test",
+            DownloadOptions::default(),
+        )
         .await
         .expect("Failed to add NZB");
 

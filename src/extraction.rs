@@ -11,6 +11,125 @@ use std::path::{Path, PathBuf};
 use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
+/// Shared implementation for archive extraction with password attempts.
+///
+/// Tries each password in the list by calling `try_extract_fn` via `spawn_blocking`.
+/// Caches the successful password in the database.
+///
+/// This is the single implementation behind `RarExtractor::extract_with_passwords`,
+/// `SevenZipExtractor::extract_with_passwords`, and `ZipExtractor::extract_with_passwords`.
+async fn extract_with_passwords_impl(
+    format_name: &str,
+    try_extract_fn: impl Fn(&Path, &str, &Path) -> Result<Vec<PathBuf>> + Send + 'static + Clone,
+    download_id: DownloadId,
+    archive_path: &Path,
+    dest_path: &Path,
+    passwords: &PasswordList,
+    db: &Database,
+) -> Result<Vec<PathBuf>> {
+    if passwords.is_empty() {
+        warn!(
+            download_id,
+            ?archive_path,
+            "no passwords to try for {} extraction",
+            format_name
+        );
+        return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
+            archive: archive_path.to_path_buf(),
+        }));
+    }
+
+    info!(
+        download_id,
+        ?archive_path,
+        password_count = passwords.len(),
+        "attempting {} extraction with {} password(s)",
+        format_name,
+        passwords.len()
+    );
+
+    for (i, password) in passwords.iter().enumerate() {
+        debug!(
+            download_id,
+            attempt = i + 1,
+            total = passwords.len(),
+            password_length = password.len(),
+            "trying password {}/{}",
+            i + 1,
+            passwords.len()
+        );
+
+        // Use spawn_blocking to avoid blocking the async runtime during extraction
+        let archive_path_owned = archive_path.to_path_buf();
+        let dest_path_owned = dest_path.to_path_buf();
+        let password_owned = password.clone();
+        let try_fn = try_extract_fn.clone();
+
+        let result =
+            spawn_blocking(move || try_fn(&archive_path_owned, &password_owned, &dest_path_owned))
+                .await
+                .map_err(|e| {
+                    Error::PostProcess(PostProcessError::ExtractionFailed {
+                        archive: archive_path.to_path_buf(),
+                        reason: format!("extraction task panicked: {}", e),
+                    })
+                })?;
+
+        match result {
+            Ok(files) => {
+                info!(
+                    download_id,
+                    ?archive_path,
+                    attempt = i + 1,
+                    "{} extraction successful on attempt {}/{}",
+                    format_name,
+                    i + 1,
+                    passwords.len()
+                );
+
+                // Cache successful password
+                if let Err(e) = db.set_correct_password(download_id, password).await {
+                    warn!(
+                        download_id,
+                        error = %e,
+                        "failed to cache correct password"
+                    );
+                }
+
+                return Ok(files);
+            }
+            Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
+                debug!(download_id, attempt = i + 1, "wrong password, trying next");
+                continue;
+            }
+            Err(e) => {
+                // Other error (corrupt archive, disk full, etc.)
+                warn!(
+                    download_id,
+                    error = %e,
+                    ?archive_path,
+                    "{} extraction failed with non-password error",
+                    format_name
+                );
+                return Err(e);
+            }
+        }
+    }
+
+    // All passwords failed
+    warn!(
+        download_id,
+        ?archive_path,
+        attempted = passwords.len(),
+        "all passwords failed for {} extraction",
+        format_name
+    );
+    Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
+        archive: archive_path.to_path_buf(),
+        count: passwords.len(),
+    }))
+}
+
 /// Detect archive type by file extension
 ///
 /// Returns the archive type based on the file extension.
@@ -122,11 +241,20 @@ impl RarExtractor {
         let mut archives = Vec::new();
 
         // Read directory
-        let entries = std::fs::read_dir(download_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+        let entries = std::fs::read_dir(download_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to read directory: {}", e),
+            ))
+        })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+            let entry = entry.map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to read entry: {}", e),
+                ))
+            })?;
             let path = entry.path();
 
             // Skip directories
@@ -154,7 +282,11 @@ impl RarExtractor {
     /// Returns Ok(extracted_files) on success
     /// Returns Err with ExtractError::WrongPassword if password is incorrect
     /// Returns Err with other errors for corrupt archives, disk full, etc.
-    pub fn try_extract(archive_path: &Path, password: &str, dest_path: &Path) -> Result<Vec<PathBuf>> {
+    pub fn try_extract(
+        archive_path: &Path,
+        password: &str,
+        dest_path: &Path,
+    ) -> Result<Vec<PathBuf>> {
         debug!(
             ?archive_path,
             password_length = password.len(),
@@ -163,8 +295,12 @@ impl RarExtractor {
         );
 
         // Create destination directory if it doesn't exist
-        std::fs::create_dir_all(dest_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create destination: {}", e))))?;
+        std::fs::create_dir_all(dest_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to create destination: {}", e),
+            ))
+        })?;
 
         // Create archive with optional password
         let archive = if password.is_empty() {
@@ -174,21 +310,23 @@ impl RarExtractor {
         };
 
         // Open for processing
-        let processor = archive.open_for_processing()
-            .map_err(|e| {
-                // Check if it's a password error
-                let err_str = e.to_string();
-                if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("ERAR_BAD_PASSWORD") {
-                    Error::PostProcess(PostProcessError::WrongPassword {
-                        archive: archive_path.to_path_buf(),
-                    })
-                } else {
-                    Error::PostProcess(PostProcessError::ExtractionFailed {
-                        archive: archive_path.to_path_buf(),
-                        reason: format!("failed to open RAR archive: {}", e),
-                    })
-                }
-            })?;
+        let processor = archive.open_for_processing().map_err(|e| {
+            // Check if it's a password error
+            let err_str = e.to_string();
+            if err_str.contains("password")
+                || err_str.contains("encrypted")
+                || err_str.contains("ERAR_BAD_PASSWORD")
+            {
+                Error::PostProcess(PostProcessError::WrongPassword {
+                    archive: archive_path.to_path_buf(),
+                })
+            } else {
+                Error::PostProcess(PostProcessError::ExtractionFailed {
+                    archive: archive_path.to_path_buf(),
+                    reason: format!("failed to open RAR archive: {}", e),
+                })
+            }
+        })?;
 
         let mut extracted_files = Vec::new();
 
@@ -201,7 +339,10 @@ impl RarExtractor {
                 Ok(None) => break, // No more entries
                 Err(e) => {
                     let err_str = e.to_string();
-                    if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("ERAR_BAD_PASSWORD") {
+                    if err_str.contains("password")
+                        || err_str.contains("encrypted")
+                        || err_str.contains("ERAR_BAD_PASSWORD")
+                    {
                         return Err(Error::PostProcess(PostProcessError::WrongPassword {
                             archive: archive_path.to_path_buf(),
                         }));
@@ -221,28 +362,31 @@ impl RarExtractor {
             // Check if it's a file (not a directory)
             if !header.is_directory() {
                 // Extract the file - transitions back to BeforeHeader state
-                at_header = at_file.extract_to(&file_path)
-                    .map_err(|e| {
-                        let err_str = e.to_string();
-                        if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("ERAR_BAD_PASSWORD") {
-                            Error::PostProcess(PostProcessError::WrongPassword {
-                                archive: archive_path.to_path_buf(),
-                            })
-                        } else {
-                            Error::PostProcess(PostProcessError::ExtractionFailed {
-                                archive: archive_path.to_path_buf(),
-                                reason: format!("failed to extract file: {}", e),
-                            })
-                        }
-                    })?;
+                at_header = at_file.extract_to(&file_path).map_err(|e| {
+                    let err_str = e.to_string();
+                    if err_str.contains("password")
+                        || err_str.contains("encrypted")
+                        || err_str.contains("ERAR_BAD_PASSWORD")
+                    {
+                        Error::PostProcess(PostProcessError::WrongPassword {
+                            archive: archive_path.to_path_buf(),
+                        })
+                    } else {
+                        Error::PostProcess(PostProcessError::ExtractionFailed {
+                            archive: archive_path.to_path_buf(),
+                            reason: format!("failed to extract file: {}", e),
+                        })
+                    }
+                })?;
                 extracted_files.push(file_path);
             } else {
                 // Skip directory entries - transitions back to BeforeHeader state
-                at_header = at_file.skip()
-                    .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+                at_header = at_file.skip().map_err(|e| {
+                    Error::PostProcess(PostProcessError::ExtractionFailed {
                         archive: archive_path.to_path_buf(),
                         reason: format!("failed to skip directory: {}", e),
-                    }))?;
+                    })
+                })?;
             }
         }
 
@@ -266,104 +410,16 @@ impl RarExtractor {
         passwords: &PasswordList,
         db: &Database,
     ) -> Result<Vec<PathBuf>> {
-        if passwords.is_empty() {
-            warn!(
-                download_id,
-                ?archive_path,
-                "no passwords to try for RAR extraction"
-            );
-            return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
-                archive: archive_path.to_path_buf(),
-            }));
-        }
-
-        info!(
+        extract_with_passwords_impl(
+            "RAR",
+            Self::try_extract,
             download_id,
-            ?archive_path,
-            password_count = passwords.len(),
-            "attempting RAR extraction with {} password(s)",
-            passwords.len()
-        );
-
-        for (i, password) in passwords.iter().enumerate() {
-            debug!(
-                download_id,
-                attempt = i + 1,
-                total = passwords.len(),
-                password_length = password.len(),
-                "trying password {}/{}",
-                i + 1,
-                passwords.len()
-            );
-
-            // Use spawn_blocking to avoid blocking the async runtime during extraction
-            let archive_path_owned = archive_path.to_path_buf();
-            let dest_path_owned = dest_path.to_path_buf();
-            let password_owned = password.clone();
-
-            let result = spawn_blocking(move || {
-                Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
-            })
-            .await
-            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
-                archive: archive_path.to_path_buf(),
-                reason: format!("extraction task panicked: {}", e),
-            }))?;
-
-            match result {
-                Ok(files) => {
-                    info!(
-                        download_id,
-                        ?archive_path,
-                        attempt = i + 1,
-                        "RAR extraction successful on attempt {}/{}",
-                        i + 1,
-                        passwords.len()
-                    );
-
-                    // Cache successful password
-                    if let Err(e) = db.set_correct_password(download_id, password).await {
-                        warn!(
-                            download_id,
-                            error = %e,
-                            "failed to cache correct password"
-                        );
-                    }
-
-                    return Ok(files);
-                }
-                Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
-                    debug!(
-                        download_id,
-                        attempt = i + 1,
-                        "wrong password, trying next"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    // Other error (corrupt archive, disk full, etc.)
-                    warn!(
-                        download_id,
-                        error = %e,
-                        ?archive_path,
-                        "RAR extraction failed with non-password error"
-                    );
-                    return Err(e);
-                }
-            }
-        }
-
-        // All passwords failed
-        warn!(
-            download_id,
-            ?archive_path,
-            attempted = passwords.len(),
-            "all passwords failed for RAR extraction"
-        );
-        Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
-            archive: archive_path.to_path_buf(),
-            count: passwords.len(),
-        }))
+            archive_path,
+            dest_path,
+            passwords,
+            db,
+        )
+        .await
     }
 }
 
@@ -378,11 +434,20 @@ impl SevenZipExtractor {
         let mut archives = Vec::new();
 
         // Read directory
-        let entries = std::fs::read_dir(download_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+        let entries = std::fs::read_dir(download_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to read directory: {}", e),
+            ))
+        })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+            let entry = entry.map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to read entry: {}", e),
+                ))
+            })?;
             let path = entry.path();
 
             // Skip directories
@@ -404,7 +469,11 @@ impl SevenZipExtractor {
     }
 
     /// Try to extract a 7z archive with a single password
-    pub fn try_extract(archive_path: &Path, password: &str, dest_path: &Path) -> Result<Vec<PathBuf>> {
+    pub fn try_extract(
+        archive_path: &Path,
+        password: &str,
+        dest_path: &Path,
+    ) -> Result<Vec<PathBuf>> {
         debug!(
             ?archive_path,
             password_length = password.len(),
@@ -413,8 +482,12 @@ impl SevenZipExtractor {
         );
 
         // Create destination directory if it doesn't exist
-        std::fs::create_dir_all(dest_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create destination: {}", e))))?;
+        std::fs::create_dir_all(dest_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to create destination: {}", e),
+            ))
+        })?;
 
         // Decompress with optional password
         use sevenz_rust::Password;
@@ -440,7 +513,10 @@ impl SevenZipExtractor {
             Err(e) => {
                 let err_str = e.to_string();
                 // Check if it's a password error
-                if err_str.contains("password") || err_str.contains("encrypted") || err_str.contains("Wrong password") {
+                if err_str.contains("password")
+                    || err_str.contains("encrypted")
+                    || err_str.contains("Wrong password")
+                {
                     Err(Error::PostProcess(PostProcessError::WrongPassword {
                         archive: archive_path.to_path_buf(),
                     }))
@@ -459,11 +535,20 @@ impl SevenZipExtractor {
         let mut files = Vec::new();
 
         fn visit_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-            let entries = std::fs::read_dir(dir)
-                .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+            let entries = std::fs::read_dir(dir).map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to read directory: {}", e),
+                ))
+            })?;
 
             for entry in entries {
-                let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+                let entry = entry.map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("failed to read entry: {}", e),
+                    ))
+                })?;
                 let path = entry.path();
 
                 if path.is_dir() {
@@ -487,104 +572,16 @@ impl SevenZipExtractor {
         passwords: &PasswordList,
         db: &Database,
     ) -> Result<Vec<PathBuf>> {
-        if passwords.is_empty() {
-            warn!(
-                download_id,
-                ?archive_path,
-                "no passwords to try for 7z extraction"
-            );
-            return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
-                archive: archive_path.to_path_buf(),
-            }));
-        }
-
-        info!(
+        extract_with_passwords_impl(
+            "7z",
+            Self::try_extract,
             download_id,
-            ?archive_path,
-            password_count = passwords.len(),
-            "attempting 7z extraction with {} password(s)",
-            passwords.len()
-        );
-
-        for (i, password) in passwords.iter().enumerate() {
-            debug!(
-                download_id,
-                attempt = i + 1,
-                total = passwords.len(),
-                password_length = password.len(),
-                "trying password {}/{}",
-                i + 1,
-                passwords.len()
-            );
-
-            // Use spawn_blocking to avoid blocking the async runtime during extraction
-            let archive_path_owned = archive_path.to_path_buf();
-            let dest_path_owned = dest_path.to_path_buf();
-            let password_owned = password.clone();
-
-            let result = spawn_blocking(move || {
-                Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
-            })
-            .await
-            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
-                archive: archive_path.to_path_buf(),
-                reason: format!("extraction task panicked: {}", e),
-            }))?;
-
-            match result {
-                Ok(files) => {
-                    info!(
-                        download_id,
-                        ?archive_path,
-                        attempt = i + 1,
-                        "7z extraction successful on attempt {}/{}",
-                        i + 1,
-                        passwords.len()
-                    );
-
-                    // Cache successful password
-                    if let Err(e) = db.set_correct_password(download_id, password).await {
-                        warn!(
-                            download_id,
-                            error = %e,
-                            "failed to cache correct password"
-                        );
-                    }
-
-                    return Ok(files);
-                }
-                Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
-                    debug!(
-                        download_id,
-                        attempt = i + 1,
-                        "wrong password, trying next"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    // Other error (corrupt archive, disk full, etc.)
-                    warn!(
-                        download_id,
-                        error = %e,
-                        ?archive_path,
-                        "7z extraction failed with non-password error"
-                    );
-                    return Err(e);
-                }
-            }
-        }
-
-        // All passwords failed
-        warn!(
-            download_id,
-            ?archive_path,
-            attempted = passwords.len(),
-            "all passwords failed for 7z extraction"
-        );
-        Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
-            archive: archive_path.to_path_buf(),
-            count: passwords.len(),
-        }))
+            archive_path,
+            dest_path,
+            passwords,
+            db,
+        )
+        .await
     }
 }
 
@@ -599,11 +596,20 @@ impl ZipExtractor {
         let mut archives = Vec::new();
 
         // Read directory
-        let entries = std::fs::read_dir(download_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read directory: {}", e))))?;
+        let entries = std::fs::read_dir(download_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to read directory: {}", e),
+            ))
+        })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to read entry: {}", e))))?;
+            let entry = entry.map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to read entry: {}", e),
+                ))
+            })?;
             let path = entry.path();
 
             // Skip directories
@@ -625,7 +631,11 @@ impl ZipExtractor {
     }
 
     /// Try to extract a ZIP archive with a single password
-    pub fn try_extract(archive_path: &Path, password: &str, dest_path: &Path) -> Result<Vec<PathBuf>> {
+    pub fn try_extract(
+        archive_path: &Path,
+        password: &str,
+        dest_path: &Path,
+    ) -> Result<Vec<PathBuf>> {
         debug!(
             ?archive_path,
             password_length = password.len(),
@@ -634,40 +644,49 @@ impl ZipExtractor {
         );
 
         // Create destination directory if it doesn't exist
-        std::fs::create_dir_all(dest_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create destination: {}", e))))?;
+        std::fs::create_dir_all(dest_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to create destination: {}", e),
+            ))
+        })?;
 
         // Open the archive
-        let file = std::fs::File::open(archive_path)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to open ZIP archive: {}", e))))?;
+        let file = std::fs::File::open(archive_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to open ZIP archive: {}", e),
+            ))
+        })?;
 
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+            Error::PostProcess(PostProcessError::ExtractionFailed {
                 archive: archive_path.to_path_buf(),
                 reason: format!("failed to read ZIP archive: {}", e),
-            }))?;
+            })
+        })?;
 
         let mut extracted_files = Vec::new();
 
         // Extract each file
         for i in 0..archive.len() {
             let mut file = if password.is_empty() {
-                archive.by_index(i)
-                    .map_err(|e| {
-                        let err_str = e.to_string();
-                        if err_str.contains("password") || err_str.contains("encrypted") {
-                            Error::PostProcess(PostProcessError::WrongPassword {
-                                archive: archive_path.to_path_buf(),
-                            })
-                        } else {
-                            Error::PostProcess(PostProcessError::ExtractionFailed {
-                                archive: archive_path.to_path_buf(),
-                                reason: format!("failed to read ZIP entry: {}", e),
-                            })
-                        }
-                    })?
+                archive.by_index(i).map_err(|e| {
+                    let err_str = e.to_string();
+                    if err_str.contains("password") || err_str.contains("encrypted") {
+                        Error::PostProcess(PostProcessError::WrongPassword {
+                            archive: archive_path.to_path_buf(),
+                        })
+                    } else {
+                        Error::PostProcess(PostProcessError::ExtractionFailed {
+                            archive: archive_path.to_path_buf(),
+                            reason: format!("failed to read ZIP entry: {}", e),
+                        })
+                    }
+                })?
             } else {
-                archive.by_index_decrypt(i, password.as_bytes())
+                archive
+                    .by_index_decrypt(i, password.as_bytes())
                     .map_err(|e| {
                         let err_str = e.to_string();
                         if err_str.contains("password") || err_str.contains("encrypted") {
@@ -681,9 +700,11 @@ impl ZipExtractor {
                             })
                         }
                     })?
-                    .map_err(|_| Error::PostProcess(PostProcessError::WrongPassword {
-                        archive: archive_path.to_path_buf(),
-                    }))?
+                    .map_err(|_| {
+                        Error::PostProcess(PostProcessError::WrongPassword {
+                            archive: archive_path.to_path_buf(),
+                        })
+                    })?
             };
 
             // Get the file path
@@ -698,30 +719,44 @@ impl ZipExtractor {
             // Check if it's a directory
             if file.is_dir() {
                 // Create directory
-                std::fs::create_dir_all(&file_path)
-                    .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create directory: {}", e))))?;
+                std::fs::create_dir_all(&file_path).map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("failed to create directory: {}", e),
+                    ))
+                })?;
             } else {
                 // Create parent directories if needed
                 if let Some(parent) = file_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create parent directories: {}", e))))?;
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("failed to create parent directories: {}", e),
+                        ))
+                    })?;
                 }
 
                 // Extract file
-                let mut outfile = std::fs::File::create(&file_path)
-                    .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to create output file: {}", e))))?;
+                let mut outfile = std::fs::File::create(&file_path).map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("failed to create output file: {}", e),
+                    ))
+                })?;
 
-                std::io::copy(&mut file, &mut outfile)
-                    .map_err(|e| {
-                        let err_str = e.to_string();
-                        if err_str.contains("password") || err_str.contains("encrypted") {
-                            Error::PostProcess(PostProcessError::WrongPassword {
-                                archive: archive_path.to_path_buf(),
-                            })
-                        } else {
-                            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("failed to extract file: {}", e)))
-                        }
-                    })?;
+                std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                    let err_str = e.to_string();
+                    if err_str.contains("password") || err_str.contains("encrypted") {
+                        Error::PostProcess(PostProcessError::WrongPassword {
+                            archive: archive_path.to_path_buf(),
+                        })
+                    } else {
+                        Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("failed to extract file: {}", e),
+                        ))
+                    }
+                })?;
 
                 extracted_files.push(file_path);
             }
@@ -744,104 +779,16 @@ impl ZipExtractor {
         passwords: &PasswordList,
         db: &Database,
     ) -> Result<Vec<PathBuf>> {
-        if passwords.is_empty() {
-            warn!(
-                download_id,
-                ?archive_path,
-                "no passwords to try for ZIP extraction"
-            );
-            return Err(Error::PostProcess(PostProcessError::NoPasswordsAvailable {
-                archive: archive_path.to_path_buf(),
-            }));
-        }
-
-        info!(
+        extract_with_passwords_impl(
+            "ZIP",
+            Self::try_extract,
             download_id,
-            ?archive_path,
-            password_count = passwords.len(),
-            "attempting ZIP extraction with {} password(s)",
-            passwords.len()
-        );
-
-        for (i, password) in passwords.iter().enumerate() {
-            debug!(
-                download_id,
-                attempt = i + 1,
-                total = passwords.len(),
-                password_length = password.len(),
-                "trying password {}/{}",
-                i + 1,
-                passwords.len()
-            );
-
-            // Use spawn_blocking to avoid blocking the async runtime during extraction
-            let archive_path_owned = archive_path.to_path_buf();
-            let dest_path_owned = dest_path.to_path_buf();
-            let password_owned = password.clone();
-
-            let result = spawn_blocking(move || {
-                Self::try_extract(&archive_path_owned, &password_owned, &dest_path_owned)
-            })
-            .await
-            .map_err(|e| Error::PostProcess(PostProcessError::ExtractionFailed {
-                archive: archive_path.to_path_buf(),
-                reason: format!("extraction task panicked: {}", e),
-            }))?;
-
-            match result {
-                Ok(files) => {
-                    info!(
-                        download_id,
-                        ?archive_path,
-                        attempt = i + 1,
-                        "ZIP extraction successful on attempt {}/{}",
-                        i + 1,
-                        passwords.len()
-                    );
-
-                    // Cache successful password
-                    if let Err(e) = db.set_correct_password(download_id, password).await {
-                        warn!(
-                            download_id,
-                            error = %e,
-                            "failed to cache correct password"
-                        );
-                    }
-
-                    return Ok(files);
-                }
-                Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
-                    debug!(
-                        download_id,
-                        attempt = i + 1,
-                        "wrong password, trying next"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    // Other error (corrupt archive, disk full, etc.)
-                    warn!(
-                        download_id,
-                        error = %e,
-                        ?archive_path,
-                        "ZIP extraction failed with non-password error"
-                    );
-                    return Err(e);
-                }
-            }
-        }
-
-        // All passwords failed
-        warn!(
-            download_id,
-            ?archive_path,
-            attempted = passwords.len(),
-            "all passwords failed for ZIP extraction"
-        );
-        Err(Error::PostProcess(PostProcessError::AllPasswordsFailed {
-            archive: archive_path.to_path_buf(),
-            count: passwords.len(),
-        }))
+            archive_path,
+            dest_path,
+            passwords,
+            db,
+        )
+        .await
     }
 }
 
@@ -950,7 +897,9 @@ pub async fn extract_archive(
 pub fn is_archive(path: &Path, archive_extensions: &[String]) -> bool {
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
-        archive_extensions.iter().any(|ae| ae.to_lowercase() == ext_str)
+        archive_extensions
+            .iter()
+            .any(|ae| ae.to_lowercase() == ext_str)
     } else {
         false
     }
@@ -1006,108 +955,109 @@ pub fn extract_recursive<'a>(
     current_depth: u32,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<PathBuf>>> + Send + 'a>> {
     Box::pin(async move {
-    debug!(
-        download_id,
-        ?archive_path,
-        current_depth,
-        max_depth = config.max_recursion_depth,
-        "extracting archive (depth {}/{})",
-        current_depth,
-        config.max_recursion_depth
-    );
-
-    // Extract the archive
-    let extracted = extract_archive(download_id, archive_path, dest_path, passwords, db).await?;
-
-    info!(
-        download_id,
-        ?archive_path,
-        extracted_count = extracted.len(),
-        "extracted {} files from archive at depth {}",
-        extracted.len(),
-        current_depth
-    );
-
-    // If we've reached max recursion depth, return immediately
-    if current_depth >= config.max_recursion_depth {
         debug!(
             download_id,
+            ?archive_path,
             current_depth,
             max_depth = config.max_recursion_depth,
-            "reached maximum recursion depth, not extracting nested archives"
+            "extracting archive (depth {}/{})",
+            current_depth,
+            config.max_recursion_depth
         );
-        return Ok(extracted);
-    }
 
-    // Start with the files we just extracted
-    let mut all_files = extracted.clone();
+        // Extract the archive
+        let extracted =
+            extract_archive(download_id, archive_path, dest_path, passwords, db).await?;
 
-    // Check each extracted file to see if it's an archive
-    for file in &extracted {
-        if is_archive(file, &config.archive_extensions) {
-            info!(
+        info!(
+            download_id,
+            ?archive_path,
+            extracted_count = extracted.len(),
+            "extracted {} files from archive at depth {}",
+            extracted.len(),
+            current_depth
+        );
+
+        // If we've reached max recursion depth, return immediately
+        if current_depth >= config.max_recursion_depth {
+            debug!(
                 download_id,
-                ?file,
                 current_depth,
-                "found nested archive, extracting recursively"
+                max_depth = config.max_recursion_depth,
+                "reached maximum recursion depth, not extracting nested archives"
             );
+            return Ok(extracted);
+        }
 
-            // Create a unique subdirectory for nested extraction to avoid conflicts
-            let nested_dest = dest_path.join(format!(
-                "nested_{}_{}",
-                file.file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("archive"),
-                current_depth + 1
-            ));
+        // Start with the files we just extracted
+        let mut all_files = extracted.clone();
 
-            // Recursively extract the nested archive
-            match extract_recursive(
-                download_id,
-                file,
-                &nested_dest,
-                passwords,
-                db,
-                config,
-                current_depth + 1,
-            )
-            .await
-            {
-                Ok(nested_files) => {
-                    info!(
-                        download_id,
-                        ?file,
-                        nested_count = nested_files.len(),
-                        "successfully extracted {} files from nested archive",
-                        nested_files.len()
-                    );
-                    all_files.extend(nested_files);
-                }
-                Err(e) => {
-                    // Log warning but continue with other files
-                    // Don't fail the entire extraction if one nested archive fails
-                    warn!(
-                        download_id,
-                        ?file,
-                        error = %e,
-                        "failed to extract nested archive, continuing with other files"
-                    );
+        // Check each extracted file to see if it's an archive
+        for file in &extracted {
+            if is_archive(file, &config.archive_extensions) {
+                info!(
+                    download_id,
+                    ?file,
+                    current_depth,
+                    "found nested archive, extracting recursively"
+                );
+
+                // Create a unique subdirectory for nested extraction to avoid conflicts
+                let nested_dest = dest_path.join(format!(
+                    "nested_{}_{}",
+                    file.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("archive"),
+                    current_depth + 1
+                ));
+
+                // Recursively extract the nested archive
+                match extract_recursive(
+                    download_id,
+                    file,
+                    &nested_dest,
+                    passwords,
+                    db,
+                    config,
+                    current_depth + 1,
+                )
+                .await
+                {
+                    Ok(nested_files) => {
+                        info!(
+                            download_id,
+                            ?file,
+                            nested_count = nested_files.len(),
+                            "successfully extracted {} files from nested archive",
+                            nested_files.len()
+                        );
+                        all_files.extend(nested_files);
+                    }
+                    Err(e) => {
+                        // Log warning but continue with other files
+                        // Don't fail the entire extraction if one nested archive fails
+                        warn!(
+                            download_id,
+                            ?file,
+                            error = %e,
+                            "failed to extract nested archive, continuing with other files"
+                        );
+                    }
                 }
             }
         }
-    }
 
-    info!(
-        download_id,
-        ?archive_path,
-        total_files = all_files.len(),
-        depth = current_depth,
-        "completed extraction with {} total files (including nested) at depth {}",
-        all_files.len(),
-        current_depth
-    );
+        info!(
+            download_id,
+            ?archive_path,
+            total_files = all_files.len(),
+            depth = current_depth,
+            "completed extraction with {} total files (including nested) at depth {}",
+            all_files.len(),
+            current_depth
+        );
 
-    Ok(all_files)
+        Ok(all_files)
     })
 }
 
@@ -1131,13 +1081,8 @@ mod tests {
 
     #[test]
     fn test_password_list_collect_multiple_sources() {
-        let passwords = PasswordList::collect(
-            Some("cached"),
-            Some("download"),
-            Some("nzb"),
-            None,
-            false,
-        );
+        let passwords =
+            PasswordList::collect(Some("cached"), Some("download"), Some("nzb"), None, false);
         assert_eq!(passwords.len(), 3);
         assert_eq!(passwords.passwords[0], "cached");
         assert_eq!(passwords.passwords[1], "download");
@@ -1170,13 +1115,8 @@ mod tests {
     #[test]
     fn test_password_list_priority_order() {
         // Cached should come first, then download, then nzb
-        let passwords = PasswordList::collect(
-            Some("cached"),
-            Some("download"),
-            Some("nzb"),
-            None,
-            true,
-        );
+        let passwords =
+            PasswordList::collect(Some("cached"), Some("download"), Some("nzb"), None, true);
         assert_eq!(passwords.len(), 4);
         assert_eq!(passwords.passwords[0], "cached"); // Highest priority
         assert_eq!(passwords.passwords[1], "download");
@@ -1608,13 +1548,7 @@ mod tests {
         let db = Database::new(temp_db.path()).await.unwrap();
 
         // Create a password list with multiple passwords
-        let passwords = PasswordList::collect(
-            None,
-            Some("secret123"),
-            None,
-            None,
-            true,
-        );
+        let passwords = PasswordList::collect(None, Some("secret123"), None, None, true);
 
         // Verify password list has expected passwords
         let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
@@ -1638,13 +1572,8 @@ mod tests {
         let db = Database::new(temp_db.path()).await.unwrap();
 
         // All password sources
-        let passwords = PasswordList::collect(
-            Some("cached"),
-            Some("download"),
-            Some("nzb"),
-            None,
-            true,
-        );
+        let passwords =
+            PasswordList::collect(Some("cached"), Some("download"), Some("nzb"), None, true);
 
         let password_vec: Vec<&str> = passwords.iter().map(|s| s.as_str()).collect();
         assert_eq!(password_vec.len(), 4);
@@ -1687,11 +1616,7 @@ mod tests {
         let dest_path = temp_dir.path().join("extracted");
 
         // Test that empty password is handled correctly (will fail with non-existent file)
-        let result = SevenZipExtractor::try_extract(
-            Path::new("nonexistent.7z"),
-            "",
-            &dest_path,
-        );
+        let result = SevenZipExtractor::try_extract(Path::new("nonexistent.7z"), "", &dest_path);
 
         // Should fail because file doesn't exist, not because of password
         assert!(result.is_err());
@@ -1706,11 +1631,7 @@ mod tests {
         let dest_path = temp_dir.path().join("extracted");
 
         // Test that empty password is handled correctly (will fail with non-existent file)
-        let result = ZipExtractor::try_extract(
-            Path::new("nonexistent.zip"),
-            "",
-            &dest_path,
-        );
+        let result = ZipExtractor::try_extract(Path::new("nonexistent.zip"), "", &dest_path);
 
         // Should fail because file doesn't exist, not because of password
         assert!(result.is_err());
@@ -1911,9 +1832,18 @@ mod tests {
         config.archive_extensions = vec!["rar".to_string()]; // Only RAR files
 
         // This verifies that the config is used for extension checking
-        assert!(is_archive(Path::new("test.rar"), &config.archive_extensions));
-        assert!(!is_archive(Path::new("test.zip"), &config.archive_extensions));
-        assert!(!is_archive(Path::new("test.7z"), &config.archive_extensions));
+        assert!(is_archive(
+            Path::new("test.rar"),
+            &config.archive_extensions
+        ));
+        assert!(!is_archive(
+            Path::new("test.zip"),
+            &config.archive_extensions
+        ));
+        assert!(!is_archive(
+            Path::new("test.7z"),
+            &config.archive_extensions
+        ));
     }
 
     #[tokio::test]

@@ -12,7 +12,7 @@ use crate::error::{PostProcessError, Result};
 use crate::parity::ParityHandler;
 use crate::types::{DownloadId, Event};
 use crate::utils::get_unique_path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
@@ -100,9 +100,7 @@ impl PostProcessor {
                 // Verify, repair, and extract
                 self.run_verify_stage(download_id, &download_path).await?;
                 self.run_repair_stage(download_id, &download_path).await?;
-                let extracted_path = self
-                    .run_extract_stage(download_id, &download_path)
-                    .await?;
+                let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
                 Ok(extracted_path)
             }
 
@@ -110,9 +108,7 @@ impl PostProcessor {
                 // Full pipeline: verify, repair, extract, move, cleanup
                 self.run_verify_stage(download_id, &download_path).await?;
                 self.run_repair_stage(download_id, &download_path).await?;
-                let extracted_path = self
-                    .run_extract_stage(download_id, &download_path)
-                    .await?;
+                let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
                 let final_path = self
                     .run_move_stage(download_id, &extracted_path, &destination)
                     .await?;
@@ -151,9 +147,7 @@ impl PostProcessor {
         );
 
         // Run only extract and move stages
-        let extracted_path = self
-            .run_extract_stage(download_id, &download_path)
-            .await?;
+        let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
 
         let final_path = self
             .run_move_stage(download_id, &extracted_path, &destination)
@@ -163,22 +157,16 @@ impl PostProcessor {
     }
 
     /// Execute the verify stage
-    async fn run_verify_stage(
-        &self,
-        download_id: DownloadId,
-        download_path: &PathBuf,
-    ) -> Result<()> {
+    async fn run_verify_stage(&self, download_id: DownloadId, download_path: &Path) -> Result<()> {
         debug!(download_id, ?download_path, "running verify stage");
 
         // Emit Verifying event
         self.event_tx
-            .send(Event::Verifying {
-                id: download_id,
-            })
+            .send(Event::Verifying { id: download_id })
             .ok();
 
         // Find PAR2 files in download directory
-        let par2_files = self.find_par2_files(download_path)?;
+        let par2_files = self.find_par2_files(download_path).await?;
 
         if par2_files.is_empty() {
             debug!(download_id, "no PAR2 files found, skipping verification");
@@ -256,21 +244,21 @@ impl PostProcessor {
     }
 
     /// Find all PAR2 files in the download directory
-    fn find_par2_files(&self, download_path: &PathBuf) -> Result<Vec<PathBuf>> {
+    async fn find_par2_files(&self, download_path: &Path) -> Result<Vec<PathBuf>> {
         let mut par2_files = Vec::new();
 
-        let entries = std::fs::read_dir(download_path).map_err(|e| {
+        let mut entries = tokio::fs::read_dir(download_path).await.map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("failed to read directory: {}", e),
             )
         })?;
 
-        for entry in entries {
-            let entry = entry?;
+        while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            if path.is_file() {
+            let metadata = entry.metadata().await?;
+            if metadata.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext.eq_ignore_ascii_case("par2") {
                         par2_files.push(path);
@@ -294,9 +282,9 @@ impl PostProcessor {
                 .unwrap_or(false);
 
             match (a_is_vol, b_is_vol) {
-                (false, true) => std::cmp::Ordering::Less,   // a is base file, prefer it
+                (false, true) => std::cmp::Ordering::Less, // a is base file, prefer it
                 (true, false) => std::cmp::Ordering::Greater, // b is base file, prefer it
-                _ => a.cmp(b),                                // both same type, alphabetical
+                _ => a.cmp(b),                             // both same type, alphabetical
             }
         });
 
@@ -304,15 +292,11 @@ impl PostProcessor {
     }
 
     /// Execute the repair stage
-    async fn run_repair_stage(
-        &self,
-        download_id: DownloadId,
-        download_path: &PathBuf,
-    ) -> Result<()> {
+    async fn run_repair_stage(&self, download_id: DownloadId, download_path: &Path) -> Result<()> {
         debug!(download_id, ?download_path, "running repair stage");
 
         // Find PAR2 files in download directory
-        let par2_files = self.find_par2_files(download_path)?;
+        let par2_files = self.find_par2_files(download_path).await?;
 
         if par2_files.is_empty() {
             debug!(download_id, "no PAR2 files found, skipping repair");
@@ -418,7 +402,7 @@ impl PostProcessor {
     async fn run_extract_stage(
         &self,
         download_id: DownloadId,
-        download_path: &PathBuf,
+        download_path: &Path,
     ) -> Result<PathBuf> {
         debug!(download_id, ?download_path, "running extract stage");
 
@@ -443,12 +427,10 @@ impl PostProcessor {
 
             // Emit ExtractComplete event
             self.event_tx
-                .send(Event::ExtractComplete {
-                    id: download_id,
-                })
+                .send(Event::ExtractComplete { id: download_id })
                 .ok();
 
-            return Ok(download_path.clone());
+            return Ok(download_path.to_path_buf());
         }
 
         info!(
@@ -460,12 +442,7 @@ impl PostProcessor {
 
         // Create extraction destination directory
         let extract_dest = download_path.join("extracted");
-        std::fs::create_dir_all(&extract_dest).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to create extraction directory: {}", e),
-            )
-        })?;
+        tokio::fs::create_dir_all(&extract_dest).await?;
 
         // Get cached password for this download (if any)
         let cached_password = match self.db.get_cached_password(download_id).await {
@@ -553,9 +530,7 @@ impl PostProcessor {
 
         // Emit ExtractComplete event
         self.event_tx
-            .send(Event::ExtractComplete {
-                id: download_id,
-            })
+            .send(Event::ExtractComplete { id: download_id })
             .ok();
 
         info!(
@@ -571,7 +546,7 @@ impl PostProcessor {
     /// Detect all archives in the download directory
     ///
     /// Scans for RAR, 7z, and ZIP archives
-    fn detect_all_archives(&self, download_path: &PathBuf) -> Result<Vec<PathBuf>> {
+    fn detect_all_archives(&self, download_path: &Path) -> Result<Vec<PathBuf>> {
         let mut all_archives = Vec::new();
 
         // Detect RAR archives
@@ -594,8 +569,8 @@ impl PostProcessor {
     async fn run_move_stage(
         &self,
         download_id: DownloadId,
-        source_path: &PathBuf,
-        destination: &PathBuf,
+        source_path: &Path,
+        destination: &Path,
     ) -> Result<PathBuf> {
         debug!(
             download_id,
@@ -608,13 +583,12 @@ impl PostProcessor {
         self.event_tx
             .send(Event::Moving {
                 id: download_id,
-                destination: destination.clone(),
+                destination: destination.to_path_buf(),
             })
             .ok();
 
         // Perform the actual file move with collision handling
-        self.move_files(download_id, source_path, destination)
-            .await
+        self.move_files(download_id, source_path, destination).await
     }
 
     /// Move files from source to destination with collision handling
@@ -636,8 +610,8 @@ impl PostProcessor {
     async fn move_files(
         &self,
         download_id: DownloadId,
-        source_path: &PathBuf,
-        destination: &PathBuf,
+        source_path: &Path,
+        destination: &Path,
     ) -> Result<PathBuf> {
         use tokio::fs;
 
@@ -646,17 +620,19 @@ impl PostProcessor {
             ?source_path,
             ?destination,
             "moving files with collision action: {:?}",
-            self.config.file_collision
+            self.config.download.file_collision
         );
 
         // Check if source exists and get its type
         let source_metadata = match fs::metadata(source_path).await {
             Ok(meta) => meta,
             Err(_) => {
-                return Err(crate::error::Error::PostProcess(PostProcessError::InvalidPath {
-                    path: source_path.clone(),
-                    reason: "Source path does not exist".to_string(),
-                }));
+                return Err(crate::error::Error::PostProcess(
+                    PostProcessError::InvalidPath {
+                        path: source_path.to_path_buf(),
+                        reason: "Source path does not exist".to_string(),
+                    },
+                ));
             }
         };
 
@@ -681,23 +657,25 @@ impl PostProcessor {
         }
 
         // If we get here, source is neither file nor directory
-        Err(crate::error::Error::PostProcess(PostProcessError::InvalidPath {
-            path: source_path.clone(),
-            reason: "Source is neither a file nor a directory".to_string(),
-        }))
+        Err(crate::error::Error::PostProcess(
+            PostProcessError::InvalidPath {
+                path: source_path.to_path_buf(),
+                reason: "Source is neither a file nor a directory".to_string(),
+            },
+        ))
     }
 
     /// Move a single file to destination with collision handling
     async fn move_single_file(
         &self,
         download_id: DownloadId,
-        source_file: &PathBuf,
-        destination: &PathBuf,
+        source_file: &Path,
+        destination: &Path,
     ) -> Result<PathBuf> {
         use tokio::fs;
 
         // Apply collision handling to get the actual destination path
-        let final_destination = get_unique_path(destination, self.config.file_collision)?;
+        let final_destination = get_unique_path(destination, self.config.download.file_collision)?;
 
         debug!(
             download_id,
@@ -723,8 +701,8 @@ impl PostProcessor {
     fn move_directory_contents<'a>(
         &'a self,
         download_id: DownloadId,
-        source_dir: &'a PathBuf,
-        destination: &'a PathBuf,
+        source_dir: &'a Path,
+        destination: &'a Path,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PathBuf>> + Send + 'a>> {
         Box::pin(async move {
             use tokio::fs;
@@ -772,24 +750,16 @@ impl PostProcessor {
                 "successfully moved directory contents"
             );
 
-            Ok(destination.clone())
+            Ok(destination.to_path_buf())
         })
     }
 
     /// Execute the cleanup stage
-    async fn run_cleanup_stage(
-        &self,
-        download_id: DownloadId,
-        download_path: &PathBuf,
-    ) -> Result<()> {
+    async fn run_cleanup_stage(&self, download_id: DownloadId, download_path: &Path) -> Result<()> {
         debug!(download_id, ?download_path, "running cleanup stage");
 
         // Emit Cleaning event
-        self.event_tx
-            .send(Event::Cleaning {
-                id: download_id,
-            })
-            .ok();
+        self.event_tx.send(Event::Cleaning { id: download_id }).ok();
 
         // Check if cleanup is enabled
         if !self.config.cleanup.enabled {
@@ -814,7 +784,7 @@ impl PostProcessor {
     ///
     /// * `download_id` - The download ID for logging
     /// * `download_path` - Path to the download directory to clean
-    async fn cleanup(&self, download_id: DownloadId, download_path: &PathBuf) -> Result<()> {
+    async fn cleanup(&self, download_id: DownloadId, download_path: &Path) -> Result<()> {
         use tokio::fs;
 
         debug!(
@@ -825,7 +795,11 @@ impl PostProcessor {
 
         // Check if download path exists using async fs
         if fs::metadata(download_path).await.is_err() {
-            debug!(download_id, ?download_path, "download path does not exist, skipping cleanup");
+            debug!(
+                download_id,
+                ?download_path,
+                "download path does not exist, skipping cleanup"
+            );
             return Ok(());
         }
 
@@ -881,9 +855,7 @@ impl PostProcessor {
 
         info!(
             download_id,
-            deleted_files,
-            deleted_folders,
-            "cleanup complete"
+            deleted_files, deleted_folders, "cleanup complete"
         );
 
         Ok(())
@@ -892,7 +864,7 @@ impl PostProcessor {
     /// Recursively collect files and folders to delete during cleanup
     fn collect_cleanup_targets<'a>(
         &'a self,
-        path: &'a PathBuf,
+        path: &'a Path,
         target_extensions: &'a [&'a str],
         files_to_delete: &'a mut Vec<PathBuf>,
         folders_to_delete: &'a mut Vec<PathBuf>,
@@ -901,7 +873,10 @@ impl PostProcessor {
             use tokio::fs;
 
             // Check if this is a sample folder (using async metadata check)
-            let is_dir = fs::metadata(path).await.map(|m| m.is_dir()).unwrap_or(false);
+            let is_dir = fs::metadata(path)
+                .await
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
             if is_dir && self.config.cleanup.delete_samples {
                 if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
                     // Check if folder name matches any sample folder names (case-insensitive)
@@ -914,7 +889,7 @@ impl PostProcessor {
 
                     if is_sample {
                         // Mark this entire folder for deletion
-                        folders_to_delete.push(path.clone());
+                        folders_to_delete.push(path.to_path_buf());
                         return; // Don't recurse into sample folders
                     }
                 }
@@ -941,7 +916,10 @@ impl PostProcessor {
                 if file_type.is_file() {
                     // Check if file extension matches target extensions (case-insensitive)
                     if let Some(extension) = entry_path.extension().and_then(|e| e.to_str()) {
-                        if target_extensions.iter().any(|ext| ext.eq_ignore_ascii_case(extension)) {
+                        if target_extensions
+                            .iter()
+                            .any(|ext| ext.eq_ignore_ascii_case(extension))
+                        {
                             files_to_delete.push(entry_path);
                         }
                     }
@@ -981,7 +959,8 @@ mod tests {
     async fn test_post_processing_none() {
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let download_path = PathBuf::from("/tmp/download");
         let destination = PathBuf::from("/tmp/destination");
@@ -1000,7 +979,8 @@ mod tests {
 
         let (tx, mut rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         // Create temporary directory for testing
         let temp_dir = TempDir::new().unwrap();
@@ -1035,7 +1015,8 @@ mod tests {
 
         let (tx, mut rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         // Create temporary directories and files for testing
         let temp_dir = TempDir::new().unwrap();
@@ -1088,7 +1069,8 @@ mod tests {
         // Verify that stages execute in the correct order
         let (tx, mut rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         // Create temporary directories and files
         let temp_dir = TempDir::new().unwrap();
@@ -1138,7 +1120,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let source = temp_dir.path().join("source.txt");
@@ -1160,8 +1143,13 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let mut config = Config::default();
-        config.file_collision = crate::config::FileCollisionAction::Rename;
-        let processor = PostProcessor::new(tx, Arc::new(config), test_parity_handler(), test_database().await);
+        config.download.file_collision = crate::config::FileCollisionAction::Rename;
+        let processor = PostProcessor::new(
+            tx,
+            Arc::new(config),
+            test_parity_handler(),
+            test_database().await,
+        );
 
         let temp_dir = TempDir::new().unwrap();
         let source = temp_dir.path().join("source.txt");
@@ -1189,8 +1177,13 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let mut config = Config::default();
-        config.file_collision = crate::config::FileCollisionAction::Overwrite;
-        let processor = PostProcessor::new(tx, Arc::new(config), test_parity_handler(), test_database().await);
+        config.download.file_collision = crate::config::FileCollisionAction::Overwrite;
+        let processor = PostProcessor::new(
+            tx,
+            Arc::new(config),
+            test_parity_handler(),
+            test_database().await,
+        );
 
         let temp_dir = TempDir::new().unwrap();
         let source = temp_dir.path().join("source.txt");
@@ -1218,8 +1211,13 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let mut config = Config::default();
-        config.file_collision = crate::config::FileCollisionAction::Skip;
-        let processor = PostProcessor::new(tx, Arc::new(config), test_parity_handler(), test_database().await);
+        config.download.file_collision = crate::config::FileCollisionAction::Skip;
+        let processor = PostProcessor::new(
+            tx,
+            Arc::new(config),
+            test_parity_handler(),
+            test_database().await,
+        );
 
         let temp_dir = TempDir::new().unwrap();
         let source = temp_dir.path().join("source.txt");
@@ -1246,7 +1244,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -1289,8 +1288,13 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let mut config = Config::default();
-        config.file_collision = crate::config::FileCollisionAction::Rename;
-        let processor = PostProcessor::new(tx, Arc::new(config), test_parity_handler(), test_database().await);
+        config.download.file_collision = crate::config::FileCollisionAction::Rename;
+        let processor = PostProcessor::new(
+            tx,
+            Arc::new(config),
+            test_parity_handler(),
+            test_database().await,
+        );
 
         let temp_dir = TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("source");
@@ -1316,9 +1320,7 @@ mod tests {
         assert!(dest_dir.join("file (1).txt").exists());
 
         // Verify original content preserved
-        let original = fs::read_to_string(dest_dir.join("file.txt"))
-            .await
-            .unwrap();
+        let original = fs::read_to_string(dest_dir.join("file.txt")).await.unwrap();
         assert_eq!(original, "existing content");
 
         let renamed = fs::read_to_string(dest_dir.join("file (1).txt"))
@@ -1334,7 +1336,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1386,7 +1389,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1426,7 +1430,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1470,7 +1475,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1502,7 +1508,8 @@ mod tests {
 
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1543,7 +1550,12 @@ mod tests {
         let (tx, _rx) = broadcast::channel(100);
         let mut config = Config::default();
         config.cleanup.enabled = false;
-        let processor = PostProcessor::new(tx, Arc::new(config), test_parity_handler(), test_database().await);
+        let processor = PostProcessor::new(
+            tx,
+            Arc::new(config),
+            test_parity_handler(),
+            test_database().await,
+        );
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1575,7 +1587,12 @@ mod tests {
         let (tx, _rx) = broadcast::channel(100);
         let mut config = Config::default();
         config.cleanup.delete_samples = false;
-        let processor = PostProcessor::new(tx, Arc::new(config), test_parity_handler(), test_database().await);
+        let processor = PostProcessor::new(
+            tx,
+            Arc::new(config),
+            test_parity_handler(),
+            test_database().await,
+        );
 
         let temp_dir = TempDir::new().unwrap();
         let download_path = temp_dir.path().join("download");
@@ -1607,7 +1624,8 @@ mod tests {
     async fn test_cleanup_nonexistent_path() {
         let (tx, _rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         let nonexistent_path = PathBuf::from("/tmp/nonexistent_path_12345");
 
@@ -1623,8 +1641,9 @@ mod tests {
 
         let (tx, mut rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        // NoOpParityHandler returns Error::NotSupported for repair
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        // NoOpParityHandler returns Error::NotSupported for verify
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         // Create temporary directory with a PAR2 file
         let temp_dir = TempDir::new().unwrap();
@@ -1642,9 +1661,15 @@ mod tests {
         let event1 = rx.recv().await.unwrap();
         assert!(matches!(event1, Event::Verifying { id: 1 }));
 
-        // Should have emitted VerifyComplete event
+        // Should have emitted VerifyComplete event (skipped, assume no damage)
         let event2 = rx.recv().await.unwrap();
-        assert!(matches!(event2, Event::VerifyComplete { id: 1, damaged: false }));
+        assert!(matches!(
+            event2,
+            Event::VerifyComplete {
+                id: 1,
+                damaged: false
+            }
+        ));
     }
 
     #[tokio::test]
@@ -1654,8 +1679,9 @@ mod tests {
 
         let (tx, mut rx) = broadcast::channel(100);
         let config = Arc::new(Config::default());
-        // NoOpParityHandler returns Error::NotSupported for repair
-        let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+        // NoOpParityHandler returns Error::NotSupported for both verify and repair
+        let processor =
+            PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
         // Create temporary directory with a PAR2 file
         let temp_dir = TempDir::new().unwrap();
@@ -1665,16 +1691,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Repair stage should NOT fail even though NoOpParityHandler doesn't support repair
+        // Repair stage should NOT fail even though NoOpParityHandler doesn't support verify/repair
         let result = processor.run_repair_stage(1, &download_path).await;
         assert!(result.is_ok());
 
-        // Should have emitted Repairing event first (verify succeeds with NoOpParityHandler)
+        // Verify now returns NotSupported, so the repair stage hits the verify catch
+        // and emits only RepairSkipped (never reaches Repairing)
         let event1 = rx.recv().await.unwrap();
-        assert!(matches!(event1, Event::Repairing { id: 1, .. }));
-
-        // Then should have emitted RepairSkipped event (repair returns NotSupported)
-        let event2 = rx.recv().await.unwrap();
-        assert!(matches!(event2, Event::RepairSkipped { id: 1, .. }));
+        assert!(matches!(event1, Event::RepairSkipped { id: 1, .. }));
     }
 }
