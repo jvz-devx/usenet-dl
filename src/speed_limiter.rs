@@ -3,8 +3,8 @@
 //! The SpeedLimiter provides global bandwidth limiting across all concurrent downloads
 //! using an efficient lock-free token bucket implementation.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Global speed limiter shared across all downloads
@@ -105,11 +105,7 @@ impl SpeedLimiter {
     /// Returns None if unlimited, otherwise the limit in bytes per second.
     pub fn get_limit(&self) -> Option<u64> {
         let limit = self.limit_bps.load(Ordering::Relaxed);
-        if limit == 0 {
-            None
-        } else {
-            Some(limit)
-        }
+        if limit == 0 { None } else { Some(limit) }
     }
 
     /// Acquire permission to transfer the specified number of bytes

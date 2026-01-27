@@ -230,8 +230,8 @@ fn add_jitter(delay: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[derive(Debug)]
     enum TestError {
@@ -500,11 +500,13 @@ mod tests {
     fn test_error_is_retryable_permanent() {
         use crate::error::{DatabaseError, DownloadError};
 
-        assert!(!Error::Config {
-            message: "bad config".to_string(),
-            key: None,
-        }
-        .is_retryable());
+        assert!(
+            !Error::Config {
+                message: "bad config".to_string(),
+                key: None,
+            }
+            .is_retryable()
+        );
         assert!(
             !Error::Database(DatabaseError::QueryFailed("db error".to_string())).is_retryable()
         );

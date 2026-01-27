@@ -201,10 +201,12 @@ async fn test_delete_category() {
         .unwrap();
     let error: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(error["error"]["code"], "category_not_found");
-    assert!(error["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("nonexistent"));
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonexistent")
+    );
 
     // Test 2: Create a category first
     let category_config = CategoryConfig {

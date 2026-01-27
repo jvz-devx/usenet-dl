@@ -15,7 +15,7 @@
 //! - [`rss`] — RSS feed CRUD
 
 use crate::types::{HistoryEntry, Status};
-use sqlx::{sqlite::SqlitePool, FromRow};
+use sqlx::{FromRow, sqlite::SqlitePool};
 use std::path::PathBuf;
 
 mod articles;

@@ -5,9 +5,9 @@
 
 use crate::error::{ApiError, Error, ToHttpStatus};
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 
 /// Implement IntoResponse for Error to automatically convert errors to HTTP responses

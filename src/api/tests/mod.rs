@@ -1,7 +1,7 @@
 use super::*;
+use crate::Config;
 use crate::config::{CategoryConfig, PostProcess};
 use crate::types::DownloadId;
-use crate::Config;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::StatusCode;

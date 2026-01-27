@@ -558,10 +558,10 @@ async fn test_restore_queue_called_on_startup() {
     {
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -635,10 +635,10 @@ async fn test_resume_after_simulated_crash() {
     {
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -881,7 +881,8 @@ async fn test_shutdown_rejects_new_downloads() {
     // Initially, should accept new downloads
     assert!(
         downloader
-            .queue_state.accepting_new
+            .queue_state
+            .accepting_new
             .load(std::sync::atomic::Ordering::SeqCst),
         "Should accept new downloads initially"
     );
@@ -911,7 +912,8 @@ async fn test_shutdown_rejects_new_downloads() {
     // After shutdown, accepting_new should be false
     assert!(
         !downloader
-            .queue_state.accepting_new
+            .queue_state
+            .accepting_new
             .load(std::sync::atomic::Ordering::SeqCst),
         "Should not accept new downloads after shutdown"
     );
@@ -1288,10 +1290,10 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
     {
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -1391,10 +1393,10 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
         // Now create the downloader (which will call set_clean_start() internally)
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,

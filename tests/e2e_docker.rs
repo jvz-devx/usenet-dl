@@ -27,8 +27,8 @@
 mod common;
 
 use common::{
-    create_nzb_from_segments, generate_yenc_content, wait_for_completion, WaitResult,
-    TEST_ARTICLE_CONTENT,
+    TEST_ARTICLE_CONTENT, WaitResult, create_nzb_from_segments, generate_yenc_content,
+    wait_for_completion,
 };
 use serial_test::serial;
 use std::io::{BufRead, BufReader, Write};

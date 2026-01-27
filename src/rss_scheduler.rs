@@ -38,11 +38,11 @@
 //! # }
 //! ```
 
-use crate::{rss_manager::RssManager, UsenetDownloader};
-use std::sync::atomic::Ordering;
+use crate::{UsenetDownloader, rss_manager::RssManager};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{debug, error, info, warn};
 
 /// RSS feed scheduler that periodically checks configured feeds
@@ -93,7 +93,12 @@ impl RssScheduler {
 
         loop {
             // Check for shutdown signal via downloader's accepting_new flag
-            if !self.downloader.queue_state.accepting_new.load(Ordering::SeqCst) {
+            if !self
+                .downloader
+                .queue_state
+                .accepting_new
+                .load(Ordering::SeqCst)
+            {
                 info!("RSS scheduler shutting down");
                 break;
             }

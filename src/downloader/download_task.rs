@@ -2,8 +2,8 @@
 
 use crate::types::{DownloadId, Event, Status};
 use futures::stream::{self, StreamExt};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::UsenetDownloader;
 
@@ -36,7 +36,10 @@ impl DownloadTaskContext {
 
     /// Mark the download as failed with an error message and emit the failure event.
     async fn mark_failed(&self, error: &str) {
-        let _ = self.db.update_status(self.id, Status::Failed.to_i32()).await;
+        let _ = self
+            .db
+            .update_status(self.id, Status::Failed.to_i32())
+            .await;
         let _ = self.db.set_error(self.id, error).await;
         self.event_tx
             .send(Event::DownloadFailed {
@@ -93,7 +96,11 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
     }
 
     // Phase 3: Create temp directory
-    let download_temp_dir = ctx.config.download.temp_dir.join(format!("download_{}", id.0));
+    let download_temp_dir = ctx
+        .config
+        .download
+        .temp_dir
+        .join(format!("download_{}", id.0));
     if let Err(e) = tokio::fs::create_dir_all(&download_temp_dir).await {
         let msg = format!("Failed to create temp directory: {}", e);
         tracing::error!(download_id = id.0, error = %e, "Failed to create temp directory");
@@ -137,11 +144,7 @@ async fn fetch_download_record(
     };
 
     // Update status to Downloading and record start time
-    if let Err(e) = ctx
-        .db
-        .update_status(id, Status::Downloading.to_i32())
-        .await
-    {
+    if let Err(e) = ctx.db.update_status(id, Status::Downloading.to_i32()).await {
         tracing::error!(download_id = id.0, error = %e, "Failed to update status");
         ctx.remove_from_active().await;
         return None;
@@ -206,9 +209,18 @@ async fn download_articles(
         prepare_batches(&ctx.config, pending_articles);
 
     // Download all batches in parallel
-    let results =
-        download_all_batches(id, article_batches, ctx, &batch_tx, &downloaded_bytes, &downloaded_articles, download_temp_dir, concurrency, pipeline_depth)
-            .await;
+    let results = download_all_batches(
+        id,
+        article_batches,
+        ctx,
+        &batch_tx,
+        &downloaded_bytes,
+        &downloaded_articles,
+        download_temp_dir,
+        concurrency,
+        pipeline_depth,
+    )
+    .await;
 
     // Clean up background tasks
     cleanup_background_tasks(id, progress_task, batch_tx, batch_task).await;
@@ -388,7 +400,9 @@ struct FetchArticleBatchParams {
 }
 
 /// Fetch a single batch of articles via pipelined NNTP commands.
-async fn fetch_article_batch(params: FetchArticleBatchParams) -> std::result::Result<Vec<(i32, u64)>, (String, usize)> {
+async fn fetch_article_batch(
+    params: FetchArticleBatchParams,
+) -> std::result::Result<Vec<(i32, u64)>, (String, usize)> {
     let FetchArticleBatchParams {
         id,
         article_batch,
@@ -421,10 +435,7 @@ async fn fetch_article_batch(params: FetchArticleBatchParams) -> std::result::Re
         Ok(c) => c,
         Err(e) => {
             tracing::error!(download_id = id.0, error = %e, "Failed to get NNTP connection");
-            return Err((
-                format!("Failed to get NNTP connection: {}", e),
-                batch_size,
-            ));
+            return Err((format!("Failed to get NNTP connection: {}", e), batch_size));
         }
     };
 
@@ -475,10 +486,7 @@ async fn fetch_article_batch(params: FetchArticleBatchParams) -> std::result::Re
 
         if let Err(e) = tokio::fs::write(&article_file, &response.data).await {
             tracing::error!(download_id = id.0, article_id = article.id, error = %e, "Failed to write article file");
-            return Err((
-                format!("Failed to write article file: {}", e),
-                batch_size,
-            ));
+            return Err((format!("Failed to write article file: {}", e), batch_size));
         }
 
         if let Err(e) = batch_tx
@@ -501,7 +509,11 @@ async fn fetch_article_batch(params: FetchArticleBatchParams) -> std::result::Re
 ///
 /// Marks the download as complete or failed based on the success/failure ratio,
 /// removes from active tracking, and triggers post-processing on success.
-async fn finalize_download(ctx: DownloadTaskContext, results: DownloadResults, _total_size_bytes: u64) {
+async fn finalize_download(
+    ctx: DownloadTaskContext,
+    results: DownloadResults,
+    _total_size_bytes: u64,
+) {
     let id = ctx.id;
     let DownloadResults {
         success_count,
@@ -536,11 +548,7 @@ async fn finalize_download(ctx: DownloadTaskContext, results: DownloadResults, _
     }
 
     // Mark download as complete
-    if let Err(e) = ctx
-        .db
-        .update_status(id, Status::Complete.to_i32())
-        .await
-    {
+    if let Err(e) = ctx.db.update_status(id, Status::Complete.to_i32()).await {
         tracing::error!(download_id = id.0, error = %e, "Failed to mark download complete");
         ctx.remove_from_active().await;
         return;

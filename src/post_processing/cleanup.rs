@@ -15,7 +15,11 @@ pub(crate) async fn run_cleanup_stage(
     event_tx: &broadcast::Sender<Event>,
     config: &Arc<Config>,
 ) -> Result<()> {
-    debug!(download_id = download_id.0, ?download_path, "running cleanup stage");
+    debug!(
+        download_id = download_id.0,
+        ?download_path,
+        "running cleanup stage"
+    );
 
     // Emit Cleaning event
     event_tx.send(Event::Cleaning { id: download_id }).ok();
@@ -44,7 +48,11 @@ pub(crate) async fn run_cleanup_stage(
 /// * `download_id` - The download ID for logging
 /// * `download_path` - Path to the download directory to clean
 /// * `config` - Configuration for cleanup settings
-async fn cleanup(download_id: DownloadId, download_path: &Path, config: &Arc<Config>) -> Result<()> {
+async fn cleanup(
+    download_id: DownloadId,
+    download_path: &Path,
+    config: &Arc<Config>,
+) -> Result<()> {
     use tokio::fs;
 
     debug!(
@@ -91,7 +99,11 @@ async fn cleanup(download_id: DownloadId, download_path: &Path, config: &Arc<Con
     for file in &files_to_delete {
         match fs::remove_file(file).await {
             Ok(_) => {
-                debug!(download_id = download_id.0, ?file, "deleted intermediate file");
+                debug!(
+                    download_id = download_id.0,
+                    ?file,
+                    "deleted intermediate file"
+                );
                 deleted_files += 1;
             }
             Err(e) => {
@@ -105,7 +117,11 @@ async fn cleanup(download_id: DownloadId, download_path: &Path, config: &Arc<Con
     for folder in &folders_to_delete {
         match fs::remove_dir_all(folder).await {
             Ok(_) => {
-                debug!(download_id = download_id.0, ?folder, "deleted sample folder");
+                debug!(
+                    download_id = download_id.0,
+                    ?folder,
+                    "deleted sample folder"
+                );
                 deleted_folders += 1;
             }
             Err(e) => {

@@ -216,7 +216,10 @@ impl UsenetDownloader {
     ///
     /// This method adds a new schedule rule to the runtime configuration.
     /// Returns the assigned rule ID.
-    pub async fn add_schedule_rule(&self, rule: crate::config::ScheduleRule) -> crate::scheduler::RuleId {
+    pub async fn add_schedule_rule(
+        &self,
+        rule: crate::config::ScheduleRule,
+    ) -> crate::scheduler::RuleId {
         let mut rules = self.runtime_config.schedule_rules.write().await;
         let id = self
             .runtime_config
@@ -230,7 +233,11 @@ impl UsenetDownloader {
     ///
     /// This method updates a schedule rule at the specified index.
     /// Returns true if the rule was updated, false if the index was invalid.
-    pub async fn update_schedule_rule(&self, id: crate::scheduler::RuleId, rule: crate::config::ScheduleRule) -> bool {
+    pub async fn update_schedule_rule(
+        &self,
+        id: crate::scheduler::RuleId,
+        rule: crate::config::ScheduleRule,
+    ) -> bool {
         let mut rules = self.runtime_config.schedule_rules.write().await;
         if let Some(r) = rules.get_mut(id.0 as usize) {
             *r = rule;

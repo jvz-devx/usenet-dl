@@ -88,40 +88,86 @@ impl PostProcessor {
         match post_process {
             PostProcess::None => {
                 // No post-processing, just return the download path
-                debug!(download_id = download_id.0, "skipping post-processing (mode: None)");
+                debug!(
+                    download_id = download_id.0,
+                    "skipping post-processing (mode: None)"
+                );
                 Ok(download_path)
             }
 
             PostProcess::Verify => {
                 // Just verify
-                run_verify_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
+                run_verify_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
                 Ok(download_path)
             }
 
             PostProcess::Repair => {
                 // Verify and repair if needed
-                run_verify_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
-                run_repair_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
+                run_verify_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
+                run_repair_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
                 Ok(download_path)
             }
 
             PostProcess::Unpack => {
                 // Verify, repair, and extract
-                run_verify_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
-                run_repair_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
+                run_verify_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
+                run_repair_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
                 let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
                 Ok(extracted_path)
             }
 
             PostProcess::UnpackAndCleanup => {
                 // Full pipeline: verify, repair, extract, move, cleanup
-                run_verify_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
-                run_repair_stage(download_id, &download_path, &self.event_tx, &self.parity_handler).await?;
+                run_verify_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
+                run_repair_stage(
+                    download_id,
+                    &download_path,
+                    &self.event_tx,
+                    &self.parity_handler,
+                )
+                .await?;
                 let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
                 let final_path = self
                     .run_move_stage(download_id, &extracted_path, &destination)
                     .await?;
-                run_cleanup_stage(download_id, &download_path, &self.event_tx, &self.config).await?;
+                run_cleanup_stage(download_id, &download_path, &self.event_tx, &self.config)
+                    .await?;
                 Ok(final_path)
             }
         }
@@ -171,7 +217,11 @@ impl PostProcessor {
         download_id: DownloadId,
         download_path: &Path,
     ) -> Result<PathBuf> {
-        debug!(download_id = download_id.0, ?download_path, "running extract stage");
+        debug!(
+            download_id = download_id.0,
+            ?download_path,
+            "running extract stage"
+        );
 
         // Emit Extracting event (initial progress)
         self.event_tx
@@ -215,7 +265,8 @@ impl PostProcessor {
         let passwords = self.collect_extraction_passwords(download_id).await;
 
         // Extract all archives with progress tracking
-        self.extract_archives(download_id, &archives, &extract_dest, &passwords).await;
+        self.extract_archives(download_id, &archives, &extract_dest, &passwords)
+            .await;
 
         // Emit ExtractComplete event
         self.event_tx

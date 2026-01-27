@@ -129,7 +129,7 @@ pub use types::{
 /// }
 /// ```
 pub async fn run_with_shutdown(downloader: UsenetDownloader) -> Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
 
     // Set up signal handlers - these may fail in restricted environments (containers, tests)
     let sigterm_result = signal(SignalKind::terminate());

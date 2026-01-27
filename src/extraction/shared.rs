@@ -96,7 +96,11 @@ pub(crate) async fn extract_with_passwords_impl(
                 return Ok(files);
             }
             Err(Error::PostProcess(PostProcessError::WrongPassword { .. })) => {
-                debug!(download_id = download_id.0, attempt = i + 1, "wrong password, trying next");
+                debug!(
+                    download_id = download_id.0,
+                    attempt = i + 1,
+                    "wrong password, trying next"
+                );
                 continue;
             }
             Err(e) => {
@@ -226,7 +230,8 @@ pub fn extract_recursive<'a>(
 
         // Extract the archive
         let extracted =
-            crate::extraction::extract_archive(download_id, archive_path, dest_path, passwords, db).await?;
+            crate::extraction::extract_archive(download_id, archive_path, dest_path, passwords, db)
+                .await?;
 
         info!(
             download_id = download_id.0,

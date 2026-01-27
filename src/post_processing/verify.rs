@@ -17,18 +17,23 @@ pub(crate) async fn run_verify_stage(
     event_tx: &broadcast::Sender<Event>,
     parity_handler: &Arc<dyn ParityHandler>,
 ) -> Result<()> {
-    debug!(download_id = download_id.0, ?download_path, "running verify stage");
+    debug!(
+        download_id = download_id.0,
+        ?download_path,
+        "running verify stage"
+    );
 
     // Emit Verifying event
-    event_tx
-        .send(Event::Verifying { id: download_id })
-        .ok();
+    event_tx.send(Event::Verifying { id: download_id }).ok();
 
     // Find PAR2 files in download directory
     let par2_files = find_par2_files(download_path).await?;
 
     if par2_files.is_empty() {
-        debug!(download_id = download_id.0, "no PAR2 files found, skipping verification");
+        debug!(
+            download_id = download_id.0,
+            "no PAR2 files found, skipping verification"
+        );
 
         // Emit VerifyComplete event (no damage detected, but also no verification)
         event_tx
@@ -43,7 +48,11 @@ pub(crate) async fn run_verify_stage(
 
     // Use the first PAR2 file found (typically the .par2 file, not .vol files)
     let par2_file = &par2_files[0];
-    debug!(download_id = download_id.0, ?par2_file, "verifying with PAR2 file");
+    debug!(
+        download_id = download_id.0,
+        ?par2_file,
+        "verifying with PAR2 file"
+    );
 
     // Call parity handler to verify
     let verify_result = match parity_handler.verify(par2_file).await {

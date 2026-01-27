@@ -3,10 +3,10 @@
 use super::DeleteDownloadQuery;
 use crate::api::AppState;
 use axum::{
+    Json,
     extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -81,7 +81,12 @@ pub async fn list_downloads(State(state): State<AppState>) -> impl IntoResponse 
     )
 )]
 pub async fn get_download(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    match state.downloader.db.get_download(crate::types::DownloadId(id)).await {
+    match state
+        .downloader
+        .db
+        .get_download(crate::types::DownloadId(id))
+        .await
+    {
         Ok(Some(d)) => {
             let eta_seconds = if d.speed_bps > 0 && d.status == 1 {
                 let remaining = d.size_bytes.saturating_sub(d.downloaded_bytes);
@@ -451,7 +456,11 @@ pub async fn set_download_priority(
         }
     };
 
-    match state.downloader.set_priority(crate::types::DownloadId(id), priority).await {
+    match state
+        .downloader
+        .set_priority(crate::types::DownloadId(id), priority)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let error_msg = e.to_string();
@@ -489,7 +498,11 @@ pub async fn reprocess_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    match state.downloader.reprocess(crate::types::DownloadId(id)).await {
+    match state
+        .downloader
+        .reprocess(crate::types::DownloadId(id))
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(crate::Error::NotFound(msg)) => {
             let error_code = if msg.contains("Download files not found") {
@@ -527,7 +540,11 @@ pub async fn reextract_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    match state.downloader.reextract(crate::types::DownloadId(id)).await {
+    match state
+        .downloader
+        .reextract(crate::types::DownloadId(id))
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(crate::Error::NotFound(msg)) => {
             let error_code = if msg.contains("Download files not found") {

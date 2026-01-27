@@ -167,8 +167,9 @@ impl UsenetDownloader {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BinaryHeap::new()));
 
         // Create semaphore for concurrent download limiting
-        let concurrent_limit =
-            std::sync::Arc::new(tokio::sync::Semaphore::new(config.download.max_concurrent_downloads));
+        let concurrent_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            config.download.max_concurrent_downloads,
+        ));
 
         // Create active downloads tracking map
         let active_downloads =
@@ -181,11 +182,14 @@ impl UsenetDownloader {
         let config_arc = std::sync::Arc::new(config.clone());
 
         // Initialize runtime-mutable categories from config
-        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.persistence.categories.clone()));
+        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(
+            config.persistence.categories.clone(),
+        ));
 
         // Initialize runtime-mutable schedule rules from config
-        let schedule_rules =
-            std::sync::Arc::new(tokio::sync::RwLock::new(config.persistence.schedule_rules.clone()));
+        let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(
+            config.persistence.schedule_rules.clone(),
+        ));
 
         // Initialize the next ID counter (0 since config rules don't have IDs yet)
         let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));

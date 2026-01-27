@@ -4,9 +4,9 @@
 //! It supports multiple password sources (cached, per-download, NZB meta, global file, empty).
 
 mod password_list;
-mod shared;
 mod rar;
 mod sevenz;
+mod shared;
 mod zip;
 
 #[cfg(test)]
@@ -14,9 +14,9 @@ mod tests;
 
 // Re-exports
 pub use password_list::PasswordList;
-pub use shared::{detect_archive_type, is_archive, extract_recursive};
 pub use rar::RarExtractor;
 pub use sevenz::SevenZipExtractor;
+pub use shared::{detect_archive_type, extract_recursive, is_archive};
 pub use zip::ZipExtractor;
 
 use crate::db::Database;

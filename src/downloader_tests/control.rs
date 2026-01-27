@@ -315,7 +315,11 @@ async fn test_cancel_deletes_temp_files() {
         .unwrap();
 
     // Create temp directory and some files (simulating partially downloaded)
-    let download_temp_dir = downloader.config.download.temp_dir.join(format!("download_{}", id));
+    let download_temp_dir = downloader
+        .config
+        .download
+        .temp_dir
+        .join(format!("download_{}", id));
     tokio::fs::create_dir_all(&download_temp_dir).await.unwrap();
 
     let test_file = download_temp_dir.join("article_1.dat");

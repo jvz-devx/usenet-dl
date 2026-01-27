@@ -26,7 +26,7 @@
 
 mod common;
 
-use common::{create_live_downloader, has_live_credentials, wait_for_completion, WaitResult};
+use common::{WaitResult, create_live_downloader, has_live_credentials, wait_for_completion};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -95,7 +95,9 @@ async fn test_real_nzb_download() {
         Some(c) => c,
         None => {
             eprintln!("Skipping: TEST_NZB_PATH environment variable not set");
-            eprintln!("Usage: TEST_NZB_PATH=/path/to/file.nzb cargo test --test e2e_real_nzb -- --ignored");
+            eprintln!(
+                "Usage: TEST_NZB_PATH=/path/to/file.nzb cargo test --test e2e_real_nzb -- --ignored"
+            );
             return;
         }
     };

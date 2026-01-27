@@ -190,7 +190,7 @@ async fn test_get_download_endpoint() {
 #[tokio::test]
 async fn test_add_download_endpoint() {
     use axum::body::Body;
-    use axum::http::{header, Request, StatusCode};
+    use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt; // for oneshot()
 
     // Create test downloader
@@ -362,8 +362,8 @@ async fn test_add_download_endpoint() {
 
 #[tokio::test]
 async fn test_add_download_url_endpoint() {
-    use axum::body::{to_bytes, Body};
-    use axum::http::{header, Request, StatusCode};
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt; // for oneshot()
 
     println!("🧪 Testing POST /downloads/url endpoint...");

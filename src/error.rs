@@ -91,7 +91,7 @@ pub enum Error {
         /// Number of bytes required for the operation
         required: u64,
         /// Number of bytes currently available on disk
-        available: u64
+        available: u64,
     },
 
     /// Failed to check disk space
@@ -142,7 +142,7 @@ pub enum DownloadError {
     #[error("download {id} not found")]
     NotFound {
         /// The download ID that was not found
-        id: i64
+        id: i64,
     },
 
     /// Download files not found on disk
@@ -151,7 +151,7 @@ pub enum DownloadError {
         /// The download ID whose files were not found
         id: i64,
         /// The path where the files were expected to be
-        path: PathBuf
+        path: PathBuf,
     },
 
     /// Download already in requested state
@@ -160,7 +160,7 @@ pub enum DownloadError {
         /// The download ID that is already in the requested state
         id: i64,
         /// The current state (e.g., "paused", "completed")
-        state: String
+        state: String,
     },
 
     /// Cannot perform operation in current state
@@ -180,7 +180,7 @@ pub enum DownloadError {
         /// Number of bytes required for the download
         required: u64,
         /// Number of bytes currently available on disk
-        available: u64
+        available: u64,
     },
 
     /// Download failed during article retrieval
@@ -189,7 +189,7 @@ pub enum DownloadError {
         /// The download ID that failed
         id: i64,
         /// The reason for the failure
-        reason: String
+        reason: String,
     },
 
     /// Network timeout during download
@@ -198,7 +198,7 @@ pub enum DownloadError {
         /// The download ID that timed out
         id: i64,
         /// The timeout duration in seconds
-        seconds: u64
+        seconds: u64,
     },
 }
 
@@ -211,7 +211,7 @@ pub enum PostProcessError {
         /// The download ID for which verification failed
         id: i64,
         /// The reason verification failed
-        reason: String
+        reason: String,
     },
 
     /// PAR2 repair failed
@@ -220,7 +220,7 @@ pub enum PostProcessError {
         /// The download ID for which repair failed
         id: i64,
         /// The reason repair failed
-        reason: String
+        reason: String,
     },
 
     /// Archive extraction failed
@@ -229,14 +229,14 @@ pub enum PostProcessError {
         /// The archive file that failed to extract
         archive: PathBuf,
         /// The reason extraction failed
-        reason: String
+        reason: String,
     },
 
     /// Wrong password for encrypted archive
     #[error("wrong password for encrypted archive {archive}")]
     WrongPassword {
         /// The encrypted archive that could not be opened
-        archive: PathBuf
+        archive: PathBuf,
     },
 
     /// All passwords failed for archive extraction
@@ -245,14 +245,14 @@ pub enum PostProcessError {
         /// The encrypted archive that could not be opened
         archive: PathBuf,
         /// The number of passwords that were tried
-        count: usize
+        count: usize,
     },
 
     /// No passwords available for encrypted archive
     #[error("no passwords available for encrypted archive {archive}")]
     NoPasswordsAvailable {
         /// The encrypted archive that requires a password
-        archive: PathBuf
+        archive: PathBuf,
     },
 
     /// File move/rename failed
@@ -272,7 +272,7 @@ pub enum PostProcessError {
         /// The path where the collision occurred
         path: PathBuf,
         /// The reason for the collision (e.g., "file already exists")
-        reason: String
+        reason: String,
     },
 
     /// Cleanup failed (non-fatal, usually logged as warning)
@@ -281,7 +281,7 @@ pub enum PostProcessError {
         /// The download ID for which cleanup failed
         id: i64,
         /// The reason cleanup failed
-        reason: String
+        reason: String,
     },
 
     /// Invalid path encountered during post-processing
@@ -290,7 +290,7 @@ pub enum PostProcessError {
         /// The invalid path that was encountered
         path: PathBuf,
         /// The reason the path is invalid
-        reason: String
+        reason: String,
     },
 }
 

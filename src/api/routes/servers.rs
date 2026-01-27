@@ -2,7 +2,7 @@
 
 use crate::api::AppState;
 use crate::config::ServerConfig;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 
 /// POST /servers/test - Test server connection
 #[utoipa::path(

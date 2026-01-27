@@ -5,10 +5,10 @@
 
 use crate::{Config, Result, UsenetDownloader};
 use axum::{
+    Router,
     http::HeaderValue,
     middleware,
     routing::{delete, get, patch, post, put},
-    Router,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -156,7 +156,9 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
 
     // Apply rate limiting middleware if enabled in config
     let router = if config.server.api.rate_limit.enabled {
-        let limiter = Arc::new(rate_limit::RateLimiter::new(config.server.api.rate_limit.clone()));
+        let limiter = Arc::new(rate_limit::RateLimiter::new(
+            config.server.api.rate_limit.clone(),
+        ));
         router.layer(middleware::from_fn_with_state(
             limiter,
             rate_limit::rate_limit_middleware,

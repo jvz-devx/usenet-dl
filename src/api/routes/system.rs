@@ -2,18 +2,18 @@
 
 use crate::api::AppState;
 use axum::{
+    Json,
     extract::State,
     http::StatusCode,
     response::{
-        sse::{Event as SseEvent, KeepAlive, Sse},
         IntoResponse,
+        sse::{Event as SseEvent, KeepAlive, Sse},
     },
-    Json,
 };
 use serde_json::json;
 use std::convert::Infallible;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
 /// GET /health - Health check
 #[utoipa::path(

@@ -10,17 +10,7 @@ use crate::config::{DuplicateMethod, PostProcess};
 
 /// Unique identifier for a download
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    ToSchema,
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
 )]
 #[serde(transparent)]
 pub struct DownloadId(pub i64);
@@ -96,9 +86,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DownloadId {
 }
 
 impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for DownloadId {
-    fn decode(
-        value: sqlx::sqlite::SqliteValueRef<'r>,
-    ) -> Result<Self, sqlx::error::BoxDynError> {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let id = <i64 as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
         Ok(Self(id))
     }

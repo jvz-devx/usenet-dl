@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 use tempfile::TempDir;
-use usenet_dl::{Config, ServerConfig, UsenetDownloader};
 use usenet_dl::config::{DownloadConfig, PersistenceConfig};
+use usenet_dl::{Config, ServerConfig, UsenetDownloader};
 
 /// Error type for test configuration
 #[derive(Debug)]

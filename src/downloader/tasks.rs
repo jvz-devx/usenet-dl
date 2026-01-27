@@ -10,8 +10,8 @@ use crate::types::{DownloadId, Event, Status};
 use futures::stream::{self, StreamExt};
 use nntp_rs::NntpPool;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 use super::UsenetDownloader;
@@ -168,8 +168,13 @@ async fn emit_final_progress(
         0
     };
 
-    db.update_progress(download_id, final_percent, final_speed_bps, downloaded_bytes)
-        .await?;
+    db.update_progress(
+        download_id,
+        final_percent,
+        final_speed_bps,
+        downloaded_bytes,
+    )
+    .await?;
 
     event_tx
         .send(Event::Downloading {
@@ -210,7 +215,7 @@ impl UsenetDownloader {
                     return Err(Error::Database(DatabaseError::NotFound(format!(
                         "Download with ID {} not found",
                         download_id
-                    ))))
+                    ))));
                 }
             };
 
@@ -260,7 +265,10 @@ impl UsenetDownloader {
             let download_start = std::time::Instant::now();
 
             // Create temp directory for this download
-            let download_temp_dir = config.download.temp_dir.join(format!("download_{}", download_id));
+            let download_temp_dir = config
+                .download
+                .temp_dir
+                .join(format!("download_{}", download_id));
             tokio::fs::create_dir_all(&download_temp_dir)
                 .await
                 .map_err(|e| {
@@ -289,8 +297,14 @@ impl UsenetDownloader {
                                 .first()
                                 .ok_or_else(|| "No NNTP pools configured".to_string())?;
 
-                            let result =
-                                fetch_article(pool, article.clone(), &download_temp_dir, &db, download_id).await?;
+                            let result = fetch_article(
+                                pool,
+                                article.clone(),
+                                &download_temp_dir,
+                                &db,
+                                download_id,
+                            )
+                            .await?;
 
                             downloaded_articles.fetch_add(1, Ordering::Relaxed);
                             downloaded_bytes.fetch_add(result.1, Ordering::Relaxed);
@@ -314,9 +328,7 @@ impl UsenetDownloader {
                     "Download completed with some failures"
                 );
 
-                if successes == 0
-                    || (failures as f64 / total_articles as f64) > MAX_FAILURE_RATIO
-                {
+                if successes == 0 || (failures as f64 / total_articles as f64) > MAX_FAILURE_RATIO {
                     return handle_download_failure(
                         &db,
                         &event_tx,

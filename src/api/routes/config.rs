@@ -2,7 +2,7 @@
 
 use super::SetSpeedLimitRequest;
 use crate::api::AppState;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::json;
 
 /// GET /config - Get current config (sensitive fields redacted)

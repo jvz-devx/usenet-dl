@@ -214,10 +214,12 @@ async fn test_get_history_endpoint() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["error"]["code"]
-        .as_str()
-        .unwrap()
-        .contains("invalid_status"));
+    assert!(
+        json["error"]["code"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_status")
+    );
     println!("    ✓ Invalid status returns 400 with error code");
 
     // Test 7: Limit boundary values
@@ -599,10 +601,12 @@ async fn test_clear_history_endpoint() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["error"]["code"]
-        .as_str()
-        .unwrap()
-        .contains("invalid_status"));
+    assert!(
+        json["error"]["code"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_status")
+    );
     println!("    ✓ Invalid status returns 400 with error code");
 
     println!("✅ DELETE /history endpoint test passed!");

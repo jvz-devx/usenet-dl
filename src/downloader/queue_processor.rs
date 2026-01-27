@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::download_task::DownloadTaskContext;
 use super::UsenetDownloader;
+use super::download_task::DownloadTaskContext;
 
 /// Interval between queue polling attempts when the queue is empty
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_millis(100);

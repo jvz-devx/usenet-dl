@@ -89,7 +89,8 @@ async fn test_check_disk_space_multiplier() {
     let downloader = UsenetDownloader::new(config).await.unwrap();
 
     // Get available space
-    let available = crate::utils::get_available_space(&downloader.config.download.download_dir).unwrap();
+    let available =
+        crate::utils::get_available_space(&downloader.config.download.download_dir).unwrap();
 
     // Calculate download size that would require more than available space after multiplier
     let download_size = (available as f64 / 3.0) as i64 + 1024 * 1024; // Slightly over available/3
