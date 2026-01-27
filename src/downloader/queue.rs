@@ -80,7 +80,7 @@ impl UsenetDownloader {
     ///
     /// Downloads with status Complete or Failed are not restored (they're in history).
     /// Paused downloads are also not restored (user explicitly paused them).
-    pub async fn restore_queue(&self) -> Result<()> {
+    pub async fn restore_queue(&self) -> Result<Vec<DownloadId>> {
         tracing::info!("Restoring queue from database");
 
         // Get all incomplete downloads (status IN (0=Queued, 1=Downloading, 3=Processing))
@@ -88,7 +88,7 @@ impl UsenetDownloader {
 
         if incomplete_downloads.is_empty() {
             tracing::info!("No incomplete downloads to restore");
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         tracing::info!(
@@ -99,8 +99,12 @@ impl UsenetDownloader {
         // Store count before iterating
         let restore_count = incomplete_downloads.len();
 
+        // Collect IDs that need post-processing (status became Processing after resume)
+        let mut needs_post_processing = Vec::new();
+
         // Process each download based on its status
         for download in incomplete_downloads {
+            let id = DownloadId(download.id);
             let status = Status::from_i32(download.status);
 
             match status {
@@ -111,7 +115,16 @@ impl UsenetDownloader {
                         status = ?status,
                         "Resuming interrupted download"
                     );
-                    self.resume_download(DownloadId(download.id)).await?;
+                    self.resume_download(id).await?;
+
+                    // Check if resume_download set the status to Processing
+                    // (meaning all articles are downloaded and it needs post-processing)
+                    let updated = self.db.get_download(id).await?;
+                    if let Some(dl) = updated
+                        && Status::from_i32(dl.status) == Status::Processing
+                    {
+                        needs_post_processing.push(id);
+                    }
                 }
                 Status::Queued => {
                     // These were waiting in queue - add back to queue
@@ -119,7 +132,7 @@ impl UsenetDownloader {
                         download_id = download.id,
                         "Re-adding queued download to priority queue"
                     );
-                    self.add_to_queue(DownloadId(download.id)).await?;
+                    self.add_to_queue(id).await?;
                 }
                 _ => {
                     // Shouldn't happen (get_incomplete_downloads filters by status)
@@ -134,6 +147,6 @@ impl UsenetDownloader {
 
         tracing::info!(restored_count = restore_count, "Queue restoration complete");
 
-        Ok(())
+        Ok(needs_post_processing)
     }
 }

@@ -262,7 +262,15 @@ impl UsenetDownloader {
         };
 
         // Restore any incomplete downloads from database (from previous session)
-        downloader.restore_queue().await?;
+        let needs_post_processing = downloader.restore_queue().await?;
+        for id in needs_post_processing {
+            let dl = downloader.clone();
+            tokio::spawn(async move {
+                if let Err(e) = dl.start_post_processing(id).await {
+                    tracing::error!(download_id = id.0, error = %e, "Post-processing failed during restore");
+                }
+            });
+        }
 
         Ok(downloader)
     }

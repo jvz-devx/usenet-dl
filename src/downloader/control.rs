@@ -168,28 +168,16 @@ impl UsenetDownloader {
         let pending_articles = self.db.get_pending_articles(id).await?;
 
         if pending_articles.is_empty() {
-            // All articles downloaded, proceed to post-processing
+            // All articles downloaded — mark as Processing.
+            // The caller is responsible for spawning post-processing if needed.
             tracing::info!(
                 download_id = id.0,
-                "No pending articles - proceeding to post-processing"
+                "No pending articles - marking as Processing"
             );
 
-            // Set status synchronously so callers see Processing immediately
             self.db
                 .update_status(id, Status::Processing.to_i32())
                 .await?;
-
-            // Start post-processing pipeline asynchronously
-            let downloader = self.clone();
-            tokio::spawn(async move {
-                if let Err(e) = downloader.start_post_processing(id).await {
-                    tracing::error!(
-                        download_id = id.0,
-                        error = %e,
-                        "Post-processing failed"
-                    );
-                }
-            });
 
             Ok(())
         } else {

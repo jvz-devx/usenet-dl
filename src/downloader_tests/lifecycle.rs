@@ -251,20 +251,15 @@ async fn test_resume_download_nonexistent() {
 
 #[tokio::test]
 async fn test_resume_download_emits_event() {
+    // resume_download() is a pure state function — it sets status to Processing
+    // when no pending articles remain (post-processing is spawned by the caller).
     let (downloader, _temp_dir) = create_test_downloader().await;
 
-    // Subscribe to events
-    let mut events = downloader.subscribe();
-
-    // Add a download (will emit Queued event)
+    // Add a download
     let download_id = downloader
         .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
         .await
         .unwrap();
-
-    // Consume the Queued event
-    let event = events.recv().await.unwrap();
-    assert!(matches!(event, Event::Queued { .. }));
 
     // Mark all articles as downloaded
     let articles = downloader
@@ -280,14 +275,19 @@ async fn test_resume_download_emits_event() {
             .unwrap();
     }
 
-    // Resume should emit Verifying event (post-processing start)
+    // Resume should set status to Processing (no spawn, no event)
     downloader.resume_download(download_id).await.unwrap();
 
-    // Check for Verifying event
-    let event = events.recv().await.unwrap();
-    assert!(
-        matches!(event, Event::Verifying { id } if id == download_id),
-        "Should emit Verifying event when no pending articles"
+    let download = downloader
+        .db
+        .get_download(download_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        Status::from_i32(download.status),
+        Status::Processing,
+        "Should set status to Processing when no pending articles"
     );
 }
 
