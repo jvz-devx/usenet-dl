@@ -6,32 +6,60 @@ use std::sync::Arc;
 
 use super::UsenetDownloader;
 
+/// Parameters for triggering webhooks
+pub struct TriggerWebhooksParams {
+    /// The webhook event that occurred
+    pub event_type: crate::config::WebhookEvent,
+    /// The ID of the download
+    pub download_id: DownloadId,
+    /// The download name
+    pub name: String,
+    /// Optional category
+    pub category: Option<String>,
+    /// Current download status as string
+    pub status: String,
+    /// Optional destination path (for completed downloads)
+    pub destination: Option<PathBuf>,
+    /// Optional error message (for failed downloads)
+    pub error: Option<String>,
+}
+
+/// Parameters for triggering scripts
+pub struct TriggerScriptsParams {
+    /// The script event that occurred
+    pub event_type: crate::config::ScriptEvent,
+    /// The ID of the download
+    pub download_id: DownloadId,
+    /// The download name
+    pub name: String,
+    /// Optional category
+    pub category: Option<String>,
+    /// Current download status as string
+    pub status: String,
+    /// Optional destination path (for completed downloads)
+    pub destination: Option<PathBuf>,
+    /// Optional error message (for failed downloads)
+    pub error: Option<String>,
+    /// Size in bytes
+    pub size_bytes: u64,
+}
+
 impl UsenetDownloader {
     /// Trigger webhooks for download events
     ///
     /// This method sends HTTP POST requests to all configured webhooks that are
     /// subscribed to the given event type. Webhooks are executed asynchronously
     /// (fire and forget) to avoid blocking the download pipeline.
-    ///
-    /// # Arguments
-    ///
-    /// * `event_type` - The webhook event that occurred (OnComplete, OnFailed, OnQueued)
-    /// * `download_id` - The ID of the download
-    /// * `name` - The download name
-    /// * `category` - Optional category
-    /// * `status` - Current download status as string
-    /// * `destination` - Optional destination path (for completed downloads)
-    /// * `error` - Optional error message (for failed downloads)
-    pub(crate) fn trigger_webhooks(
-        &self,
-        event_type: crate::config::WebhookEvent,
-        download_id: DownloadId,
-        name: String,
-        category: Option<String>,
-        status: String,
-        destination: Option<PathBuf>,
-        error: Option<String>,
-    ) {
+    pub(crate) fn trigger_webhooks(&self, params: TriggerWebhooksParams) {
+        let TriggerWebhooksParams {
+            event_type,
+            download_id,
+            name,
+            category,
+            status,
+            destination,
+            error,
+        } = params;
         // Filter to only webhooks that match this event type before cloning
         let matching_webhooks: Vec<_> = self
             .config
@@ -145,17 +173,17 @@ impl UsenetDownloader {
     ///
     /// 1. Category-specific scripts (if download has a category)
     /// 2. Global scripts
-    pub(crate) fn trigger_scripts(
-        &self,
-        event_type: crate::config::ScriptEvent,
-        download_id: DownloadId,
-        name: String,
-        category: Option<String>,
-        status: String,
-        destination: Option<PathBuf>,
-        error: Option<String>,
-        size_bytes: u64,
-    ) {
+    pub(crate) fn trigger_scripts(&self, params: TriggerScriptsParams) {
+        let TriggerScriptsParams {
+            event_type,
+            download_id,
+            name,
+            category,
+            status,
+            destination,
+            error,
+            size_bytes,
+        } = params;
         use std::collections::HashMap;
 
         // Build environment variables
@@ -182,7 +210,7 @@ impl UsenetDownloader {
 
         // Category scripts first
         if let Some(cat_name) = &category {
-            if let Some(cat_config) = self.config.categories.get(cat_name) {
+            if let Some(cat_config) = self.config.persistence.categories.get(cat_name) {
                 // Check if any category scripts match this event before cloning
                 let matching_scripts: Vec<_> = cat_config
                     .scripts
@@ -203,7 +231,7 @@ impl UsenetDownloader {
                     );
 
                     for script in matching_scripts {
-                        self.run_script_async(&script.path, script.timeout, cat_env_vars.clone());
+                        self.run_script_async(&script.path, script.timeout, &cat_env_vars);
                     }
                 }
             }
@@ -219,7 +247,7 @@ impl UsenetDownloader {
             .collect();
 
         for script in matching_global {
-            self.run_script_async(&script.path, script.timeout, env_vars.clone());
+            self.run_script_async(&script.path, script.timeout, &env_vars);
         }
     }
 
@@ -232,10 +260,11 @@ impl UsenetDownloader {
         &self,
         script_path: &std::path::Path,
         timeout: std::time::Duration,
-        env_vars: std::collections::HashMap<String, String>,
+        env_vars: &std::collections::HashMap<String, String>,
     ) {
         let script_path = script_path.to_path_buf();
         let event_tx = self.event_tx.clone();
+        let env_vars = env_vars.clone();
 
         tokio::spawn(async move {
             // Execute the script with timeout

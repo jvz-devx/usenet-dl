@@ -102,15 +102,15 @@ impl UsenetDownloader {
         // Insert the feed
         let feed_id = self
             .db
-            .insert_rss_feed(
+            .insert_rss_feed(crate::db::InsertRssFeedParams {
                 name,
-                &config.url,
-                config.check_interval.as_secs() as i64,
-                config.category.as_deref(),
-                config.auto_download,
-                config.priority as i32,
-                config.enabled,
-            )
+                url: &config.url,
+                check_interval_secs: config.check_interval.as_secs() as i64,
+                category: config.category.as_deref(),
+                auto_download: config.auto_download,
+                priority: config.priority as i32,
+                enabled: config.enabled,
+            })
             .await?;
 
         // Insert filters
@@ -128,15 +128,15 @@ impl UsenetDownloader {
             };
 
             self.db
-                .insert_rss_filter(
+                .insert_rss_filter(crate::db::InsertRssFilterParams {
                     feed_id,
-                    &filter.name,
-                    include_json.as_deref(),
-                    exclude_json.as_deref(),
-                    filter.min_size.map(|s| s as i64),
-                    filter.max_size.map(|s| s as i64),
-                    filter.max_age.map(|d| d.as_secs() as i64),
-                )
+                    name: &filter.name,
+                    include_patterns: include_json.as_deref(),
+                    exclude_patterns: exclude_json.as_deref(),
+                    min_size: filter.min_size.map(|s| s as i64),
+                    max_size: filter.max_size.map(|s| s as i64),
+                    max_age_secs: filter.max_age.map(|d| d.as_secs() as i64),
+                })
                 .await?;
         }
 
@@ -153,16 +153,16 @@ impl UsenetDownloader {
         // Update the feed
         let updated = self
             .db
-            .update_rss_feed(
+            .update_rss_feed(crate::db::UpdateRssFeedParams {
                 id,
                 name,
-                &config.url,
-                config.check_interval.as_secs() as i64,
-                config.category.as_deref(),
-                config.auto_download,
-                config.priority as i32,
-                config.enabled,
-            )
+                url: &config.url,
+                check_interval_secs: config.check_interval.as_secs() as i64,
+                category: config.category.as_deref(),
+                auto_download: config.auto_download,
+                priority: config.priority as i32,
+                enabled: config.enabled,
+            })
             .await?;
 
         if !updated {
@@ -186,15 +186,15 @@ impl UsenetDownloader {
             };
 
             self.db
-                .insert_rss_filter(
-                    id,
-                    &filter.name,
-                    include_json.as_deref(),
-                    exclude_json.as_deref(),
-                    filter.min_size.map(|s| s as i64),
-                    filter.max_size.map(|s| s as i64),
-                    filter.max_age.map(|d| d.as_secs() as i64),
-                )
+                .insert_rss_filter(crate::db::InsertRssFilterParams {
+                    feed_id: id,
+                    name: &filter.name,
+                    include_patterns: include_json.as_deref(),
+                    exclude_patterns: exclude_json.as_deref(),
+                    min_size: filter.min_size.map(|s| s as i64),
+                    max_size: filter.max_size.map(|s| s as i64),
+                    max_age_secs: filter.max_age.map(|d| d.as_secs() as i64),
+                })
                 .await?;
         }
 

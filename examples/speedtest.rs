@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Notify;
-use usenet_dl::{Config, DownloadOptions, Event, ServerConfig, UsenetDownloader};
+use usenet_dl::config::{Config, DownloadConfig, PersistenceConfig, ServerConfig};
+use usenet_dl::{DownloadOptions, Event, UsenetDownloader};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,10 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             priority: 0,
             pipeline_depth: 10,
         }],
-        database_path: temp_dir.path().join("test.db"),
-        download_dir: download_dir.clone(),
-        temp_dir: temp_dir.path().join("temp"),
-        max_concurrent_downloads: 1,
+        persistence: PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            ..Default::default()
+        },
+        download: DownloadConfig {
+            download_dir: download_dir.clone(),
+            temp_dir: temp_dir.path().join("temp"),
+            max_concurrent_downloads: 1,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

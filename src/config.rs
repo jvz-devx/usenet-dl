@@ -143,61 +143,28 @@ pub struct Config {
     #[serde(flatten)]
     pub download: DownloadConfig,
 
-    /// Retry configuration
-    #[serde(default)]
-    pub retry: RetryConfig,
-
-    /// Extraction configuration
-    #[serde(default)]
-    pub extraction: ExtractionConfig,
-
-    /// Filename deobfuscation configuration
-    #[serde(default)]
-    pub deobfuscation: DeobfuscationConfig,
-
-    /// Duplicate detection configuration
-    #[serde(default)]
-    pub duplicate: DuplicateConfig,
-
-    /// Disk space checking configuration
-    #[serde(default)]
-    pub disk_space: DiskSpaceConfig,
-
-    /// Cleanup configuration for intermediate files
-    #[serde(default)]
-    pub cleanup: CleanupConfig,
-
     /// External tool paths and password handling
     #[serde(flatten)]
     pub tools: ToolsConfig,
-
-    /// Database path (default: "./usenet-dl.db")
-    #[serde(default = "default_database_path")]
-    pub database_path: PathBuf,
-
-    /// REST API configuration
-    #[serde(default)]
-    pub api: ApiConfig,
-
-    /// Schedule rules for time-based speed limits
-    #[serde(default)]
-    pub schedule_rules: Vec<ScheduleRule>,
-
-    /// Watch folders for auto-importing NZBs
-    #[serde(default)]
-    pub watch_folders: Vec<WatchFolderConfig>,
-
-    /// RSS feed configurations
-    #[serde(default)]
-    pub rss_feeds: Vec<RssFeedConfig>,
 
     /// Notification settings (webhooks and scripts)
     #[serde(flatten)]
     pub notifications: NotificationConfig,
 
-    /// Category configurations
-    #[serde(default)]
-    pub categories: HashMap<String, CategoryConfig>,
+    /// Content pipeline processing (extraction, cleanup, validation)
+    #[serde(flatten)]
+    pub processing: ProcessingConfig,
+
+    /// Data storage and state management
+    pub persistence: PersistenceConfig,
+
+    /// Automated content discovery and ingestion
+    #[serde(flatten)]
+    pub automation: AutomationConfig,
+
+    /// API and external server integration
+    #[serde(flatten)]
+    pub server: ServerIntegrationConfig,
 }
 
 // Convenience accessors — allow existing code to use `config.download_dir` etc.
@@ -219,20 +186,12 @@ impl Default for Config {
         Self {
             servers: vec![],
             download: DownloadConfig::default(),
-            retry: RetryConfig::default(),
-            extraction: ExtractionConfig::default(),
-            deobfuscation: DeobfuscationConfig::default(),
-            duplicate: DuplicateConfig::default(),
-            disk_space: DiskSpaceConfig::default(),
-            cleanup: CleanupConfig::default(),
             tools: ToolsConfig::default(),
-            database_path: default_database_path(),
-            api: ApiConfig::default(),
-            schedule_rules: vec![],
-            watch_folders: vec![],
-            rss_feeds: vec![],
             notifications: NotificationConfig::default(),
-            categories: HashMap::new(),
+            processing: ProcessingConfig::default(),
+            persistence: PersistenceConfig::default(),
+            automation: AutomationConfig::default(),
+            server: ServerIntegrationConfig::default(),
         }
     }
 }
@@ -549,6 +508,122 @@ impl Default for CleanupConfig {
             archive_extensions: default_archive_extensions(),
             delete_samples: true,
             sample_folder_names: default_sample_folder_names(),
+        }
+    }
+}
+
+/// Content pipeline processing configuration
+///
+/// Groups settings related to post-download file processing, validation,
+/// and cleanup. All settings in this config are used together during the
+/// post-processing pipeline.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ProcessingConfig {
+    /// Archive extraction configuration
+    #[serde(default)]
+    pub extraction: ExtractionConfig,
+
+    /// Duplicate detection configuration (pre-download validation)
+    #[serde(default)]
+    pub duplicate: DuplicateConfig,
+
+    /// Disk space checking configuration (pre-download validation)
+    #[serde(default)]
+    pub disk_space: DiskSpaceConfig,
+
+    /// Retry configuration for transient failures
+    #[serde(default)]
+    pub retry: RetryConfig,
+
+    /// Cleanup configuration for intermediate files
+    #[serde(default)]
+    pub cleanup: CleanupConfig,
+}
+
+impl Default for ProcessingConfig {
+    fn default() -> Self {
+        Self {
+            extraction: ExtractionConfig::default(),
+            duplicate: DuplicateConfig::default(),
+            disk_space: DiskSpaceConfig::default(),
+            retry: RetryConfig::default(),
+            cleanup: CleanupConfig::default(),
+        }
+    }
+}
+
+/// Automated content discovery and ingestion configuration
+///
+/// Groups settings related to automated content sources (RSS, watch folders)
+/// and content naming intelligence (deobfuscation).
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct AutomationConfig {
+    /// RSS feed configurations
+    #[serde(default)]
+    pub rss_feeds: Vec<RssFeedConfig>,
+
+    /// Watch folders for auto-importing NZBs
+    #[serde(default)]
+    pub watch_folders: Vec<WatchFolderConfig>,
+
+    /// Filename deobfuscation configuration
+    #[serde(default)]
+    pub deobfuscation: DeobfuscationConfig,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            rss_feeds: vec![],
+            watch_folders: vec![],
+            deobfuscation: DeobfuscationConfig::default(),
+        }
+    }
+}
+
+/// Data storage and state management configuration
+///
+/// Groups settings related to persistence, state, and runtime-mutable
+/// configurations.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct PersistenceConfig {
+    /// Database path (default: "./usenet-dl.db")
+    #[serde(default = "default_database_path")]
+    pub database_path: PathBuf,
+
+    /// Schedule rules for time-based speed limits
+    #[serde(default)]
+    pub schedule_rules: Vec<ScheduleRule>,
+
+    /// Category configurations
+    #[serde(default)]
+    pub categories: HashMap<String, CategoryConfig>,
+}
+
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self {
+            database_path: default_database_path(),
+            schedule_rules: vec![],
+            categories: HashMap::new(),
+        }
+    }
+}
+
+/// API and external server integration configuration
+///
+/// Groups settings for external access and control interfaces.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ServerIntegrationConfig {
+    /// REST API configuration
+    #[serde(default)]
+    pub api: ApiConfig,
+}
+
+impl Default for ServerIntegrationConfig {
+    fn default() -> Self {
+        Self {
+            api: ApiConfig::default(),
         }
     }
 }
@@ -1112,9 +1187,9 @@ mod tests {
         let config = Config::default();
 
         // Verify cleanup config is present in main config
-        assert!(config.cleanup.enabled);
-        assert!(!config.cleanup.target_extensions.is_empty());
-        assert!(!config.cleanup.archive_extensions.is_empty());
+        assert!(config.processing.cleanup.enabled);
+        assert!(!config.processing.cleanup.target_extensions.is_empty());
+        assert!(!config.processing.cleanup.archive_extensions.is_empty());
     }
 
     #[test]
@@ -1173,7 +1248,7 @@ mod tests {
         let config = Config::default();
 
         // Verify rss_feeds field exists and is empty by default
-        assert!(config.rss_feeds.is_empty());
+        assert!(config.automation.rss_feeds.is_empty());
     }
 
     #[test]

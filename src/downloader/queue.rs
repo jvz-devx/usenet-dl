@@ -34,7 +34,7 @@ impl UsenetDownloader {
         };
 
         // Add to priority queue
-        let mut queue = self.queue.lock().await;
+        let mut queue = self.queue_state.queue.lock().await;
         queue.push(queued_download);
 
         Ok(())
@@ -53,7 +53,7 @@ impl UsenetDownloader {
     ///
     /// Returns true if the download was found and removed, false otherwise
     pub(crate) async fn remove_from_queue(&self, id: DownloadId) -> bool {
-        let mut queue = self.queue.lock().await;
+        let mut queue = self.queue_state.queue.lock().await;
 
         let original_len = queue.len();
 
@@ -66,39 +66,6 @@ impl UsenetDownloader {
         *queue = items.into_iter().collect();
 
         was_removed
-    }
-
-    /// Get the next download from the priority queue
-    ///
-    /// Returns the highest-priority download that's ready to start.
-    /// Downloads are ordered by priority and then by creation time (FIFO for same priority).
-    ///
-    /// # Returns
-    ///
-    /// The DownloadId of the next download to process, or None if queue is empty
-    pub(crate) async fn get_next_download(&self) -> Option<DownloadId> {
-        let mut queue = self.queue.lock().await;
-        queue.pop().map(|item| item.id)
-    }
-
-    /// Peek at the next download without removing it from the queue
-    ///
-    /// # Returns
-    ///
-    /// The DownloadId of the next download, or None if queue is empty
-    pub(crate) async fn peek_next_download(&self) -> Option<DownloadId> {
-        let queue = self.queue.lock().await;
-        queue.peek().map(|item| item.id)
-    }
-
-    /// Get the current size of the download queue
-    ///
-    /// # Returns
-    ///
-    /// The number of downloads currently in the queue
-    pub(crate) async fn queue_size(&self) -> usize {
-        let queue = self.queue.lock().await;
-        queue.len()
     }
 
     /// Restore incomplete downloads from database on startup
@@ -144,7 +111,7 @@ impl UsenetDownloader {
                         status = ?status,
                         "Resuming interrupted download"
                     );
-                    self.resume_download(download.id).await?;
+                    self.resume_download(DownloadId(download.id)).await?;
                 }
                 Status::Queued => {
                     // These were waiting in queue - add back to queue
@@ -152,7 +119,7 @@ impl UsenetDownloader {
                         download_id = download.id,
                         "Re-adding queued download to priority queue"
                     );
-                    self.add_to_queue(download.id).await?;
+                    self.add_to_queue(DownloadId(download.id)).await?;
                 }
                 _ => {
                     // Shouldn't happen (get_incomplete_downloads filters by status)

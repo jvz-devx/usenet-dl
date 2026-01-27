@@ -410,16 +410,23 @@ async fn test_duplicate_detection_via_api() {
     {
         let temp_dir = tempdir().unwrap();
         let config = Config {
-            database_path: temp_dir.path().join("test.db"),
+            persistence: crate::config::PersistenceConfig {
+                database_path: temp_dir.path().join("test.db"),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             download: crate::config::DownloadConfig {
                 download_dir: temp_dir.path().join("downloads"),
                 temp_dir: temp_dir.path().join("temp"),
                 ..Default::default()
             },
-            duplicate: crate::config::DuplicateConfig {
-                enabled: true,
-                action: crate::config::DuplicateAction::Block,
-                methods: vec![crate::config::DuplicateMethod::NzbHash],
+            processing: crate::config::ProcessingConfig {
+                duplicate: crate::config::DuplicateConfig {
+                    enabled: true,
+                    action: crate::config::DuplicateAction::Block,
+                    methods: vec![crate::config::DuplicateMethod::NzbHash],
+                },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -502,16 +509,23 @@ async fn test_duplicate_detection_via_api() {
     {
         let temp_dir = tempdir().unwrap();
         let config = Config {
-            database_path: temp_dir.path().join("test.db"),
+            persistence: crate::config::PersistenceConfig {
+                database_path: temp_dir.path().join("test.db"),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             download: crate::config::DownloadConfig {
                 download_dir: temp_dir.path().join("downloads"),
                 temp_dir: temp_dir.path().join("temp"),
                 ..Default::default()
             },
-            duplicate: crate::config::DuplicateConfig {
-                enabled: true,
-                action: crate::config::DuplicateAction::Warn,
-                methods: vec![crate::config::DuplicateMethod::NzbHash],
+            processing: crate::config::ProcessingConfig {
+                duplicate: crate::config::DuplicateConfig {
+                    enabled: true,
+                    action: crate::config::DuplicateAction::Warn,
+                    methods: vec![crate::config::DuplicateMethod::NzbHash],
+                },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -639,16 +653,23 @@ async fn test_duplicate_detection_via_api() {
     {
         let temp_dir = tempdir().unwrap();
         let config = Config {
-            database_path: temp_dir.path().join("test.db"),
+            persistence: crate::config::PersistenceConfig {
+                database_path: temp_dir.path().join("test.db"),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             download: crate::config::DownloadConfig {
                 download_dir: temp_dir.path().join("downloads"),
                 temp_dir: temp_dir.path().join("temp"),
                 ..Default::default()
             },
-            duplicate: crate::config::DuplicateConfig {
-                enabled: true,
-                action: crate::config::DuplicateAction::Allow,
-                methods: vec![crate::config::DuplicateMethod::NzbHash],
+            processing: crate::config::ProcessingConfig {
+                duplicate: crate::config::DuplicateConfig {
+                    enabled: true,
+                    action: crate::config::DuplicateAction::Allow,
+                    methods: vec![crate::config::DuplicateMethod::NzbHash],
+                },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -719,16 +740,23 @@ async fn test_duplicate_detection_via_api() {
     {
         let temp_dir = tempdir().unwrap();
         let config = Config {
-            database_path: temp_dir.path().join("test.db"),
+            persistence: crate::config::PersistenceConfig {
+                database_path: temp_dir.path().join("test.db"),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             download: crate::config::DownloadConfig {
                 download_dir: temp_dir.path().join("downloads"),
                 temp_dir: temp_dir.path().join("temp"),
                 ..Default::default()
             },
-            duplicate: crate::config::DuplicateConfig {
-                enabled: false, // Disabled
-                action: crate::config::DuplicateAction::Block,
-                methods: vec![crate::config::DuplicateMethod::NzbHash],
+            processing: crate::config::ProcessingConfig {
+                duplicate: crate::config::DuplicateConfig {
+                    enabled: false, // Disabled
+                    action: crate::config::DuplicateAction::Block,
+                    methods: vec![crate::config::DuplicateMethod::NzbHash],
+                },
+                ..Default::default()
             },
             ..Default::default()
         };

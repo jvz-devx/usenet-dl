@@ -9,7 +9,11 @@ async fn test_speed_limiter_shared_across_downloads() {
     let db_path = temp_dir.path().join("test.db");
 
     let config = Config {
-        database_path: db_path,
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path,
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
         download: config::DownloadConfig {
             max_concurrent_downloads: 3,

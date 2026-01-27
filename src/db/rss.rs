@@ -3,7 +3,7 @@
 use crate::error::DatabaseError;
 use crate::{Error, Result};
 
-use super::{Database, RssFeed, RssFilterRow};
+use super::{Database, InsertRssFilterParams, InsertRssFeedParams, RssFeed, RssFilterRow, UpdateRssFeedParams};
 
 impl Database {
     /// Get all RSS feeds
@@ -52,16 +52,16 @@ impl Database {
     }
 
     /// Insert a new RSS feed
-    pub async fn insert_rss_feed(
-        &self,
-        name: &str,
-        url: &str,
-        check_interval_secs: i64,
-        category: Option<&str>,
-        auto_download: bool,
-        priority: i32,
-        enabled: bool,
-    ) -> Result<i64> {
+    pub async fn insert_rss_feed(&self, params: InsertRssFeedParams<'_>) -> Result<i64> {
+        let InsertRssFeedParams {
+            name,
+            url,
+            check_interval_secs,
+            category,
+            auto_download,
+            priority,
+            enabled,
+        } = params;
         let now = chrono::Utc::now().timestamp();
 
         let result = sqlx::query(
@@ -92,17 +92,17 @@ impl Database {
     }
 
     /// Update an existing RSS feed
-    pub async fn update_rss_feed(
-        &self,
-        id: i64,
-        name: &str,
-        url: &str,
-        check_interval_secs: i64,
-        category: Option<&str>,
-        auto_download: bool,
-        priority: i32,
-        enabled: bool,
-    ) -> Result<bool> {
+    pub async fn update_rss_feed(&self, params: UpdateRssFeedParams<'_>) -> Result<bool> {
+        let UpdateRssFeedParams {
+            id,
+            name,
+            url,
+            check_interval_secs,
+            category,
+            auto_download,
+            priority,
+            enabled,
+        } = params;
         let result = sqlx::query(
             r#"
             UPDATE rss_feeds
@@ -172,16 +172,16 @@ impl Database {
     }
 
     /// Insert a new RSS filter
-    pub async fn insert_rss_filter(
-        &self,
-        feed_id: i64,
-        name: &str,
-        include_patterns: Option<&str>,
-        exclude_patterns: Option<&str>,
-        min_size: Option<i64>,
-        max_size: Option<i64>,
-        max_age_secs: Option<i64>,
-    ) -> Result<i64> {
+    pub async fn insert_rss_filter(&self, params: InsertRssFilterParams<'_>) -> Result<i64> {
+        let InsertRssFilterParams {
+            feed_id,
+            name,
+            include_patterns,
+            exclude_patterns,
+            min_size,
+            max_size,
+            max_age_secs,
+        } = params;
         let result = sqlx::query(
             r#"
             INSERT INTO rss_filters (feed_id, name, include_patterns, exclude_patterns,

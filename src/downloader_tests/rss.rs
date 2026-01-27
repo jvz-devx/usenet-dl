@@ -22,9 +22,14 @@ async fn test_start_rss_scheduler_with_feeds() {
 
     // Create config with RSS feeds
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
-        rss_feeds: vec![config::RssFeedConfig {
+        automation: config::AutomationConfig {
+            rss_feeds: vec![config::RssFeedConfig {
             url: "https://example.com/feed.xml".to_string(),
             check_interval: Duration::from_secs(60), // 1 minute
             category: Some("test".to_string()),
@@ -33,6 +38,8 @@ async fn test_start_rss_scheduler_with_feeds() {
             priority: Priority::Normal,
             enabled: true,
         }],
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -60,9 +67,14 @@ async fn test_start_rss_scheduler_respects_shutdown() {
 
     // Create config with RSS feeds
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
-        rss_feeds: vec![config::RssFeedConfig {
+        automation: config::AutomationConfig {
+            rss_feeds: vec![config::RssFeedConfig {
             url: "https://example.com/feed.xml".to_string(),
             check_interval: Duration::from_secs(60),
             category: None,
@@ -71,6 +83,8 @@ async fn test_start_rss_scheduler_respects_shutdown() {
             priority: Priority::Normal,
             enabled: true,
         }],
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -84,7 +98,7 @@ async fn test_start_rss_scheduler_respects_shutdown() {
 
     // Trigger shutdown
     downloader
-        .accepting_new
+        .queue_state.accepting_new
         .store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Wait for scheduler to detect shutdown
@@ -103,28 +117,35 @@ async fn test_start_rss_scheduler_with_multiple_feeds() {
 
     // Create config with multiple RSS feeds
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
-        rss_feeds: vec![
-            config::RssFeedConfig {
-                url: "https://example.com/feed1.xml".to_string(),
-                check_interval: Duration::from_secs(30),
-                category: Some("movies".to_string()),
-                filters: vec![],
-                auto_download: true,
-                priority: Priority::High,
-                enabled: true,
-            },
-            config::RssFeedConfig {
-                url: "https://example.com/feed2.xml".to_string(),
-                check_interval: Duration::from_secs(60),
-                category: Some("tv".to_string()),
-                filters: vec![],
-                auto_download: false,
-                priority: Priority::Normal,
-                enabled: false, // Disabled feed should be skipped
-            },
-        ],
+        automation: config::AutomationConfig {
+            rss_feeds: vec![
+                config::RssFeedConfig {
+                    url: "https://example.com/feed1.xml".to_string(),
+                    check_interval: Duration::from_secs(30),
+                    category: Some("movies".to_string()),
+                    filters: vec![],
+                    auto_download: true,
+                    priority: Priority::High,
+                    enabled: true,
+                },
+                config::RssFeedConfig {
+                    url: "https://example.com/feed2.xml".to_string(),
+                    check_interval: Duration::from_secs(60),
+                    category: Some("tv".to_string()),
+                    filters: vec![],
+                    auto_download: false,
+                    priority: Priority::Normal,
+                    enabled: false, // Disabled feed should be skipped
+                },
+            ],
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -152,9 +173,14 @@ async fn test_start_rss_scheduler_only_enabled_feeds() {
 
     // Create config with only disabled feeds
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
-        rss_feeds: vec![config::RssFeedConfig {
+        automation: config::AutomationConfig {
+            rss_feeds: vec![config::RssFeedConfig {
             url: "https://example.com/feed.xml".to_string(),
             check_interval: Duration::from_secs(60),
             category: None,
@@ -163,6 +189,8 @@ async fn test_start_rss_scheduler_only_enabled_feeds() {
             priority: Priority::Normal,
             enabled: false, // Disabled
         }],
+            ..Default::default()
+        },
         ..Default::default()
     };
 

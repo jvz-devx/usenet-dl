@@ -1,308 +1,10 @@
-//! Time-based scheduler for applying speed limits and pause/resume based on schedules.
-//!
-//! The scheduler allows users to define rules that automatically adjust download behavior
-//! based on the time of day and day of week. Common use cases include:
-//! - Limiting speed during work hours to preserve bandwidth
-//! - Running unlimited during off-peak hours (nights/weekends)
-//! - Pausing downloads during specific time windows
-//!
-//! # Example
-//!
-//! ```rust
-//! use usenet_dl::scheduler::{ScheduleRule, ScheduleAction, Weekday};
-//! use chrono::NaiveTime;
-//!
-//! // Unlimited at night (midnight to 6 AM)
-//! let night_rule = ScheduleRule {
-//!     id: 1,
-//!     name: "Night owl".into(),
-//!     days: vec![],  // All days
-//!     start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-//!     end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
-//!     action: ScheduleAction::Unlimited,
-//!     enabled: true,
-//! };
-//!
-//! // Limited during work hours (weekdays only)
-//! let work_rule = ScheduleRule {
-//!     id: 2,
-//!     name: "Work hours".into(),
-//!     days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
-//!                Weekday::Thursday, Weekday::Friday],
-//!     start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
-//!     end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
-//!     action: ScheduleAction::SpeedLimit(1_000_000),  // 1 MB/s
-//!     enabled: true,
-//! };
-//! ```
-
-use chrono::{Datelike, NaiveTime};
-use serde::{Deserialize, Serialize};
-
-/// Unique identifier for a schedule rule
-pub type RuleId = i64;
-
-/// A time-based schedule rule that applies an action during specific time windows
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ScheduleRule {
-    /// Unique identifier for this rule
-    pub id: RuleId,
-
-    /// Human-readable name for this rule
-    pub name: String,
-
-    /// Days this rule applies (empty = all days)
-    pub days: Vec<Weekday>,
-
-    /// Start time (HH:MM:SS, 24-hour format)
-    #[serde(with = "time_format")]
-    pub start_time: NaiveTime,
-
-    /// End time (HH:MM:SS, 24-hour format)
-    #[serde(with = "time_format")]
-    pub end_time: NaiveTime,
-
-    /// Action to take during this time window
-    pub action: ScheduleAction,
-
-    /// Whether this rule is currently active
-    pub enabled: bool,
-}
-
-/// Action to take when a schedule rule is active
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", content = "value")]
-pub enum ScheduleAction {
-    /// Set speed limit in bytes per second
-    SpeedLimit(u64),
-    /// Remove speed limit (unlimited speed)
-    Unlimited,
-    /// Pause all downloads
-    Pause,
-}
-
-/// Days of the week for schedule rules
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum Weekday {
-    /// Monday
-    Monday,
-    /// Tuesday
-    Tuesday,
-    /// Wednesday
-    Wednesday,
-    /// Thursday
-    Thursday,
-    /// Friday
-    Friday,
-    /// Saturday
-    Saturday,
-    /// Sunday
-    Sunday,
-}
-
-impl Weekday {
-    /// Convert from chrono::Weekday to our Weekday
-    pub fn from_chrono(wd: chrono::Weekday) -> Self {
-        use chrono::Weekday as ChronoWd;
-        match wd {
-            ChronoWd::Mon => Weekday::Monday,
-            ChronoWd::Tue => Weekday::Tuesday,
-            ChronoWd::Wed => Weekday::Wednesday,
-            ChronoWd::Thu => Weekday::Thursday,
-            ChronoWd::Fri => Weekday::Friday,
-            ChronoWd::Sat => Weekday::Saturday,
-            ChronoWd::Sun => Weekday::Sunday,
-        }
-    }
-
-    /// Convert to chrono::Weekday
-    pub fn to_chrono(self) -> chrono::Weekday {
-        use chrono::Weekday as ChronoWd;
-        match self {
-            Weekday::Monday => ChronoWd::Mon,
-            Weekday::Tuesday => ChronoWd::Tue,
-            Weekday::Wednesday => ChronoWd::Wed,
-            Weekday::Thursday => ChronoWd::Thu,
-            Weekday::Friday => ChronoWd::Fri,
-            Weekday::Saturday => ChronoWd::Sat,
-            Weekday::Sunday => ChronoWd::Sun,
-        }
-    }
-}
-
-/// Scheduler manages time-based rules for controlling download behavior
-///
-/// The Scheduler maintains a list of schedule rules and provides methods
-/// to evaluate which action should be active at any given time.
-#[derive(Clone, Debug)]
-pub struct Scheduler {
-    /// List of schedule rules (order matters - first match wins)
-    rules: Vec<ScheduleRule>,
-}
-
-impl Scheduler {
-    /// Create a new Scheduler with the given rules
-    ///
-    /// Rules are evaluated in order - the first matching enabled rule wins.
-    /// For best results, order rules from most specific to least specific.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, Weekday};
-    /// use chrono::NaiveTime;
-    ///
-    /// let rules = vec![
-    ///     ScheduleRule {
-    ///         id: 1,
-    ///         name: "Work hours".into(),
-    ///         days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
-    ///                    Weekday::Thursday, Weekday::Friday],
-    ///         start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
-    ///         end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
-    ///         action: ScheduleAction::SpeedLimit(1_000_000),
-    ///         enabled: true,
-    ///     },
-    /// ];
-    ///
-    /// let scheduler = Scheduler::new(rules);
-    /// ```
-    pub fn new(rules: Vec<ScheduleRule>) -> Self {
-        Self { rules }
-    }
-
-    /// Get the list of all rules
-    pub fn rules(&self) -> &[ScheduleRule] {
-        &self.rules
-    }
-
-    /// Update the list of rules
-    ///
-    /// This replaces all existing rules with the new list.
-    pub fn set_rules(&mut self, rules: Vec<ScheduleRule>) {
-        self.rules = rules;
-    }
-
-    /// Add a new rule to the scheduler
-    ///
-    /// The rule is added to the end of the list (lowest priority).
-    pub fn add_rule(&mut self, rule: ScheduleRule) {
-        self.rules.push(rule);
-    }
-
-    /// Remove a rule by ID
-    ///
-    /// Returns true if a rule was removed, false if no rule with that ID exists.
-    pub fn remove_rule(&mut self, id: RuleId) -> bool {
-        let original_len = self.rules.len();
-        self.rules.retain(|r| r.id != id);
-        self.rules.len() < original_len
-    }
-
-    /// Update an existing rule
-    ///
-    /// Returns true if the rule was found and updated, false otherwise.
-    pub fn update_rule(&mut self, rule: ScheduleRule) -> bool {
-        if let Some(existing) = self.rules.iter_mut().find(|r| r.id == rule.id) {
-            *existing = rule;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Get the current effective action based on the current time
-    ///
-    /// Evaluates all rules and returns the action of the first matching rule.
-    /// Returns None if no rules match the current time.
-    ///
-    /// Rules are evaluated in order:
-    /// 1. Rule must be enabled
-    /// 2. Rule must match the current day (empty days = all days)
-    /// 3. Current time must be >= start_time and < end_time
-    /// 4. First matching rule wins
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, Weekday};
-    /// use chrono::{NaiveTime, Local};
-    ///
-    /// let rules = vec![
-    ///     ScheduleRule {
-    ///         id: 1,
-    ///         name: "Work hours".into(),
-    ///         days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
-    ///                    Weekday::Thursday, Weekday::Friday],
-    ///         start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
-    ///         end_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
-    ///         action: ScheduleAction::SpeedLimit(1_000_000),
-    ///         enabled: true,
-    ///     },
-    /// ];
-    ///
-    /// let scheduler = Scheduler::new(rules);
-    /// if let Some(action) = scheduler.get_current_action(Local::now()) {
-    ///     // Apply the action
-    /// }
-    /// ```
-    pub fn get_current_action(
-        &self,
-        now: chrono::DateTime<chrono::Local>,
-    ) -> Option<ScheduleAction> {
-        let weekday = Weekday::from_chrono(now.weekday());
-        let time = now.time();
-
-        self.rules
-            .iter()
-            .find(|r| {
-                r.enabled
-                    && (r.days.is_empty() || r.days.contains(&weekday))
-                    && time >= r.start_time
-                    && time < r.end_time
-            })
-            .map(|r| r.action.clone())
-    }
-}
-
-impl Default for Scheduler {
-    /// Create a scheduler with no rules
-    fn default() -> Self {
-        Self { rules: Vec::new() }
-    }
-}
-
-/// Serde module for serializing/deserializing NaiveTime as HH:MM:SS strings
-mod time_format {
-    use chrono::NaiveTime;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(time: &NaiveTime, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let s = time.format("%H:%M:%S").to_string();
-        serializer.serialize_str(&s)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<NaiveTime, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        NaiveTime::parse_from_str(&s, "%H:%M:%S").map_err(serde::de::Error::custom)
-    }
-}
-
-#[cfg(test)]
-mod tests {
     use super::*;
     use chrono::Timelike;
 
     #[test]
     fn test_schedule_rule_creation() {
         let rule = ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Test Rule".into(),
             days: vec![Weekday::Monday, Weekday::Friday],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -311,7 +13,7 @@ mod tests {
             enabled: true,
         };
 
-        assert_eq!(rule.id, 1);
+        assert_eq!(rule.id, RuleId(1));
         assert_eq!(rule.name, "Test Rule");
         assert_eq!(rule.days.len(), 2);
         assert!(rule.enabled);
@@ -365,7 +67,7 @@ mod tests {
     #[test]
     fn test_schedule_rule_serialization() {
         let rule = ScheduleRule {
-            id: 42,
+            id: RuleId(42),
             name: "Work hours".into(),
             days: vec![Weekday::Monday, Weekday::Tuesday],
             start_time: NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
@@ -416,7 +118,7 @@ mod tests {
     #[test]
     fn test_empty_days_means_all_days() {
         let rule = ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Every day".into(),
             days: vec![], // Empty = all days
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -431,7 +133,7 @@ mod tests {
     #[test]
     fn test_schedule_rule_with_all_weekdays() {
         let rule = ScheduleRule {
-            id: 2,
+            id: RuleId(2),
             name: "Weekdays only".into(),
             days: vec![
                 Weekday::Monday,
@@ -455,7 +157,7 @@ mod tests {
     #[test]
     fn test_scheduler_creation() {
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Test rule".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -481,7 +183,7 @@ mod tests {
         assert_eq!(scheduler.rules().len(), 0);
 
         let rule = ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "New rule".into(),
             days: vec![Weekday::Monday],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -492,7 +194,7 @@ mod tests {
 
         scheduler.add_rule(rule.clone());
         assert_eq!(scheduler.rules().len(), 1);
-        assert_eq!(scheduler.rules()[0].id, 1);
+        assert_eq!(scheduler.rules()[0].id, RuleId(1));
         assert_eq!(scheduler.rules()[0].name, "New rule");
     }
 
@@ -500,7 +202,7 @@ mod tests {
     fn test_scheduler_remove_rule() {
         let rules = vec![
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "Rule 1".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -509,7 +211,7 @@ mod tests {
                 enabled: true,
             },
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Rule 2".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
@@ -523,13 +225,13 @@ mod tests {
         assert_eq!(scheduler.rules().len(), 2);
 
         // Remove existing rule
-        let removed = scheduler.remove_rule(1);
+        let removed = scheduler.remove_rule(RuleId(1));
         assert!(removed);
         assert_eq!(scheduler.rules().len(), 1);
-        assert_eq!(scheduler.rules()[0].id, 2);
+        assert_eq!(scheduler.rules()[0].id, RuleId(2));
 
         // Try to remove non-existent rule
-        let not_removed = scheduler.remove_rule(99);
+        let not_removed = scheduler.remove_rule(RuleId(99));
         assert!(!not_removed);
         assert_eq!(scheduler.rules().len(), 1);
     }
@@ -537,7 +239,7 @@ mod tests {
     #[test]
     fn test_scheduler_update_rule() {
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Original rule".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -551,7 +253,7 @@ mod tests {
 
         // Update existing rule
         let updated_rule = ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Updated rule".into(),
             days: vec![Weekday::Monday],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -568,7 +270,7 @@ mod tests {
 
         // Try to update non-existent rule
         let non_existent = ScheduleRule {
-            id: 99,
+            id: RuleId(99),
             name: "Non-existent".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -585,7 +287,7 @@ mod tests {
     #[test]
     fn test_scheduler_set_rules() {
         let initial_rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Rule 1".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -600,7 +302,7 @@ mod tests {
         // Replace with new rules
         let new_rules = vec![
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "New Rule 1".into(),
                 days: vec![Weekday::Monday],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -609,7 +311,7 @@ mod tests {
                 enabled: true,
             },
             ScheduleRule {
-                id: 3,
+                id: RuleId(3),
                 name: "New Rule 2".into(),
                 days: vec![Weekday::Friday],
                 start_time: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
@@ -621,8 +323,8 @@ mod tests {
 
         scheduler.set_rules(new_rules);
         assert_eq!(scheduler.rules().len(), 2);
-        assert_eq!(scheduler.rules()[0].id, 2);
-        assert_eq!(scheduler.rules()[1].id, 3);
+        assert_eq!(scheduler.rules()[0].id, RuleId(2));
+        assert_eq!(scheduler.rules()[1].id, RuleId(3));
     }
 
     #[test]
@@ -631,7 +333,7 @@ mod tests {
 
         // Add three rules
         scheduler.add_rule(ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Rule 1".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -641,7 +343,7 @@ mod tests {
         });
 
         scheduler.add_rule(ScheduleRule {
-            id: 2,
+            id: RuleId(2),
             name: "Rule 2".into(),
             days: vec![Weekday::Monday, Weekday::Friday],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -651,7 +353,7 @@ mod tests {
         });
 
         scheduler.add_rule(ScheduleRule {
-            id: 3,
+            id: RuleId(3),
             name: "Rule 3".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(20, 0, 0).unwrap(),
@@ -663,14 +365,14 @@ mod tests {
         assert_eq!(scheduler.rules().len(), 3);
 
         // Remove middle rule
-        scheduler.remove_rule(2);
+        scheduler.remove_rule(RuleId(2));
         assert_eq!(scheduler.rules().len(), 2);
-        assert_eq!(scheduler.rules()[0].id, 1);
-        assert_eq!(scheduler.rules()[1].id, 3);
+        assert_eq!(scheduler.rules()[0].id, RuleId(1));
+        assert_eq!(scheduler.rules()[1].id, RuleId(3));
 
         // Update remaining rule
         scheduler.update_rule(ScheduleRule {
-            id: 3,
+            id: RuleId(3),
             name: "Updated Rule 3".into(),
             days: vec![Weekday::Saturday, Weekday::Sunday],
             start_time: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
@@ -698,7 +400,7 @@ mod tests {
         use chrono::Local;
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Disabled rule".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -728,7 +430,7 @@ mod tests {
             .unwrap();
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Morning rule".into(),
             days: vec![], // All days
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -758,7 +460,7 @@ mod tests {
             .unwrap();
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Morning rule".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -789,7 +491,7 @@ mod tests {
         let current_weekday = Weekday::from_chrono(now.weekday());
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Today only".into(),
             days: vec![current_weekday], // Only matches today
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -826,7 +528,7 @@ mod tests {
         };
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Different day".into(),
             days: vec![different_weekday], // Not today
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -855,7 +557,7 @@ mod tests {
             .unwrap();
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "All days".into(),
             days: vec![], // Empty = all days
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -886,7 +588,7 @@ mod tests {
 
         let rules = vec![
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "First rule".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -895,7 +597,7 @@ mod tests {
                 enabled: true,
             },
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Second rule (should not match)".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -927,7 +629,7 @@ mod tests {
             .unwrap();
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Boundary test".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -958,7 +660,7 @@ mod tests {
             .unwrap();
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Boundary test".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -988,7 +690,7 @@ mod tests {
 
         // Test SpeedLimit
         let scheduler = Scheduler::new(vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Speed limit".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1003,7 +705,7 @@ mod tests {
 
         // Test Unlimited
         let scheduler = Scheduler::new(vec![ScheduleRule {
-            id: 2,
+            id: RuleId(2),
             name: "Unlimited".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1018,7 +720,7 @@ mod tests {
 
         // Test Pause
         let scheduler = Scheduler::new(vec![ScheduleRule {
-            id: 3,
+            id: RuleId(3),
             name: "Pause".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1049,7 +751,7 @@ mod tests {
         let rules = vec![
             // Rule 1: Disabled, should be ignored
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "Disabled".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -1059,7 +761,7 @@ mod tests {
             },
             // Rule 2: Wrong time window, should be ignored
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Morning only".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
@@ -1069,7 +771,7 @@ mod tests {
             },
             // Rule 3: Wrong day, should be ignored
             ScheduleRule {
-                id: 3,
+                id: RuleId(3),
                 name: "Wrong day".into(),
                 days: vec![Weekday::Sunday], // Unlikely to match
                 start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -1079,7 +781,7 @@ mod tests {
             },
             // Rule 4: Should match (all days, correct time)
             ScheduleRule {
-                id: 4,
+                id: RuleId(4),
                 name: "Afternoon".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
@@ -1089,7 +791,7 @@ mod tests {
             },
             // Rule 5: Also matches but should not be returned (first match wins)
             ScheduleRule {
-                id: 5,
+                id: RuleId(5),
                 name: "Also matches".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
@@ -1117,7 +819,7 @@ mod tests {
 
         // Rule: 9:00-17:00 with speed limit
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Work hours".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1169,7 +871,7 @@ mod tests {
         use chrono::Local;
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Work hours".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1220,7 +922,7 @@ mod tests {
         // Two back-to-back rules: 9:00-12:00, then 12:00-17:00
         let rules = vec![
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "Morning".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1229,7 +931,7 @@ mod tests {
                 enabled: true,
             },
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Afternoon".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
@@ -1286,7 +988,7 @@ mod tests {
 
         // Very short rule: 14:30:00 - 14:31:00
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "One minute window".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(14, 30, 0).unwrap(),
@@ -1349,7 +1051,7 @@ mod tests {
 
         // Rule that does NOT cross midnight: 22:00 - 23:59
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Late evening".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
@@ -1390,7 +1092,7 @@ mod tests {
         // Weekday-only rule - note end_time must be exclusive
         // So we use 23:59:59 but it won't match at exactly that time
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Weekdays only".into(),
             days: vec![
                 Weekday::Monday,
@@ -1449,7 +1151,7 @@ mod tests {
 
         // Weekend-only rule
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "Weekend unlimited".into(),
             days: vec![Weekday::Saturday, Weekday::Sunday],
             start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -1499,7 +1201,7 @@ mod tests {
         let rules = vec![
             // Rule 1: General all-day rule (lowest priority, should match last)
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "General all day".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -1509,7 +1211,7 @@ mod tests {
             },
             // Rule 2: Work hours override (medium priority)
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Work hours".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1519,7 +1221,7 @@ mod tests {
             },
             // Rule 3: Lunch break (highest priority, most specific)
             ScheduleRule {
-                id: 3,
+                id: RuleId(3),
                 name: "Lunch break".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
@@ -1577,7 +1279,7 @@ mod tests {
         // Rules with different action types in sequence
         let rules = vec![
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "Morning speed limit".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
@@ -1586,7 +1288,7 @@ mod tests {
                 enabled: true,
             },
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Work pause".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1595,7 +1297,7 @@ mod tests {
                 enabled: true,
             },
             ScheduleRule {
-                id: 3,
+                id: RuleId(3),
                 name: "Evening unlimited".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
@@ -1670,7 +1372,7 @@ mod tests {
         let rules = vec![
             // General rule (all days)
             ScheduleRule {
-                id: 1,
+                id: RuleId(1),
                 name: "All days slow".into(),
                 days: vec![],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1680,7 +1382,7 @@ mod tests {
             },
             // Specific Monday rule
             ScheduleRule {
-                id: 2,
+                id: RuleId(2),
                 name: "Monday fast".into(),
                 days: vec![Weekday::Monday],
                 start_time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -1711,7 +1413,7 @@ mod tests {
         use chrono::Local;
 
         let rules = vec![ScheduleRule {
-            id: 1,
+            id: RuleId(1),
             name: "10:30 start".into(),
             days: vec![],
             start_time: NaiveTime::from_hms_opt(10, 30, 0).unwrap(),
@@ -1793,4 +1495,3 @@ mod tests {
             .unwrap();
         assert!(scheduler.get_current_action(at_end).is_none());
     }
-}

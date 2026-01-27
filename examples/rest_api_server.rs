@@ -12,7 +12,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use usenet_dl::api::start_api_server;
-use usenet_dl::config::{ApiConfig, Config, ServerConfig};
+use usenet_dl::config::{ApiConfig, Config, DownloadConfig, ServerConfig, ServerIntegrationConfig};
 use usenet_dl::UsenetDownloader;
 
 #[tokio::main]
@@ -46,9 +46,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build configuration
     let config = Config {
         servers: vec![server],
-        download_dir: "downloads".into(),
-        temp_dir: "temp".into(),
-        api: api_config,
+        download: DownloadConfig {
+            download_dir: "downloads".into(),
+            temp_dir: "temp".into(),
+            ..Default::default()
+        },
+        server: ServerIntegrationConfig {
+            api: api_config,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

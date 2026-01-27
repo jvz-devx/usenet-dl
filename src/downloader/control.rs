@@ -54,7 +54,7 @@ impl UsenetDownloader {
             }
             Status::Complete | Status::Failed => {
                 return Err(Error::Download(DownloadError::InvalidState {
-                    id,
+                    id: id.into(),
                     operation: "pause".to_string(),
                     current_state: format!("{:?}", current_status),
                 }));
@@ -65,7 +65,7 @@ impl UsenetDownloader {
         }
 
         // If download is actively running, cancel its task
-        let mut active_downloads = self.active_downloads.lock().await;
+        let mut active_downloads = self.queue_state.active_downloads.lock().await;
         if let Some(cancel_token) = active_downloads.get(&id) {
             // Signal the download task to stop
             cancel_token.cancel();
@@ -136,7 +136,7 @@ impl UsenetDownloader {
             }
             Status::Complete | Status::Failed => {
                 return Err(Error::Download(DownloadError::InvalidState {
-                    id,
+                    id: id.into(),
                     operation: "resume".to_string(),
                     current_state: format!("{:?}", current_status),
                 }));
@@ -170,7 +170,7 @@ impl UsenetDownloader {
         if pending_articles.is_empty() {
             // All articles downloaded, proceed to post-processing
             tracing::info!(
-                download_id = id,
+                download_id = id.0,
                 "No pending articles - proceeding to post-processing"
             );
 
@@ -179,7 +179,7 @@ impl UsenetDownloader {
             tokio::spawn(async move {
                 if let Err(e) = downloader.start_post_processing(id).await {
                     tracing::error!(
-                        download_id = id,
+                        download_id = id.0,
                         error = %e,
                         "Post-processing failed"
                     );
@@ -190,7 +190,7 @@ impl UsenetDownloader {
         } else {
             // Resume downloading remaining articles
             tracing::info!(
-                download_id = id,
+                download_id = id.0,
                 pending_articles = pending_articles.len(),
                 "Resuming download with pending articles"
             );
@@ -235,7 +235,7 @@ impl UsenetDownloader {
         })?;
 
         // If download is actively running, cancel its task
-        let mut active_downloads = self.active_downloads.lock().await;
+        let mut active_downloads = self.queue_state.active_downloads.lock().await;
         if let Some(cancel_token) = active_downloads.get(&id) {
             // Signal the download task to stop
             cancel_token.cancel();
@@ -248,11 +248,11 @@ impl UsenetDownloader {
         self.remove_from_queue(id).await;
 
         // Delete downloaded files from temp directory
-        let download_temp_dir = self.config.download.temp_dir.join(format!("download_{}", id));
+        let download_temp_dir = self.config.download.temp_dir.join(format!("download_{}", id.0));
         if download_temp_dir.exists() {
             if let Err(e) = tokio::fs::remove_dir_all(&download_temp_dir).await {
                 tracing::warn!(
-                    download_id = id,
+                    download_id = id.0,
                     path = ?download_temp_dir,
                     error = %e,
                     "Failed to delete download temp directory"
@@ -334,10 +334,10 @@ impl UsenetDownloader {
             .db
             .get_download(id)
             .await?
-            .ok_or_else(|| Error::NotFound(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::NotFound(format!("Download {} not found", id.0)))?;
 
         // Determine download path (temp directory)
-        let download_path = self.config.download.temp_dir.join(format!("download_{}", id));
+        let download_path = self.config.download.temp_dir.join(format!("download_{}", id.0));
 
         // Verify download files still exist
         if !download_path.exists() {
@@ -348,7 +348,7 @@ impl UsenetDownloader {
         }
 
         tracing::info!(
-            download_id = id,
+            download_id = id.0,
             path = %download_path.display(),
             "Starting reprocessing"
         );
@@ -370,7 +370,7 @@ impl UsenetDownloader {
         tokio::spawn(async move {
             if let Err(e) = downloader.start_post_processing(id).await {
                 tracing::error!(
-                    download_id = id,
+                    download_id = id.0,
                     error = %e,
                     "Reprocessing failed"
                 );
@@ -394,10 +394,10 @@ impl UsenetDownloader {
             .db
             .get_download(id)
             .await?
-            .ok_or_else(|| Error::NotFound(format!("Download {} not found", id)))?;
+            .ok_or_else(|| Error::NotFound(format!("Download {} not found", id.0)))?;
 
         // Determine download path (temp directory)
-        let download_path = self.config.download.temp_dir.join(format!("download_{}", id));
+        let download_path = self.config.download.temp_dir.join(format!("download_{}", id.0));
 
         // Verify download files still exist
         if !download_path.exists() {
@@ -408,7 +408,7 @@ impl UsenetDownloader {
         }
 
         tracing::info!(
-            download_id = id,
+            download_id = id.0,
             path = %download_path.display(),
             "Starting re-extraction (skip verify/repair)"
         );
@@ -431,8 +431,8 @@ impl UsenetDownloader {
         // Run extraction stage only (skip verify/repair)
         // This will run asynchronously
         let downloader = self.clone();
-        let destination = PathBuf::from(download.destination);
-        let post_processor = self.post_processor.clone();
+        let destination = PathBuf::from(download.destination.clone());
+        let post_processor = self.processing.post_processor.clone();
         tokio::spawn(async move {
             // Run re-extraction (extract + move, skip verify/repair)
             match post_processor
@@ -440,117 +440,137 @@ impl UsenetDownloader {
                 .await
             {
                 Ok(final_path) => {
-                    tracing::info!(download_id = id, ?final_path, "Re-extraction complete");
-
-                    // Update status to complete
-                    if let Err(e) = downloader
-                        .db
-                        .update_status(id, Status::Complete.to_i32())
-                        .await
-                    {
-                        tracing::error!(
-                            download_id = id,
-                            error = %e,
-                            "Failed to update status to complete"
-                        );
-                    }
-
-                    // Emit Complete event
-                    downloader.emit_event(Event::Complete {
-                        id,
-                        path: final_path.clone(),
-                    });
-
-                    // Trigger webhooks for complete event
-                    downloader.trigger_webhooks(
-                        crate::config::WebhookEvent::OnComplete,
-                        id,
-                        download.name.clone(),
-                        download.category.clone(),
-                        "complete".to_string(),
-                        Some(final_path.clone()),
-                        None,
-                    );
-
-                    // Trigger scripts for complete event
-                    downloader.trigger_scripts(
-                        crate::config::ScriptEvent::OnComplete,
-                        id,
-                        download.name.clone(),
-                        download.category.clone(),
-                        "complete".to_string(),
-                        Some(final_path),
-                        None,
-                        download.size_bytes as u64,
-                    );
+                    downloader.handle_reextract_success(id, final_path, download).await;
                 }
                 Err(e) => {
-                    // Convert error to string once, reuse throughout
-                    let error_msg = e.to_string();
-
-                    tracing::error!(
-                        download_id = id,
-                        error = %error_msg,
-                        "Re-extraction failed"
-                    );
-
-                    // Update status to failed
-                    if let Err(db_err) = downloader
-                        .db
-                        .update_status(id, Status::Failed.to_i32())
-                        .await
-                    {
-                        tracing::error!(
-                            download_id = id,
-                            error = %db_err,
-                            "Failed to update status to failed"
-                        );
-                    }
-
-                    // Set error message
-                    if let Err(db_err) = downloader.db.set_error(id, &error_msg).await {
-                        tracing::error!(
-                            download_id = id,
-                            error = %db_err,
-                            "Failed to set error message"
-                        );
-                    }
-
-                    // Emit Failed event
-                    downloader.emit_event(Event::Failed {
-                        id,
-                        stage: Stage::Extract,
-                        error: error_msg.clone(),
-                        files_kept: true,
-                    });
-
-                    // Trigger webhooks for failed event
-                    downloader.trigger_webhooks(
-                        crate::config::WebhookEvent::OnFailed,
-                        id,
-                        download.name.clone(),
-                        download.category.clone(),
-                        "failed".to_string(),
-                        None,
-                        Some(error_msg.clone()),
-                    );
-
-                    // Trigger scripts for failed event
-                    downloader.trigger_scripts(
-                        crate::config::ScriptEvent::OnFailed,
-                        id,
-                        download.name.clone(),
-                        download.category.clone(),
-                        "failed".to_string(),
-                        None,
-                        Some(error_msg),
-                        download.size_bytes as u64,
-                    );
+                    downloader.handle_reextract_failure(id, e, download).await;
                 }
             }
         });
 
         Ok(())
+    }
+
+    /// Handle successful re-extraction completion
+    async fn handle_reextract_success(
+        &self,
+        id: DownloadId,
+        final_path: PathBuf,
+        download: crate::db::Download,
+    ) {
+        tracing::info!(download_id = id.0, ?final_path, "Re-extraction complete");
+
+        // Update status to complete
+        if let Err(e) = self
+            .db
+            .update_status(id, Status::Complete.to_i32())
+            .await
+        {
+            tracing::error!(
+                download_id = id.0,
+                error = %e,
+                "Failed to update status to complete"
+            );
+        }
+
+        // Emit Complete event
+        self.emit_event(Event::Complete {
+            id,
+            path: final_path.clone(),
+        });
+
+        // Trigger webhooks for complete event
+        self.trigger_webhooks(super::webhooks::TriggerWebhooksParams {
+            event_type: crate::config::WebhookEvent::OnComplete,
+            download_id: id,
+            name: download.name.clone(),
+            category: download.category.clone(),
+            status: "complete".to_string(),
+            destination: Some(final_path.clone()),
+            error: None,
+        });
+
+        // Trigger scripts for complete event
+        self.trigger_scripts(super::webhooks::TriggerScriptsParams {
+            event_type: crate::config::ScriptEvent::OnComplete,
+            download_id: id,
+            name: download.name.clone(),
+            category: download.category.clone(),
+            status: "complete".to_string(),
+            destination: Some(final_path),
+            error: None,
+            size_bytes: download.size_bytes as u64,
+        });
+    }
+
+    /// Handle re-extraction failure
+    async fn handle_reextract_failure(
+        &self,
+        id: DownloadId,
+        error: crate::error::Error,
+        download: crate::db::Download,
+    ) {
+        // Convert error to string once, reuse throughout
+        let error_msg = error.to_string();
+
+        tracing::error!(
+            download_id = id.0,
+            error = %error_msg,
+            "Re-extraction failed"
+        );
+
+        // Update status to failed
+        if let Err(db_err) = self
+            .db
+            .update_status(id, Status::Failed.to_i32())
+            .await
+        {
+            tracing::error!(
+                download_id = id.0,
+                error = %db_err,
+                "Failed to update status to failed"
+            );
+        }
+
+        // Set error message
+        if let Err(db_err) = self.db.set_error(id, &error_msg).await {
+            tracing::error!(
+                download_id = id.0,
+                error = %db_err,
+                "Failed to set error message"
+            );
+        }
+
+        // Emit Failed event
+        self.emit_event(Event::Failed {
+            id,
+            stage: Stage::Extract,
+            error: error_msg.clone(),
+            files_kept: true,
+        });
+
+        // Trigger webhooks for failed event
+        self.trigger_webhooks(super::webhooks::TriggerWebhooksParams {
+            event_type: crate::config::WebhookEvent::OnFailed,
+            download_id: id,
+            name: download.name.clone(),
+            category: download.category.clone(),
+            status: "failed".to_string(),
+            destination: None,
+            error: Some(error_msg.clone()),
+        });
+
+        // Trigger scripts for failed event
+        self.trigger_scripts(super::webhooks::TriggerScriptsParams {
+            event_type: crate::config::ScriptEvent::OnFailed,
+            download_id: id,
+            name: download.name.clone(),
+            category: download.category.clone(),
+            status: "failed".to_string(),
+            destination: None,
+            error: Some(error_msg),
+            size_bytes: download.size_bytes as u64,
+        });
     }
 
     /// Pause all active downloads
@@ -569,7 +589,7 @@ impl UsenetDownloader {
             // Only pause active downloads
             match status {
                 Status::Queued | Status::Downloading | Status::Processing => {
-                    if let Err(e) = self.pause(download.id).await {
+                    if let Err(e) = self.pause(DownloadId(download.id)).await {
                         tracing::warn!(
                             download_id = download.id,
                             error = %e,
@@ -608,7 +628,7 @@ impl UsenetDownloader {
         let mut resumed_count = 0;
 
         for download in paused_downloads {
-            if let Err(e) = self.resume(download.id).await {
+            if let Err(e) = self.resume(DownloadId(download.id)).await {
                 tracing::warn!(
                     download_id = download.id,
                     error = %e,

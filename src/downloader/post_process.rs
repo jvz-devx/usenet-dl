@@ -37,7 +37,7 @@ impl UsenetDownloader {
     /// }
     /// ```
     pub async fn start_post_processing(&self, download_id: DownloadId) -> Result<()> {
-        tracing::info!(download_id, "starting post-processing");
+        tracing::info!(download_id = download_id.0, "starting post-processing");
 
         // Update status to Processing
         self.db
@@ -49,14 +49,14 @@ impl UsenetDownloader {
             .db
             .get_download(download_id)
             .await?
-            .ok_or_else(|| Error::NotFound(format!("download {} not found", download_id)))?;
+            .ok_or_else(|| Error::NotFound(format!("download {} not found", download_id.0)))?;
 
         // Determine download path (temp directory)
         let download_path = self
             .config
             .download
             .temp_dir
-            .join(format!("download_{}", download_id));
+            .join(format!("download_{}", download_id.0));
 
         // Determine final destination
         let destination = PathBuf::from(&download.destination);
@@ -66,6 +66,7 @@ impl UsenetDownloader {
 
         // Execute post-processing pipeline
         match self
+            .processing
             .post_processor
             .start_post_processing(download_id, download_path, post_process, destination)
             .await
@@ -113,38 +114,38 @@ impl UsenetDownloader {
             })
             .ok();
 
-        self.trigger_webhooks(
-            crate::config::WebhookEvent::OnComplete,
+        self.trigger_webhooks(super::webhooks::TriggerWebhooksParams {
+            event_type: crate::config::WebhookEvent::OnComplete,
             download_id,
-            name.clone(),
-            category.clone(),
-            "complete".to_string(),
-            Some(final_path.clone()),
-            None,
-        );
+            name: name.clone(),
+            category: category.clone(),
+            status: "complete".to_string(),
+            destination: Some(final_path.clone()),
+            error: None,
+        });
 
-        self.trigger_scripts(
-            crate::config::ScriptEvent::OnPostProcessComplete,
+        self.trigger_scripts(super::webhooks::TriggerScriptsParams {
+            event_type: crate::config::ScriptEvent::OnPostProcessComplete,
             download_id,
-            name.clone(),
-            category.clone(),
-            "complete".to_string(),
-            Some(final_path.clone()),
-            None,
+            name: name.clone(),
+            category: category.clone(),
+            status: "complete".to_string(),
+            destination: Some(final_path.clone()),
+            error: None,
             size_bytes,
-        );
-        self.trigger_scripts(
-            crate::config::ScriptEvent::OnComplete,
+        });
+        self.trigger_scripts(super::webhooks::TriggerScriptsParams {
+            event_type: crate::config::ScriptEvent::OnComplete,
             download_id,
             name,
             category,
-            "complete".to_string(),
-            Some(final_path),
-            None,
+            status: "complete".to_string(),
+            destination: Some(final_path),
+            error: None,
             size_bytes,
-        );
+        });
 
-        tracing::info!(download_id, "post-processing completed successfully");
+        tracing::info!(download_id = download_id.0, "post-processing completed successfully");
         Ok(())
     }
 
@@ -173,28 +174,28 @@ impl UsenetDownloader {
             })
             .ok();
 
-        self.trigger_webhooks(
-            crate::config::WebhookEvent::OnFailed,
+        self.trigger_webhooks(super::webhooks::TriggerWebhooksParams {
+            event_type: crate::config::WebhookEvent::OnFailed,
             download_id,
-            name.clone(),
-            category.clone(),
-            "failed".to_string(),
-            None,
-            Some(error_message.clone()),
-        );
+            name: name.clone(),
+            category: category.clone(),
+            status: "failed".to_string(),
+            destination: None,
+            error: Some(error_message.clone()),
+        });
 
-        self.trigger_scripts(
-            crate::config::ScriptEvent::OnFailed,
+        self.trigger_scripts(super::webhooks::TriggerScriptsParams {
+            event_type: crate::config::ScriptEvent::OnFailed,
             download_id,
             name,
             category,
-            "failed".to_string(),
-            None,
-            Some(error_message),
+            status: "failed".to_string(),
+            destination: None,
+            error: Some(error_message),
             size_bytes,
-        );
+        });
 
-        tracing::error!(download_id, error = %e, "post-processing failed");
+        tracing::error!(download_id = download_id.0, error = %e, "post-processing failed");
         Err(e)
     }
 }

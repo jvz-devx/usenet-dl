@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{CategoryConfig, PostProcess};
+use crate::types::DownloadId;
 use crate::Config;
 use axum::body::Body;
 use axum::extract::Request;
@@ -23,11 +24,9 @@ async fn create_test_downloader() -> (Arc<UsenetDownloader>, tempfile::TempDir) 
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
 
-    let config = Config {
-        database_path: db_path,
-        servers: vec![], // No servers for testing
-        ..Default::default()
-    };
+    let mut config = Config::default();
+    config.persistence.database_path = db_path;
+    config.servers = vec![]; // No servers for testing
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
     (Arc::new(downloader), temp_dir)
@@ -39,13 +38,9 @@ async fn test_api_server_spawns() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Use a random available port for testing
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            bind_address: "127.0.0.1:0".parse().unwrap(), // Port 0 = OS assigns a free port
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.bind_address = "127.0.0.1:0".parse().unwrap(); // Port 0 = OS assigns a free port
+    let config = Arc::new(config);
 
     // Spawn the API server
     let api_handle = tokio::spawn({
@@ -74,14 +69,10 @@ async fn test_cors_enabled() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with CORS enabled (default)
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            cors_enabled: true,
-            cors_origins: vec!["*".to_string()],
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.cors_enabled = true;
+    config.server.api.cors_origins = vec!["*".to_string()];
+    let config = Arc::new(config);
 
     // Create router with CORS enabled
     let app = create_router(downloader, config);
@@ -116,13 +107,9 @@ async fn test_cors_disabled() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with CORS disabled
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            cors_enabled: false,
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.cors_enabled = false;
+    let config = Arc::new(config);
 
     // Create router with CORS disabled
     let app = create_router(downloader, config);
@@ -234,13 +221,9 @@ async fn test_authentication_with_api_key() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with API key authentication enabled
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            api_key: Some("test-secret-key".to_string()),
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("test-secret-key".to_string());
+    let config = Arc::new(config);
 
     // Create router with authentication
     let app = create_router(downloader, config);
@@ -299,13 +282,9 @@ async fn test_authentication_disabled_by_default() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with NO API key (default - authentication disabled)
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            api_key: None, // No authentication
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = None; // No authentication
+    let config = Arc::new(config);
 
     // Create router without authentication
     let app = create_router(downloader, config);
@@ -334,14 +313,10 @@ async fn test_server_starts_and_responds_to_health() {
     let addr = listener.local_addr().unwrap();
 
     // Spawn the API server on the random port
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            bind_address: addr,
-            api_key: None, // No authentication for test
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.bind_address = addr;
+    config.server.api.api_key = None; // No authentication for test
+    let config = Arc::new(config);
 
     let server_downloader = downloader.clone();
     let server_config = config.clone();
@@ -430,13 +405,9 @@ async fn test_swagger_ui_enabled() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with Swagger UI enabled (default)
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            swagger_ui: true,
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.swagger_ui = true;
+    let config = Arc::new(config);
 
     // Create the router with Swagger UI enabled
     let app = create_router(downloader, config);
@@ -486,13 +457,9 @@ async fn test_swagger_ui_disabled() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with Swagger UI disabled
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            swagger_ui: false,
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.swagger_ui = false;
+    let config = Arc::new(config);
 
     // Create the router with Swagger UI disabled
     let app = create_router(downloader, config);
@@ -527,13 +494,9 @@ async fn test_swagger_ui_shows_all_endpoints() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with Swagger UI enabled (default)
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            swagger_ui: true,
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.swagger_ui = true;
+    let config = Arc::new(config);
 
     // Create the router with Swagger UI enabled
     let app = create_router(downloader, config);
@@ -667,13 +630,9 @@ async fn test_swagger_ui_try_it_out_functionality() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with Swagger UI enabled
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            swagger_ui: true,
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.swagger_ui = true;
+    let config = Arc::new(config);
 
     // Create the router
     let app = create_router(downloader.clone(), config.clone());
@@ -1111,13 +1070,9 @@ async fn test_api_documentation_completeness() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Config with Swagger UI enabled (default)
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            swagger_ui: true,
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.swagger_ui = true;
+    let config = Arc::new(config);
 
     // Create the router with Swagger UI enabled
     let app = create_router(downloader, config);
@@ -1425,21 +1380,17 @@ async fn test_rate_limiting_returns_429_when_exceeded() {
     let addr = listener.local_addr().unwrap();
 
     // Create config with rate limiting ENABLED
-    let config = Arc::new(Config {
-        api: crate::config::ApiConfig {
-            bind_address: addr,
-            rate_limit: crate::config::RateLimitConfig {
-                enabled: true,
-                requests_per_second: 2, // Very low limit for testing
-                burst_size: 3,          // Allow 3 requests initially
-                exempt_paths: vec!["/health".to_string()],
-                exempt_ips: vec![],
-            },
-            api_key: None, // No authentication for test
-            ..Default::default()
-        },
-        ..(*downloader.config).clone()
-    });
+    let mut config = (*downloader.config).clone();
+    config.server.api.bind_address = addr;
+    config.server.api.rate_limit = crate::config::RateLimitConfig {
+        enabled: true,
+        requests_per_second: 2, // Very low limit for testing
+        burst_size: 3,          // Allow 3 requests initially
+        exempt_paths: vec!["/health".to_string()],
+        exempt_ips: vec![],
+    };
+    config.server.api.api_key = None; // No authentication for test
+    let config = Arc::new(config);
 
     // Spawn the API server
     let server_downloader = downloader.clone();

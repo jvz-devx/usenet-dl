@@ -22,9 +22,9 @@ async fn test_start_scheduler_with_rules() {
 
     // Create config with schedule rules
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        schedule_rules: vec![config::ScheduleRule {
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![config::ScheduleRule {
             name: "Test Rule".to_string(),
             days: vec![], // All days
             start_time: "09:00".to_string(),
@@ -34,6 +34,9 @@ async fn test_start_scheduler_with_rules() {
             },
             enabled: true,
         }],
+            categories: std::collections::HashMap::new(),
+        },
+        servers: vec![],
         ..Default::default()
     };
 
@@ -61,9 +64,9 @@ async fn test_start_scheduler_respects_shutdown() {
 
     // Create config with schedule rules
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        schedule_rules: vec![config::ScheduleRule {
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![config::ScheduleRule {
             name: "Test Rule".to_string(),
             days: vec![],
             start_time: "09:00".to_string(),
@@ -71,6 +74,9 @@ async fn test_start_scheduler_respects_shutdown() {
             action: config::ScheduleAction::Unlimited,
             enabled: true,
         }],
+            categories: std::collections::HashMap::new(),
+        },
+        servers: vec![],
         ..Default::default()
     };
 
@@ -78,7 +84,7 @@ async fn test_start_scheduler_respects_shutdown() {
 
     // Trigger shutdown before starting the task
     downloader
-        .accepting_new
+        .queue_state.accepting_new
         .store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Start scheduler

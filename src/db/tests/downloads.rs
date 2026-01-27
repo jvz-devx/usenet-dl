@@ -23,7 +23,7 @@ async fn test_insert_and_get_download() {
     };
 
     let id = db.insert_download(&new_download).await.unwrap();
-    assert!(id > 0);
+    assert!(id.0 > 0);
 
     // Get the download
     let download = db.get_download(id).await.unwrap();

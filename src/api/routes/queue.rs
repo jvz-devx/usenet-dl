@@ -96,7 +96,7 @@ pub async fn queue_stats(State(state): State<AppState>) -> Response {
             let speed_limit_bps = state.downloader.speed_limiter.get_limit();
             let accepting_new = state
                 .downloader
-                .accepting_new
+                .queue_state.accepting_new
                 .load(std::sync::atomic::Ordering::SeqCst);
 
             let stats = crate::types::QueueStats {

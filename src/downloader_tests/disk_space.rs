@@ -6,9 +6,9 @@ async fn test_check_disk_space_sufficient() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.download.download_dir = temp_dir.path().to_path_buf();
-    config.disk_space.enabled = true;
-    config.disk_space.min_free_space = 1024 * 1024; // 1 MB buffer
-    config.disk_space.size_multiplier = 2.5;
+    config.processing.disk_space.enabled = true;
+    config.processing.disk_space.min_free_space = 1024 * 1024; // 1 MB buffer
+    config.processing.disk_space.size_multiplier = 2.5;
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
 
@@ -28,7 +28,7 @@ async fn test_check_disk_space_disabled() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.download.download_dir = temp_dir.path().to_path_buf();
-    config.disk_space.enabled = false; // Disable checking
+    config.processing.disk_space.enabled = false; // Disable checking
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
 
@@ -48,14 +48,14 @@ async fn test_check_disk_space_insufficient() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.download.download_dir = temp_dir.path().to_path_buf();
-    config.disk_space.enabled = true;
+    config.processing.disk_space.enabled = true;
 
     // Get actual available space
     let available = crate::utils::get_available_space(&config.download.download_dir).unwrap();
 
     // Set min_free_space to require more than available
-    config.disk_space.min_free_space = available + 1024 * 1024 * 1024; // Available + 1 GB
-    config.disk_space.size_multiplier = 1.0;
+    config.processing.disk_space.min_free_space = available + 1024 * 1024 * 1024; // Available + 1 GB
+    config.processing.disk_space.size_multiplier = 1.0;
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
 
@@ -82,9 +82,9 @@ async fn test_check_disk_space_multiplier() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.download.download_dir = temp_dir.path().to_path_buf();
-    config.disk_space.enabled = true;
-    config.disk_space.min_free_space = 0; // No buffer for this test
-    config.disk_space.size_multiplier = 3.0; // 3x multiplier
+    config.processing.disk_space.enabled = true;
+    config.processing.disk_space.min_free_space = 0; // No buffer for this test
+    config.processing.disk_space.size_multiplier = 3.0; // 3x multiplier
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
 

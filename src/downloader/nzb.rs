@@ -7,6 +7,13 @@ use crate::utils::extract_filename_from_response;
 
 use super::UsenetDownloader;
 
+/// SQLite has a limit of ~999 variables per query. With 5 columns per article,
+/// we can insert at most 199 articles per batch (199 * 5 = 995 < 999).
+const SQLITE_BATCH_SIZE: usize = 199;
+
+/// Timeout for HTTP requests when fetching NZB files from URLs.
+const NZB_FETCH_TIMEOUT_SECS: u64 = 30;
+
 impl UsenetDownloader {
     /// Add an NZB to the download queue from raw bytes
     ///
@@ -51,6 +58,7 @@ impl UsenetDownloader {
     ///     Ok(())
     /// }
     /// ```
+    #[must_use]
     pub async fn add_nzb_content(
         &self,
         content: &[u8],
@@ -58,10 +66,57 @@ impl UsenetDownloader {
         options: DownloadOptions,
     ) -> Result<DownloadId> {
         // Check if accepting new downloads (reject during shutdown)
-        if !self.accepting_new.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.queue_state.accepting_new.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::ShuttingDown);
         }
 
+        // Parse and validate NZB, extract metadata
+        let (nzb, nzb_meta_name, nzb_password, nzb_hash) =
+            self.parse_and_validate_nzb(content, name).await?;
+
+        // Check for duplicates before proceeding
+        self.handle_duplicate_check(content, name).await?;
+
+        // Determine destination directory and post-processing mode from category
+        let (destination, post_process) =
+            self.resolve_destination_and_post_process(&options).await;
+
+        // Determine job name (for deobfuscation and duplicate detection)
+        // Use NZB meta title if available, otherwise the provided name
+        let job_name = nzb_meta_name.clone().unwrap_or_else(|| name.to_string());
+
+        // Merge NZB password with provided password (provided takes priority)
+        let final_password = options.password.clone().or(nzb_password);
+
+        // Create and insert download record
+        let download_id = self.create_download_record(
+            name,
+            &nzb,
+            nzb_meta_name,
+            nzb_hash,
+            job_name,
+            &options,
+            destination,
+            post_process,
+        ).await?;
+
+        // Insert all articles and cache password
+        self.insert_articles_and_password(&nzb, download_id, final_password).await?;
+
+        // Emit events, trigger webhooks, and add to queue
+        self.finalize_nzb_addition(download_id, name, &options).await?;
+
+        Ok(download_id)
+    }
+
+    /// Parse and validate NZB content, extract metadata
+    ///
+    /// Returns: (parsed NZB, meta name, password, hash)
+    async fn parse_and_validate_nzb(
+        &self,
+        content: &[u8],
+        _name: &str,
+    ) -> Result<(nntp_rs::Nzb, Option<String>, Option<String>, String)> {
         // Parse NZB content from bytes to string
         let nzb_string = String::from_utf8(content.to_vec())
             .map_err(|e| Error::InvalidNzb(format!("NZB content is not valid UTF-8: {}", e)))?;
@@ -91,11 +146,11 @@ impl UsenetDownloader {
         let hash_result = hasher.finalize();
         let nzb_hash = format!("{:x}", hash_result);
 
-        // Determine job name (for deobfuscation and duplicate detection)
-        // Use NZB meta title if available, otherwise the provided name
-        let job_name = nzb_meta_name.clone().unwrap_or_else(|| name.to_string());
+        Ok((nzb, nzb_meta_name, nzb_password, nzb_hash))
+    }
 
-        // Check for duplicates before proceeding
+    /// Check for duplicates and handle according to configuration
+    async fn handle_duplicate_check(&self, content: &[u8], name: &str) -> Result<()> {
         if let Some(dup_info) = self.check_duplicate(content, name).await {
             // Emit warning event about duplicate
             self.emit_event(Event::DuplicateDetected {
@@ -106,7 +161,7 @@ impl UsenetDownloader {
             });
 
             // Handle based on configured action
-            match self.config.duplicate.action {
+            match self.config.processing.duplicate.action {
                 crate::config::DuplicateAction::Block => {
                     return Err(Error::Duplicate(format!(
                         "Duplicate download detected: '{}' (method: {:?}, existing ID: {}, existing name: '{}')",
@@ -123,43 +178,47 @@ impl UsenetDownloader {
                 }
             }
         }
+        Ok(())
+    }
 
-        // Determine destination directory
-        let destination = if let Some(dest) = options.destination {
-            dest
-        } else if let Some(category) = &options.category {
-            // Check if category has custom destination
-            let categories = self.categories.read().await;
+    /// Determine destination directory and post-processing mode from category
+    ///
+    /// Returns: (destination, post_process)
+    async fn resolve_destination_and_post_process(
+        &self,
+        options: &DownloadOptions,
+    ) -> (std::path::PathBuf, crate::config::PostProcess) {
+        // Hold the read lock once to get both values (more efficient than two separate lock acquisitions)
+        if let Some(category) = &options.category {
+            let categories = self.runtime_config.categories.read().await;
             if let Some(cat_config) = categories.get(category) {
-                cat_config.destination.clone()
-            } else {
-                self.config.download.download_dir.clone()
+                let dest = options.destination.clone().unwrap_or_else(|| cat_config.destination.clone());
+                let pp = options.post_process.unwrap_or_else(|| {
+                    cat_config.post_process.unwrap_or(self.config.download.default_post_process)
+                });
+                return (dest, pp);
             }
-        } else {
-            self.config.download.download_dir.clone()
-        };
+            // Category not found, fall through to defaults
+        }
+        // No category specified or category not found, use provided options or defaults
+        let dest = options.destination.clone().unwrap_or_else(|| self.config.download.download_dir.clone());
+        let pp = options.post_process.unwrap_or(self.config.download.default_post_process);
+        (dest, pp)
+    }
 
-        // Determine post-processing mode
-        let post_process = if let Some(pp) = options.post_process {
-            pp
-        } else if let Some(category) = &options.category {
-            // Check if category has custom post-processing
-            let categories = self.categories.read().await;
-            if let Some(cat_config) = categories.get(category) {
-                cat_config
-                    .post_process
-                    .unwrap_or(self.config.download.default_post_process)
-            } else {
-                self.config.download.default_post_process
-            }
-        } else {
-            self.config.download.default_post_process
-        };
-
-        // Merge NZB password with provided password (provided takes priority)
-        let final_password = options.password.or(nzb_password);
-
-        // Create download record
+    /// Create download record and insert into database
+    #[allow(clippy::too_many_arguments)]
+    async fn create_download_record(
+        &self,
+        name: &str,
+        nzb: &nntp_rs::Nzb,
+        nzb_meta_name: Option<String>,
+        nzb_hash: String,
+        job_name: String,
+        options: &DownloadOptions,
+        destination: std::path::PathBuf,
+        post_process: crate::config::PostProcess,
+    ) -> Result<DownloadId> {
         let new_download = db::NewDownload {
             name: name.to_string(),
             nzb_path: format!("memory:{}", name), // Stored in memory, not from file
@@ -171,14 +230,20 @@ impl UsenetDownloader {
             post_process: post_process.to_i32(),
             priority: options.priority as i32,
             status: Status::Queued.to_i32(),
-            size_bytes,
+            size_bytes: nzb.total_bytes() as i64,
         };
 
-        // Insert download into database
-        let download_id = self.db.insert_download(&new_download).await?;
+        self.db.insert_download(&new_download).await
+    }
 
+    /// Insert all articles (segments) and cache password if provided
+    async fn insert_articles_and_password(
+        &self,
+        nzb: &nntp_rs::Nzb,
+        download_id: DownloadId,
+        password: Option<String>,
+    ) -> Result<()> {
         // Insert all articles (segments) for resume support (batch insert for performance)
-        // SQLite has a limit of ~999 variables per query, so we chunk (5 columns per article = 199 max)
         let articles: Vec<db::NewArticle> = nzb
             .files
             .iter()
@@ -191,15 +256,25 @@ impl UsenetDownloader {
                 })
             })
             .collect();
-        for chunk in articles.chunks(199) {
+        for chunk in articles.chunks(SQLITE_BATCH_SIZE) {
             self.db.insert_articles_batch(chunk).await?;
         }
 
         // Cache password if provided
-        if let Some(password) = final_password {
+        if let Some(password) = password {
             self.db.set_correct_password(download_id, &password).await?;
         }
 
+        Ok(())
+    }
+
+    /// Emit events, trigger webhooks, and add to queue
+    async fn finalize_nzb_addition(
+        &self,
+        download_id: DownloadId,
+        name: &str,
+        options: &DownloadOptions,
+    ) -> Result<()> {
         // Emit Queued event
         self.emit_event(Event::Queued {
             id: download_id,
@@ -207,20 +282,20 @@ impl UsenetDownloader {
         });
 
         // Trigger webhooks for queued event
-        self.trigger_webhooks(
-            crate::config::WebhookEvent::OnQueued,
+        self.trigger_webhooks(super::webhooks::TriggerWebhooksParams {
+            event_type: crate::config::WebhookEvent::OnQueued,
             download_id,
-            name.to_string(),
-            options.category.clone(),
-            "queued".to_string(),
-            None,
-            None,
-        );
+            name: name.to_string(),
+            category: options.category.clone(),
+            status: "queued".to_string(),
+            destination: None,
+            error: None,
+        });
 
         // Add to priority queue for processing
         self.add_to_queue(download_id).await?;
 
-        Ok(download_id)
+        Ok(())
     }
 
     /// Add an NZB to the download queue from a file
@@ -254,10 +329,11 @@ impl UsenetDownloader {
     /// Add NZB from URL
     ///
     /// This method fetches an NZB file from a given HTTP(S) URL and adds it to the queue.
+    #[must_use]
     pub async fn add_nzb_url(&self, url: &str, options: DownloadOptions) -> Result<DownloadId> {
         // Create HTTP client with timeout to prevent hanging
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(NZB_FETCH_TIMEOUT_SECS))
             .build()
             .map_err(|e| {
                 Error::Io(std::io::Error::new(
@@ -270,8 +346,8 @@ impl UsenetDownloader {
         let response = client.get(url).send().await.map_err(|e| {
             let error_msg = if e.is_timeout() {
                 format!(
-                    "Timeout fetching NZB from URL '{}' (exceeded 30 seconds)",
-                    url
+                    "Timeout fetching NZB from URL '{}' (exceeded {} seconds)",
+                    url, NZB_FETCH_TIMEOUT_SECS
                 )
             } else if e.is_connect() {
                 format!("Connection failed for URL '{}': {}", url, e)
@@ -323,12 +399,12 @@ impl UsenetDownloader {
         name: &str,
     ) -> Option<DuplicateInfo> {
         // Early return if duplicate detection is disabled
-        if !self.config.duplicate.enabled {
+        if !self.config.processing.duplicate.enabled {
             return None;
         }
 
         // Check each configured detection method in order
-        for method in &self.config.duplicate.methods {
+        for method in &self.config.processing.duplicate.methods {
             match method {
                 crate::config::DuplicateMethod::NzbHash => {
                     // Calculate SHA256 hash of NZB content
@@ -342,7 +418,7 @@ impl UsenetDownloader {
                     if let Ok(Some(existing)) = self.db.find_by_nzb_hash(&hash).await {
                         return Some(DuplicateInfo {
                             method: *method,
-                            existing_id: existing.id,
+                            existing_id: existing.id.into(),
                             existing_name: existing.name,
                         });
                     }
@@ -352,7 +428,7 @@ impl UsenetDownloader {
                     if let Ok(Some(existing)) = self.db.find_by_name(name).await {
                         return Some(DuplicateInfo {
                             method: *method,
-                            existing_id: existing.id,
+                            existing_id: existing.id.into(),
                             existing_name: existing.name,
                         });
                     }
@@ -363,7 +439,7 @@ impl UsenetDownloader {
                     if let Ok(Some(existing)) = self.db.find_by_job_name(&job_name).await {
                         return Some(DuplicateInfo {
                             method: *method,
-                            existing_id: existing.id,
+                            existing_id: existing.id.into(),
                             existing_name: existing.name,
                         });
                     }
@@ -383,13 +459,13 @@ impl UsenetDownloader {
     /// - A minimum free space buffer (default 1GB) to prevent filling the disk
     pub(crate) async fn check_disk_space(&self, size_bytes: i64) -> Result<()> {
         // Skip check if disabled
-        if !self.config.disk_space.enabled {
+        if !self.config.processing.disk_space.enabled {
             return Ok(());
         }
 
         // Calculate required space: download size × multiplier + buffer
-        let required = (size_bytes as f64 * self.config.disk_space.size_multiplier) as u64;
-        let required_with_buffer = required + self.config.disk_space.min_free_space;
+        let required = (size_bytes as f64 * self.config.processing.disk_space.size_multiplier) as u64;
+        let required_with_buffer = required + self.config.processing.disk_space.min_free_space;
 
         // Determine path to check - use download_dir if it exists, otherwise check parent
         let check_path = if self.config.download.download_dir.exists() {

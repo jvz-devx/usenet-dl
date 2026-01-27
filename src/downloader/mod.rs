@@ -9,19 +9,30 @@
 //! - [`lifecycle`] - Startup and shutdown coordination
 //! - [`nzb`] - NZB file parsing and ingestion
 //! - [`webhooks`] - Webhook and script notifications
-//! - [`tasks`] - Background task orchestration
+//! - [`tasks`] - Legacy download task spawning
+//! - [`queue_processor`] - Queue processing and orchestration
+//! - [`download_task`] - Core download execution
+//! - [`background_tasks`] - Progress reporting and batch updates
+//! - [`services`] - Background service starters
 //! - [`post_process`] - Post-processing pipeline entry
 
+mod background_tasks;
 mod config_ops;
 mod control;
+mod download_task;
 mod lifecycle;
 mod nzb;
 mod post_process;
 mod queue;
+mod queue_processor;
 mod rss;
 mod server;
+mod services;
 mod tasks;
 mod webhooks;
+
+// Re-export parameter structs for testing
+pub use webhooks::{TriggerScriptsParams, TriggerWebhooksParams};
 
 use crate::config::Config;
 use crate::db::Database;
@@ -31,19 +42,9 @@ use crate::post_processing;
 use crate::speed_limiter;
 use crate::types::{DownloadId, Priority};
 
-/// Main downloader instance (cloneable - all fields are Arc-wrapped)
+/// Queue and download state management
 #[derive(Clone)]
-pub struct UsenetDownloader {
-    /// Database instance for persistence (wrapped in Arc for sharing across tasks)
-    /// Public for integration tests to query download status
-    pub db: std::sync::Arc<Database>,
-    /// Event broadcast channel sender (multiple subscribers supported)
-    pub(crate) event_tx: tokio::sync::broadcast::Sender<crate::types::Event>,
-    /// Configuration (wrapped in Arc for sharing across tasks)
-    /// Made public for access by background tasks like RSS scheduler
-    pub(crate) config: std::sync::Arc<Config>,
-    /// NNTP connection pools (one per server, wrapped in Arc for sharing across tasks)
-    pub(crate) nntp_pools: std::sync::Arc<Vec<nntp_rs::NntpPool>>,
+pub(crate) struct QueueState {
     /// Priority queue for managing download order (protected by Mutex)
     pub(crate) queue:
         std::sync::Arc<tokio::sync::Mutex<std::collections::BinaryHeap<QueuedDownload>>>,
@@ -55,15 +56,13 @@ pub struct UsenetDownloader {
             std::collections::HashMap<DownloadId, tokio_util::sync::CancellationToken>,
         >,
     >,
-    /// Global speed limiter shared across all downloads (token bucket algorithm)
-    pub(crate) speed_limiter: speed_limiter::SpeedLimiter,
     /// Flag to indicate whether new downloads are accepted (set to false during shutdown)
-    /// Made public for access by background tasks like RSS scheduler
     pub(crate) accepting_new: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Post-processing pipeline executor
-    pub(crate) post_processor: std::sync::Arc<post_processing::PostProcessor>,
-    /// Parity handler for PAR2 verification and repair (trait object for pluggable implementations)
-    pub(crate) parity_handler: std::sync::Arc<dyn ParityHandler>,
+}
+
+/// Runtime-mutable configuration (separate from static config)
+#[derive(Clone)]
+pub(crate) struct RuntimeConfig {
     /// Runtime-mutable categories (separate from config for dynamic updates)
     pub(crate) categories: std::sync::Arc<
         tokio::sync::RwLock<std::collections::HashMap<String, crate::config::CategoryConfig>>,
@@ -73,6 +72,37 @@ pub struct UsenetDownloader {
         std::sync::Arc<tokio::sync::RwLock<Vec<crate::config::ScheduleRule>>>,
     /// Next schedule rule ID counter
     pub(crate) next_schedule_rule_id: std::sync::Arc<std::sync::atomic::AtomicI64>,
+}
+
+/// Post-processing and parity handling
+#[derive(Clone)]
+pub(crate) struct ProcessingPipeline {
+    /// Post-processing pipeline executor
+    pub(crate) post_processor: std::sync::Arc<post_processing::PostProcessor>,
+    /// Parity handler for PAR2 verification and repair (trait object for pluggable implementations)
+    pub(crate) parity_handler: std::sync::Arc<dyn ParityHandler>,
+}
+
+/// Main downloader instance (cloneable - all fields are Arc-wrapped)
+#[derive(Clone)]
+pub struct UsenetDownloader {
+    /// Database instance for persistence (wrapped in Arc for sharing across tasks)
+    /// Public for integration tests to query download status
+    pub db: std::sync::Arc<Database>,
+    /// Event broadcast channel sender (multiple subscribers supported)
+    pub(crate) event_tx: tokio::sync::broadcast::Sender<crate::types::Event>,
+    /// Configuration (wrapped in Arc for sharing across tasks)
+    pub(crate) config: std::sync::Arc<Config>,
+    /// NNTP connection pools (one per server, wrapped in Arc for sharing across tasks)
+    pub(crate) nntp_pools: std::sync::Arc<Vec<nntp_rs::NntpPool>>,
+    /// Global speed limiter shared across all downloads (token bucket algorithm)
+    pub(crate) speed_limiter: speed_limiter::SpeedLimiter,
+    /// Queue and download state management
+    pub(crate) queue_state: QueueState,
+    /// Runtime-mutable configuration
+    pub(crate) runtime_config: RuntimeConfig,
+    /// Post-processing and parity handling
+    pub(crate) processing: ProcessingPipeline,
 }
 
 /// Internal struct representing a download in the priority queue
@@ -114,7 +144,7 @@ impl UsenetDownloader {
     /// - Sets up the event broadcast channel
     pub async fn new(config: Config) -> Result<Self> {
         // Initialize database
-        let db = Database::new(&config.database_path).await?;
+        let db = Database::new(&config.persistence.database_path).await?;
 
         // Mark that we're starting up (for unclean shutdown detection)
         db.set_clean_start().await?;
@@ -151,11 +181,11 @@ impl UsenetDownloader {
         let config_arc = std::sync::Arc::new(config.clone());
 
         // Initialize runtime-mutable categories from config
-        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.categories.clone()));
+        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.persistence.categories.clone()));
 
         // Initialize runtime-mutable schedule rules from config
         let schedule_rules =
-            std::sync::Arc::new(tokio::sync::RwLock::new(config.schedule_rules.clone()));
+            std::sync::Arc::new(tokio::sync::RwLock::new(config.persistence.schedule_rules.clone()));
 
         // Initialize the next ID counter (0 since config rules don't have IDs yet)
         let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
@@ -195,21 +225,36 @@ impl UsenetDownloader {
             db_arc.clone(),
         ));
 
+        // Group queue and download state
+        let queue_state = QueueState {
+            queue,
+            concurrent_limit,
+            active_downloads,
+            accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+
+        // Group runtime configuration
+        let runtime_config = RuntimeConfig {
+            categories,
+            schedule_rules,
+            next_schedule_rule_id,
+        };
+
+        // Group post-processing pipeline
+        let processing = ProcessingPipeline {
+            post_processor,
+            parity_handler,
+        };
+
         let downloader = Self {
             db: db_arc,
             event_tx,
             config: config_arc,
             nntp_pools: std::sync::Arc::new(nntp_pools),
-            queue,
-            concurrent_limit,
-            active_downloads,
             speed_limiter,
-            accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-            post_processor,
-            parity_handler,
-            categories,
-            schedule_rules,
-            next_schedule_rule_id,
+            queue_state,
+            runtime_config,
+            processing,
         };
 
         // Restore any incomplete downloads from database (from previous session)
@@ -287,8 +332,8 @@ impl UsenetDownloader {
     /// Returns information about what post-processing features are currently available
     /// based on the configuration and available external tools.
     pub fn capabilities(&self) -> crate::types::Capabilities {
-        let parity_caps = self.parity_handler.capabilities();
-        let handler_name = self.parity_handler.name().to_string();
+        let parity_caps = self.processing.parity_handler.capabilities();
+        let handler_name = self.processing.parity_handler.name().to_string();
 
         crate::types::Capabilities {
             parity: crate::types::ParityCapabilitiesInfo {

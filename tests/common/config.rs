@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 use usenet_dl::{Config, ServerConfig, UsenetDownloader};
-use usenet_dl::config::DownloadConfig;
+use usenet_dl::config::{DownloadConfig, PersistenceConfig};
 
 /// Error type for test configuration
 #[derive(Debug)]
@@ -85,7 +85,11 @@ pub async fn create_live_downloader() -> Result<(Arc<UsenetDownloader>, TempDir)
 
     let config = Config {
         servers: vec![server],
-        database_path: temp_dir.path().join("test.db"),
+        persistence: PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: DownloadConfig {
             download_dir: temp_dir.path().join("downloads"),
             temp_dir: temp_dir.path().join("temp"),
@@ -110,7 +114,11 @@ pub async fn create_downloader_bad_auth() -> Result<(Arc<UsenetDownloader>, Temp
 
     let config = Config {
         servers: vec![server],
-        database_path: temp_dir.path().join("test.db"),
+        persistence: PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: DownloadConfig {
             download_dir: temp_dir.path().join("downloads"),
             temp_dir: temp_dir.path().join("temp"),

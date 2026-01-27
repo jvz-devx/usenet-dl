@@ -11,7 +11,11 @@ async fn test_queue_persistence_enables_restore() {
 
     // Create first downloader instance
     let config1 = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: config::DownloadConfig {
             temp_dir: temp_dir.path().join("temp"),
             download_dir: temp_dir.path().join("downloads"),
@@ -53,7 +57,11 @@ async fn test_queue_persistence_enables_restore() {
     drop(downloader); // Close first instance
 
     let config2 = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: config::DownloadConfig {
             temp_dir: temp_dir.path().join("temp"),
             download_dir: temp_dir.path().join("downloads"),
@@ -74,15 +82,15 @@ async fn test_queue_persistence_enables_restore() {
 
     let incomplete_ids: Vec<i64> = incomplete.iter().map(|d| d.id).collect();
     assert!(
-        incomplete_ids.contains(&id1),
+        incomplete_ids.contains(&id1.0),
         "Should include Queued download"
     );
     assert!(
-        incomplete_ids.contains(&id2),
+        incomplete_ids.contains(&id2.0),
         "Should include Processing download"
     );
     assert!(
-        !incomplete_ids.contains(&id3),
+        !incomplete_ids.contains(&id3.0),
         "Should NOT include Complete download"
     );
 
@@ -227,7 +235,7 @@ async fn test_resume_download_nonexistent() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Try to resume non-existent download
-    let result = downloader.resume_download(99999).await;
+    let result = downloader.resume_download(DownloadId(99999)).await;
 
     // Should succeed (get_pending_articles returns empty Vec for non-existent downloads)
     // This is acceptable behavior - resume_download is idempotent
@@ -237,7 +245,7 @@ async fn test_resume_download_nonexistent() {
     );
 
     // Verify no status was changed (download doesn't exist in database)
-    let download = downloader.db.get_download(99999).await.unwrap();
+    let download = downloader.db.get_download(DownloadId(99999)).await.unwrap();
     assert!(download.is_none(), "Download should not exist");
 }
 
@@ -293,7 +301,7 @@ async fn test_restore_queue_with_no_incomplete_downloads() {
     downloader.restore_queue().await.unwrap();
 
     // Queue should remain empty
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(
         queue_size, 0,
         "Queue should be empty when no incomplete downloads"
@@ -330,21 +338,21 @@ async fn test_restore_queue_with_queued_downloads() {
         .unwrap();
 
     // Clear the queue (simulating a restart)
-    downloader.queue.lock().await.clear();
+    downloader.queue_state.queue.lock().await.clear();
 
     // Restore queue
     downloader.restore_queue().await.unwrap();
 
     // Queue should have both downloads restored
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(queue_size, 2, "Queue should have 2 downloads restored");
 
     // Verify priority ordering (High priority should be first)
-    let next = downloader.queue.lock().await.pop().unwrap();
+    let next = downloader.queue_state.queue.lock().await.pop().unwrap();
     assert_eq!(next.id, id2, "High priority download should be first");
     assert_eq!(next.priority, Priority::High);
 
-    let next = downloader.queue.lock().await.pop().unwrap();
+    let next = downloader.queue_state.queue.lock().await.pop().unwrap();
     assert_eq!(next.id, id1, "Low priority download should be second");
     assert_eq!(next.priority, Priority::Low);
 }
@@ -367,7 +375,7 @@ async fn test_restore_queue_with_downloading_status() {
         .unwrap();
 
     // Clear the queue
-    downloader.queue.lock().await.clear();
+    downloader.queue_state.queue.lock().await.clear();
 
     // Restore queue
     downloader.restore_queue().await.unwrap();
@@ -386,7 +394,7 @@ async fn test_restore_queue_with_downloading_status() {
     );
 
     // Queue should contain the download
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(queue_size, 1, "Queue should have 1 download");
 }
 
@@ -422,7 +430,7 @@ async fn test_restore_queue_with_processing_status() {
         .unwrap();
 
     // Clear the queue
-    downloader.queue.lock().await.clear();
+    downloader.queue_state.queue.lock().await.clear();
 
     // Restore queue
     downloader.restore_queue().await.unwrap();
@@ -458,13 +466,13 @@ async fn test_restore_queue_skips_completed_downloads() {
         .unwrap();
 
     // Clear the queue
-    downloader.queue.lock().await.clear();
+    downloader.queue_state.queue.lock().await.clear();
 
     // Restore queue
     downloader.restore_queue().await.unwrap();
 
     // Queue should be empty (completed downloads not restored)
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(
         queue_size, 0,
         "Queue should be empty (completed downloads not restored)"
@@ -488,13 +496,13 @@ async fn test_restore_queue_skips_failed_downloads() {
         .unwrap();
 
     // Clear the queue
-    downloader.queue.lock().await.clear();
+    downloader.queue_state.queue.lock().await.clear();
 
     // Restore queue
     downloader.restore_queue().await.unwrap();
 
     // Queue should be empty (failed downloads not restored)
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(
         queue_size, 0,
         "Queue should be empty (failed downloads not restored)"
@@ -514,13 +522,13 @@ async fn test_restore_queue_skips_paused_downloads() {
     downloader.pause(download_id).await.unwrap();
 
     // Clear the queue
-    downloader.queue.lock().await.clear();
+    downloader.queue_state.queue.lock().await.clear();
 
     // Restore queue
     downloader.restore_queue().await.unwrap();
 
     // Queue should be empty (paused downloads not restored - user explicitly paused them)
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(
         queue_size, 0,
         "Queue should be empty (paused downloads not restored)"
@@ -549,7 +557,11 @@ async fn test_restore_queue_called_on_startup() {
     // Create first downloader instance and add downloads
     {
         let config = Config {
+            persistence: crate::config::PersistenceConfig {
             database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -582,7 +594,11 @@ async fn test_restore_queue_called_on_startup() {
 
     // Create new downloader instance (simulating restart)
     let config = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
         download: config::DownloadConfig {
             max_concurrent_downloads: 3,
@@ -593,7 +609,7 @@ async fn test_restore_queue_called_on_startup() {
     let downloader = UsenetDownloader::new(config).await.unwrap();
 
     // Queue should be automatically restored (new() calls restore_queue())
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(queue_size, 2, "Queue should be restored on startup");
 }
 
@@ -618,7 +634,11 @@ async fn test_resume_after_simulated_crash() {
     // Simulate crash scenario
     {
         let config = Config {
+            persistence: crate::config::PersistenceConfig {
             database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -682,7 +702,11 @@ async fn test_resume_after_simulated_crash() {
 
     // Simulate restart by creating a new downloader instance
     let config = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
         download: config::DownloadConfig {
             max_concurrent_downloads: 3,
@@ -720,7 +744,7 @@ async fn test_resume_after_simulated_crash() {
     );
 
     // Queue should contain the download
-    let queue_size = downloader.queue.lock().await.len();
+    let queue_size = downloader.queue_state.queue.lock().await.len();
     assert_eq!(queue_size, 1, "Queue should have 1 download after restore");
 
     // Verify that only pending articles remain
@@ -770,14 +794,14 @@ async fn test_shutdown_with_active_downloads() {
 
     // Simulate some active downloads by adding cancellation tokens
     {
-        let mut active = downloader.active_downloads.lock().await;
-        active.insert(1, tokio_util::sync::CancellationToken::new());
-        active.insert(2, tokio_util::sync::CancellationToken::new());
+        let mut active = downloader.queue_state.active_downloads.lock().await;
+        active.insert(DownloadId(1), tokio_util::sync::CancellationToken::new());
+        active.insert(DownloadId(2), tokio_util::sync::CancellationToken::new());
     }
 
     // Verify we have active downloads
     {
-        let active = downloader.active_downloads.lock().await;
+        let active = downloader.queue_state.active_downloads.lock().await;
         assert_eq!(active.len(), 2);
     }
 
@@ -792,7 +816,7 @@ async fn test_shutdown_with_active_downloads() {
     // Verify tokens were cancelled (active_downloads map should still contain them,
     // but they should be in cancelled state)
     {
-        let active = downloader.active_downloads.lock().await;
+        let active = downloader.queue_state.active_downloads.lock().await;
         for (_id, token) in active.iter() {
             assert!(
                 token.is_cancelled(),
@@ -810,16 +834,16 @@ async fn test_shutdown_waits_for_completion() {
     // Add a download token, then remove it after a delay to simulate completion
     let token = tokio_util::sync::CancellationToken::new();
     {
-        let mut active = downloader.active_downloads.lock().await;
-        active.insert(1, token.clone());
+        let mut active = downloader.queue_state.active_downloads.lock().await;
+        active.insert(DownloadId(1), token.clone());
     }
 
     // Spawn a task that removes the download after 500ms (simulating completion)
-    let active_downloads_clone = downloader.active_downloads.clone();
+    let active_downloads_clone = downloader.queue_state.active_downloads.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let mut active = active_downloads_clone.lock().await;
-        active.remove(&1);
+        active.remove(&DownloadId(1));
     });
 
     let start = std::time::Instant::now();
@@ -857,7 +881,7 @@ async fn test_shutdown_rejects_new_downloads() {
     // Initially, should accept new downloads
     assert!(
         downloader
-            .accepting_new
+            .queue_state.accepting_new
             .load(std::sync::atomic::Ordering::SeqCst),
         "Should accept new downloads initially"
     );
@@ -887,7 +911,7 @@ async fn test_shutdown_rejects_new_downloads() {
     // After shutdown, accepting_new should be false
     assert!(
         !downloader
-            .accepting_new
+            .queue_state.accepting_new
             .load(std::sync::atomic::Ordering::SeqCst),
         "Should not accept new downloads after shutdown"
     );
@@ -924,10 +948,10 @@ async fn test_pause_graceful_all() {
     let token3 = tokio_util::sync::CancellationToken::new();
 
     {
-        let mut active = downloader.active_downloads.lock().await;
-        active.insert(1, token1.clone());
-        active.insert(2, token2.clone());
-        active.insert(3, token3.clone());
+        let mut active = downloader.queue_state.active_downloads.lock().await;
+        active.insert(DownloadId(1), token1.clone());
+        active.insert(DownloadId(2), token2.clone());
+        active.insert(DownloadId(3), token3.clone());
     }
 
     // Verify tokens are not cancelled initially
@@ -963,7 +987,7 @@ async fn test_pause_graceful_all() {
 
     // Verify downloads are still in active_downloads map (they clean up when tasks complete)
     {
-        let active = downloader.active_downloads.lock().await;
+        let active = downloader.queue_state.active_downloads.lock().await;
         assert_eq!(active.len(), 3, "Downloads should still be in active map");
     }
 }
@@ -1143,7 +1167,7 @@ async fn test_persist_all_state_preserves_active_downloads() {
 
     // Add it to active_downloads map (simulating it's actually running)
     {
-        let mut active = downloader.active_downloads.lock().await;
+        let mut active = downloader.queue_state.active_downloads.lock().await;
         active.insert(id, tokio_util::sync::CancellationToken::new());
     }
 
@@ -1263,7 +1287,11 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
     // Part 1: Create downloader, add download, and perform graceful shutdown
     {
         let config = Config {
+            persistence: crate::config::PersistenceConfig {
             database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -1362,7 +1390,11 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
 
         // Now create the downloader (which will call set_clean_start() internally)
         let config = Config {
+            persistence: crate::config::PersistenceConfig {
             database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,

@@ -324,7 +324,7 @@ mod tests {
     async fn create_test_downloader() -> Arc<UsenetDownloader> {
         let temp_dir = TempDir::new().unwrap();
         let mut config = Config::default();
-        config.database_path = temp_dir.path().join("test.db");
+        config.persistence.database_path = temp_dir.path().join("test.db");
         config.download.download_dir = temp_dir.path().join("downloads");
         config.download.temp_dir = temp_dir.path().join("temp");
 
@@ -412,7 +412,7 @@ mod tests {
         std::fs::create_dir_all(&watch_path).unwrap();
 
         let mut config = Config::default();
-        config.database_path = temp_dir.path().join("test.db");
+        config.persistence.database_path = temp_dir.path().join("test.db");
         config.download.download_dir = temp_dir.path().join("downloads");
         config.download.temp_dir = temp_dir.path().join("temp");
 

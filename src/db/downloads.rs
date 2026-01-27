@@ -8,6 +8,7 @@ use super::{Database, Download, NewDownload};
 
 impl Database {
     /// Insert a new download record
+    #[must_use]
     pub async fn insert_download(&self, download: &NewDownload) -> Result<DownloadId> {
         let now = chrono::Utc::now().timestamp();
 
@@ -45,7 +46,7 @@ impl Database {
             )))
         })?;
 
-        Ok(result.last_insert_rowid())
+        Ok(DownloadId(result.last_insert_rowid()))
     }
 
     /// Get a download by ID

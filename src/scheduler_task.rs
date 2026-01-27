@@ -73,7 +73,7 @@ impl SchedulerTask {
     ///
     /// This runs in a loop checking schedule rules every minute.
     /// The task will:
-    /// 1. Check if shutdown was requested (via downloader.accepting_new flag)
+    /// 1. Check if shutdown was requested (via downloader.queue_state.accepting_new flag)
     /// 2. Get current time and evaluate schedule rules
     /// 3. Apply the appropriate action if a rule matches
     /// 4. Sleep for 1 minute before the next check
@@ -88,7 +88,7 @@ impl SchedulerTask {
 
         loop {
             // Check for shutdown signal via downloader's accepting_new flag
-            if !self.downloader.accepting_new.load(Ordering::SeqCst) {
+            if !self.downloader.queue_state.accepting_new.load(Ordering::SeqCst) {
                 info!("Scheduler task shutting down");
                 break;
             }
@@ -173,10 +173,8 @@ mod tests {
 
     async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
         let temp_dir = tempdir().unwrap();
-        let config = Config {
-            database_path: temp_dir.path().join("test.db"),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.persistence.database_path = temp_dir.path().join("test.db");
 
         let downloader = UsenetDownloader::new(config)
             .await
@@ -205,7 +203,7 @@ mod tests {
         let downloader_arc = Arc::new(downloader);
 
         // Set shutdown signal immediately
-        downloader_arc.accepting_new.store(false, Ordering::SeqCst);
+        downloader_arc.queue_state.accepting_new.store(false, Ordering::SeqCst);
 
         let task = SchedulerTask::new(downloader_arc.clone(), Arc::new(scheduler));
 
@@ -236,7 +234,7 @@ mod tests {
             .unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
 
         let rule = ScheduleRule {
-            id: 1,
+            id: crate::scheduler::RuleId(1),
             name: "Test Speed Limit".into(),
             days: vec![current_weekday],
             start_time,
@@ -310,7 +308,7 @@ mod tests {
         assert_eq!(scheduler_arc.rules().len(), 0);
 
         // Set shutdown signal immediately
-        downloader_arc.accepting_new.store(false, Ordering::SeqCst);
+        downloader_arc.queue_state.accepting_new.store(false, Ordering::SeqCst);
 
         let task = SchedulerTask::new(downloader_arc.clone(), scheduler_arc.clone());
 

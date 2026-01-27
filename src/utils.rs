@@ -32,6 +32,7 @@ const MAX_RENAME_ATTEMPTS: u32 = 9999;
 /// // If /tmp/movie.mkv exists, returns /tmp/movie (1).mkv
 /// // If that exists too, returns /tmp/movie (2).mkv, etc.
 /// ```
+#[must_use]
 pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathBuf> {
     match action {
         FileCollisionAction::Overwrite => {
@@ -117,6 +118,7 @@ pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathB
 /// assert!(is_sample(Path::new("/downloads/Movie/movie-sample.mkv")));
 /// assert!(!is_sample(Path::new("/downloads/Movie/movie.mkv")));
 /// ```
+#[must_use]
 pub fn is_sample(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -247,6 +249,7 @@ pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -
 /// let available = get_available_space(Path::new("/downloads"))?;
 /// println!("Available space: {} GB", available / (1024 * 1024 * 1024));
 /// ```
+#[must_use]
 pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
     #[cfg(unix)]
     {

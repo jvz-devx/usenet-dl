@@ -28,7 +28,7 @@ async fn test_get_config_endpoint() {
 
     // DO NOT add an API key - we want to test without authentication
     // (authentication is tested separately in test_authentication_enabled)
-    config.api.api_key = None;
+    config.server.api.api_key = None;
 
     // Create a new downloader with the modified config
     let downloader = Arc::new(crate::UsenetDownloader::new(config).await.unwrap());
@@ -81,7 +81,7 @@ async fn test_get_config_endpoint() {
 
     // Verify API key is None (we didn't set one to avoid auth issues in test)
     assert!(
-        returned_config.api.api_key.is_none(),
+        returned_config.server.api.api_key.is_none(),
         "API key should be None for this test"
     );
     println!("    ✓ API key field is correctly None (we didn't set one)");

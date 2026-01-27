@@ -81,6 +81,7 @@ pub async fn update_schedule_rule(
     Path(id): Path<i64>,
     Json(rule): Json<crate::config::ScheduleRule>,
 ) -> impl IntoResponse {
+    let id = crate::scheduler::RuleId::from(id);
     if chrono::NaiveTime::parse_from_str(&rule.start_time, "%H:%M").is_err() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": {"code": "invalid_input", "message": format!("Invalid start_time format: '{}'. Expected HH:MM", rule.start_time)}}))).into_response();
     }
@@ -114,6 +115,7 @@ pub async fn delete_schedule_rule(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
+    let id = crate::scheduler::RuleId::from(id);
     match state.downloader.remove_schedule_rule(id).await {
         true => StatusCode::NO_CONTENT.into_response(),
         false => (

@@ -73,7 +73,7 @@ async fn test_pause_nonexistent_download() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Try to pause download that doesn't exist
-    let result = downloader.pause(999).await;
+    let result = downloader.pause(DownloadId(999)).await;
     assert!(result.is_err());
 }
 
@@ -100,7 +100,8 @@ async fn test_resume_paused_download() {
     assert_eq!(download.status, Status::Queued.to_i32());
 
     // Should be back in the queue
-    assert!(downloader.queue_size().await > 0);
+    let queue_size = downloader.queue_state.queue.lock().await.len();
+    assert!(queue_size > 0);
 }
 
 #[tokio::test]
@@ -180,7 +181,7 @@ async fn test_resume_nonexistent_download() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Try to resume download that doesn't exist
-    let result = downloader.resume(999).await;
+    let result = downloader.resume(DownloadId(999)).await;
     assert!(result.is_err());
 }
 
@@ -194,7 +195,7 @@ async fn test_pause_resume_cycle() {
         .await
         .unwrap();
 
-    let initial_queue_size = downloader.queue_size().await;
+    let initial_queue_size = downloader.queue_state.queue.lock().await.len();
 
     // Pause
     downloader.pause(id).await.unwrap();
@@ -207,7 +208,8 @@ async fn test_pause_resume_cycle() {
     assert_eq!(download.status, Status::Queued.to_i32());
 
     // Queue size should be restored
-    assert_eq!(downloader.queue_size().await, initial_queue_size);
+    let final_queue_size = downloader.queue_state.queue.lock().await.len();
+    assert_eq!(final_queue_size, initial_queue_size);
 }
 
 #[tokio::test]
@@ -240,8 +242,17 @@ async fn test_resume_preserves_priority() {
     downloader.resume(id).await.unwrap();
 
     // High priority download should still come first
-    assert_eq!(downloader.get_next_download().await, Some(id));
-    assert_eq!(downloader.get_next_download().await, Some(normal_id));
+    let first = {
+        let mut queue = downloader.queue_state.queue.lock().await;
+        queue.pop().map(|item| item.id)
+    };
+    assert_eq!(first, Some(id));
+
+    let second = {
+        let mut queue = downloader.queue_state.queue.lock().await;
+        queue.pop().map(|item| item.id)
+    };
+    assert_eq!(second, Some(normal_id));
 }
 
 #[tokio::test]
@@ -257,7 +268,8 @@ async fn test_cancel_queued_download() {
     assert!(downloader.db.get_download(id).await.unwrap().is_some());
 
     // Verify download is in queue
-    assert_eq!(downloader.queue_size().await, 1);
+    let queue_size = downloader.queue_state.queue.lock().await.len();
+    assert_eq!(queue_size, 1);
 
     // Cancel the download
     downloader.cancel(id).await.unwrap();
@@ -266,7 +278,8 @@ async fn test_cancel_queued_download() {
     assert!(downloader.db.get_download(id).await.unwrap().is_none());
 
     // Download should be removed from queue
-    assert_eq!(downloader.queue_size().await, 0);
+    let queue_size = downloader.queue_state.queue.lock().await.len();
+    assert_eq!(queue_size, 0);
 }
 
 #[tokio::test]
@@ -325,7 +338,7 @@ async fn test_cancel_nonexistent_download() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 
     // Try to cancel download that doesn't exist
-    let result = downloader.cancel(999).await;
+    let result = downloader.cancel(DownloadId(999)).await;
     assert!(result.is_err());
 }
 
@@ -373,24 +386,33 @@ async fn test_cancel_removes_from_queue() {
         .unwrap();
 
     // Verify all are queued
-    assert_eq!(downloader.queue_size().await, 3);
+    let queue_size = downloader.queue_state.queue.lock().await.len();
+    assert_eq!(queue_size, 3);
 
     // Cancel middle download
     downloader.cancel(id2).await.unwrap();
 
     // Queue should have 2 items
-    assert_eq!(downloader.queue_size().await, 2);
+    let queue_size = downloader.queue_state.queue.lock().await.len();
+    assert_eq!(queue_size, 2);
 
     // Get downloads from queue - should only be id1 and id3
-    let next = downloader.get_next_download().await;
+    let next = {
+        let mut queue = downloader.queue_state.queue.lock().await;
+        queue.pop().map(|item| item.id)
+    };
     assert!(next == Some(id1) || next == Some(id3));
 
-    let next2 = downloader.get_next_download().await;
+    let next2 = {
+        let mut queue = downloader.queue_state.queue.lock().await;
+        queue.pop().map(|item| item.id)
+    };
     assert!(next2 == Some(id1) || next2 == Some(id3));
     assert_ne!(next, next2);
 
     // Queue should now be empty
-    assert_eq!(downloader.queue_size().await, 0);
+    let queue_size = downloader.queue_state.queue.lock().await.len();
+    assert_eq!(queue_size, 0);
 }
 
 #[tokio::test]

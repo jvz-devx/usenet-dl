@@ -8,18 +8,13 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
 
-    let config = Config {
-        database_path: db_path,
-        servers: vec![], // No servers for testing
-        download: config::DownloadConfig {
-            max_concurrent_downloads: 3,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let mut config = Config::default();
+    config.persistence.database_path = db_path;
+    config.servers = vec![]; // No servers for testing
+    config.download.max_concurrent_downloads = 3;
 
     // Initialize database
-    let db = Database::new(&config.database_path).await.unwrap();
+    let db = Database::new(&config.persistence.database_path).await.unwrap();
 
     // Create broadcast channel
     let (event_tx, _rx) = tokio::sync::broadcast::channel(1000);
@@ -45,7 +40,7 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let config_arc = std::sync::Arc::new(config.clone());
 
     // Initialize runtime-mutable categories from config
-    let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.categories.clone()));
+    let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.persistence.categories.clone()));
 
     // Initialize runtime-mutable schedule rules (empty for tests)
     let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(vec![]));
@@ -66,21 +61,36 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
         db_arc.clone(),
     ));
 
+    // Group queue and download state
+    let queue_state = crate::downloader::QueueState {
+        queue,
+        concurrent_limit,
+        active_downloads,
+        accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+    };
+
+    // Group runtime configuration
+    let runtime_config = crate::downloader::RuntimeConfig {
+        categories,
+        schedule_rules,
+        next_schedule_rule_id,
+    };
+
+    // Group post-processing pipeline
+    let processing = crate::downloader::ProcessingPipeline {
+        post_processor,
+        parity_handler,
+    };
+
     let downloader = UsenetDownloader {
         db: db_arc,
         event_tx,
         config: config_arc,
         nntp_pools: std::sync::Arc::new(nntp_pools),
-        queue,
-        concurrent_limit,
-        active_downloads,
         speed_limiter,
-        accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        post_processor,
-        parity_handler,
-        categories,
-        schedule_rules,
-        next_schedule_rule_id,
+        queue_state,
+        runtime_config,
+        processing,
     };
 
     (downloader, temp_dir)

@@ -25,3 +25,7 @@ CLEANUP_PLAN_PROGRESS.md
 # OS
 .DS_Store
 Thumbs.db
+
+.claude/
+CLAUDE.md
+AGENT.md

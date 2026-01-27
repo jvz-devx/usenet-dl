@@ -95,7 +95,7 @@ impl UsenetDownloader {
     /// * `name` - The category name
     /// * `config` - The category configuration
     pub async fn add_or_update_category(&self, name: &str, config: crate::config::CategoryConfig) {
-        let mut categories = self.categories.write().await;
+        let mut categories = self.runtime_config.categories.write().await;
         categories.insert(name.to_string(), config);
     }
 
@@ -112,17 +112,55 @@ impl UsenetDownloader {
     ///
     /// `true` if the category was removed, `false` if it didn't exist
     pub async fn remove_category(&self, name: &str) -> bool {
-        let mut categories = self.categories.write().await;
+        let mut categories = self.runtime_config.categories.write().await;
         categories.remove(name).is_some()
     }
 
     /// Get all categories
     ///
     /// Returns a clone of the current categories HashMap.
+    ///
+    /// **Performance Note:** This method clones the entire HashMap. For read-only access
+    /// from internal code, prefer using `with_categories()` to avoid unnecessary allocations.
     pub async fn get_categories(
         &self,
     ) -> std::collections::HashMap<String, crate::config::CategoryConfig> {
-        self.categories.read().await.clone()
+        self.runtime_config.categories.read().await.clone()
+    }
+
+    /// Access categories with a read lock without cloning
+    ///
+    /// This method provides read-only access to the categories HashMap without cloning.
+    /// The provided closure receives a reference to the HashMap while holding a read lock.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Closure that receives a reference to the categories HashMap
+    ///
+    /// # Returns
+    ///
+    /// The result of the closure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// # let downloader = UsenetDownloader::new(config).await?;
+    /// // Check if a category exists without cloning
+    /// let has_movies = downloader.with_categories(|categories| {
+    ///     categories.contains_key("movies")
+    /// }).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn with_categories<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&std::collections::HashMap<String, crate::config::CategoryConfig>) -> R,
+    {
+        let categories = self.runtime_config.categories.read().await;
+        f(&categories)
     }
 
     // =========================================================================
@@ -132,30 +170,69 @@ impl UsenetDownloader {
     /// Get all schedule rules
     ///
     /// Returns a clone of the current schedule rules list.
+    ///
+    /// **Performance Note:** This method clones the entire Vec. For read-only access
+    /// from internal code, prefer using `with_schedule_rules()` to avoid unnecessary allocations.
     pub async fn get_schedule_rules(&self) -> Vec<crate::config::ScheduleRule> {
-        self.schedule_rules.read().await.clone()
+        self.runtime_config.schedule_rules.read().await.clone()
+    }
+
+    /// Access schedule rules with a read lock without cloning
+    ///
+    /// This method provides read-only access to the schedule rules Vec without cloning.
+    /// The provided closure receives a reference to the Vec while holding a read lock.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Closure that receives a reference to the schedule rules Vec
+    ///
+    /// # Returns
+    ///
+    /// The result of the closure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use usenet_dl::{UsenetDownloader, Config};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = Config::default();
+    /// # let downloader = UsenetDownloader::new(config).await?;
+    /// // Count rules without cloning
+    /// let rule_count = downloader.with_schedule_rules(|rules| {
+    ///     rules.len()
+    /// }).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn with_schedule_rules<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&Vec<crate::config::ScheduleRule>) -> R,
+    {
+        let rules = self.runtime_config.schedule_rules.read().await;
+        f(&rules)
     }
 
     /// Add a new schedule rule
     ///
     /// This method adds a new schedule rule to the runtime configuration.
     /// Returns the assigned rule ID.
-    pub async fn add_schedule_rule(&self, rule: crate::config::ScheduleRule) -> i64 {
-        let mut rules = self.schedule_rules.write().await;
+    pub async fn add_schedule_rule(&self, rule: crate::config::ScheduleRule) -> crate::scheduler::RuleId {
+        let mut rules = self.runtime_config.schedule_rules.write().await;
         let id = self
+            .runtime_config
             .next_schedule_rule_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         rules.push(rule);
-        id
+        crate::scheduler::RuleId(id)
     }
 
     /// Update an existing schedule rule
     ///
     /// This method updates a schedule rule at the specified index.
     /// Returns true if the rule was updated, false if the index was invalid.
-    pub async fn update_schedule_rule(&self, id: i64, rule: crate::config::ScheduleRule) -> bool {
-        let mut rules = self.schedule_rules.write().await;
-        if let Some(r) = rules.get_mut(id as usize) {
+    pub async fn update_schedule_rule(&self, id: crate::scheduler::RuleId, rule: crate::config::ScheduleRule) -> bool {
+        let mut rules = self.runtime_config.schedule_rules.write().await;
+        if let Some(r) = rules.get_mut(id.0 as usize) {
             *r = rule;
             true
         } else {
@@ -167,10 +244,10 @@ impl UsenetDownloader {
     ///
     /// This method removes a schedule rule at the specified index.
     /// Returns true if the rule was removed, false if the index was invalid.
-    pub async fn remove_schedule_rule(&self, id: i64) -> bool {
-        let mut rules = self.schedule_rules.write().await;
-        if (id as usize) < rules.len() {
-            rules.remove(id as usize);
+    pub async fn remove_schedule_rule(&self, id: crate::scheduler::RuleId) -> bool {
+        let mut rules = self.runtime_config.schedule_rules.write().await;
+        if (id.0 as usize) < rules.len() {
+            rules.remove(id.0 as usize);
             true
         } else {
             false

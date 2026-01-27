@@ -28,8 +28,8 @@ pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     }
 
     // Redact API key
-    if redacted_config.api.api_key.is_some() {
-        redacted_config.api.api_key = Some("***REDACTED***".to_string());
+    if redacted_config.server.api.api_key.is_some() {
+        redacted_config.server.api.api_key = Some("***REDACTED***".to_string());
     }
 
     (StatusCode::OK, Json(redacted_config))

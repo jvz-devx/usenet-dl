@@ -20,7 +20,7 @@ async fn test_script_trigger_on_complete() {
     }
 
     let mut config = Config::default();
-    config.database_path = temp_dir.path().join("test.db");
+    config.persistence.database_path = temp_dir.path().join("test.db");
     config.download.download_dir = temp_dir.path().join("downloads");
     config.download.temp_dir = temp_dir.path().join("temp");
 
@@ -35,16 +35,16 @@ async fn test_script_trigger_on_complete() {
 
     // Trigger scripts for a completed download
     // This tests that trigger_scripts is callable and doesn't panic
-    downloader.trigger_scripts(
-        crate::config::ScriptEvent::OnComplete,
-        999,
-        "Test Download".to_string(),
-        Some("test".to_string()),
-        "complete".to_string(),
-        Some(std::path::PathBuf::from("/tmp/test")),
-        None,
-        1024000,
-    );
+    downloader.trigger_scripts(crate::downloader::TriggerScriptsParams {
+        event_type: crate::config::ScriptEvent::OnComplete,
+        download_id: DownloadId(999),
+        name: "Test Download".to_string(),
+        category: Some("test".to_string()),
+        status: "complete".to_string(),
+        destination: Some(std::path::PathBuf::from("/tmp/test")),
+        error: None,
+        size_bytes: 1024000,
+    });
 
     // Wait a bit for async script execution to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -72,7 +72,7 @@ async fn test_script_configuration() {
     }
 
     let mut config = Config::default();
-    config.database_path = temp_dir.path().join("test.db");
+    config.persistence.database_path = temp_dir.path().join("test.db");
     config.download.download_dir = temp_dir.path().join("downloads");
     config.download.temp_dir = temp_dir.path().join("temp");
 
@@ -123,7 +123,7 @@ async fn test_category_scripts_execution_order() {
     }
 
     let mut config = Config::default();
-    config.database_path = temp_dir.path().join("test.db");
+    config.persistence.database_path = temp_dir.path().join("test.db");
     config.download.download_dir = temp_dir.path().join("downloads");
     config.download.temp_dir = temp_dir.path().join("temp");
 
@@ -149,21 +149,21 @@ async fn test_category_scripts_execution_order() {
             }],
         },
     );
-    config.categories = categories;
+    config.persistence.categories = categories;
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
 
     // Trigger scripts for a download with category
-    downloader.trigger_scripts(
-        crate::config::ScriptEvent::OnComplete,
-        999,
-        "Test Movie".to_string(),
-        Some("movies".to_string()),
-        "complete".to_string(),
-        Some(std::path::PathBuf::from("/tmp/movie.mkv")),
-        None,
-        5000000,
-    );
+    downloader.trigger_scripts(crate::downloader::TriggerScriptsParams {
+        event_type: crate::config::ScriptEvent::OnComplete,
+        download_id: DownloadId(999),
+        name: "Test Movie".to_string(),
+        category: Some("movies".to_string()),
+        status: "complete".to_string(),
+        destination: Some(std::path::PathBuf::from("/tmp/movie.mkv")),
+        error: None,
+        size_bytes: 5000000,
+    });
 
     // Wait for scripts to execute
     tokio::time::sleep(Duration::from_millis(500)).await;

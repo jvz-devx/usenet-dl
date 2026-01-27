@@ -9,7 +9,100 @@ use utoipa::ToSchema;
 use crate::config::{DuplicateMethod, PostProcess};
 
 /// Unique identifier for a download
-pub type DownloadId = i64;
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    ToSchema,
+)]
+#[serde(transparent)]
+pub struct DownloadId(pub i64);
+
+impl DownloadId {
+    /// Create a new DownloadId
+    pub fn new(id: i64) -> Self {
+        Self(id)
+    }
+
+    /// Get the inner i64 value
+    pub fn get(&self) -> i64 {
+        self.0
+    }
+}
+
+impl From<i64> for DownloadId {
+    fn from(id: i64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<DownloadId> for i64 {
+    fn from(id: DownloadId) -> Self {
+        id.0
+    }
+}
+
+impl PartialEq<i64> for DownloadId {
+    fn eq(&self, other: &i64) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<DownloadId> for i64 {
+    fn eq(&self, other: &DownloadId) -> bool {
+        *self == other.0
+    }
+}
+
+impl std::fmt::Display for DownloadId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for DownloadId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.parse()?))
+    }
+}
+
+// Implement sqlx Type, Encode, and Decode for database operations
+impl sqlx::Type<sqlx::Sqlite> for DownloadId {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <i64 as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::sqlite::SqliteTypeInfo) -> bool {
+        <i64 as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DownloadId {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
+        sqlx::Encode::<sqlx::Sqlite>::encode_by_ref(&self.0, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for DownloadId {
+    fn decode(
+        value: sqlx::sqlite::SqliteValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        let id = <i64 as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        Ok(Self(id))
+    }
+}
 
 /// Download status
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

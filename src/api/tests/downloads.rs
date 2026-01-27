@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::DownloadId;
 
 #[tokio::test]
 async fn test_list_downloads_endpoint() {
@@ -266,7 +267,7 @@ async fn test_add_download_endpoint() {
     // Verify download was actually added to database
     let download = downloader
         .db
-        .get_download(download_id)
+        .get_download(DownloadId(download_id))
         .await
         .unwrap()
         .expect("Download should exist in database");

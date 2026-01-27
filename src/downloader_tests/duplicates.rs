@@ -5,15 +5,13 @@ async fn test_check_duplicate_disabled() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with duplicate detection disabled
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: false,
-            action: config::DuplicateAction::Warn,
-            methods: vec![config::DuplicateMethod::NzbHash],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: false,
+        action: config::DuplicateAction::Warn,
+        methods: vec![config::DuplicateMethod::NzbHash],
     };
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
@@ -32,15 +30,13 @@ async fn test_check_duplicate_nzb_hash_no_match() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with NzbHash detection
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![config::DuplicateMethod::NzbHash],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![config::DuplicateMethod::NzbHash],
     };
 
     let downloader = UsenetDownloader::new(config).await.unwrap();
@@ -56,15 +52,13 @@ async fn test_check_duplicate_nzb_hash_match() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with NzbHash detection
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![config::DuplicateMethod::NzbHash],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![config::DuplicateMethod::NzbHash],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -107,15 +101,13 @@ async fn test_check_duplicate_nzb_name_match() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with NzbName detection
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![config::DuplicateMethod::NzbName],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![config::DuplicateMethod::NzbName],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -152,15 +144,13 @@ async fn test_check_duplicate_job_name_match() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with JobName detection
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![config::DuplicateMethod::JobName],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![config::DuplicateMethod::JobName],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -199,19 +189,17 @@ async fn test_check_duplicate_multiple_methods_first_match() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with multiple detection methods
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![
-                config::DuplicateMethod::NzbHash, // First (highest priority)
-                config::DuplicateMethod::NzbName, // Second
-                config::DuplicateMethod::JobName, // Third
-            ],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![
+            config::DuplicateMethod::NzbHash, // First (highest priority)
+            config::DuplicateMethod::NzbName, // Second
+            config::DuplicateMethod::JobName, // Third
+        ],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -262,19 +250,17 @@ async fn test_check_duplicate_no_match_any_method() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with all detection methods
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        servers: vec![],
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![
-                config::DuplicateMethod::NzbHash,
-                config::DuplicateMethod::NzbName,
-                config::DuplicateMethod::JobName,
-            ],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.servers = vec![];
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![
+            config::DuplicateMethod::NzbHash,
+            config::DuplicateMethod::NzbName,
+            config::DuplicateMethod::JobName,
+        ],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -309,19 +295,14 @@ async fn test_add_nzb_content_duplicate_warn() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with duplicate detection enabled (Warn action)
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        download: config::DownloadConfig {
-            download_dir: temp_dir.path().join("downloads"),
-            temp_dir: temp_dir.path().join("temp"),
-            ..Default::default()
-        },
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Warn,
-            methods: vec![config::DuplicateMethod::NzbHash],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.download.download_dir = temp_dir.path().join("downloads");
+    config.download.temp_dir = temp_dir.path().join("temp");
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Warn,
+        methods: vec![config::DuplicateMethod::NzbHash],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -344,7 +325,7 @@ async fn test_add_nzb_content_duplicate_warn() {
         .add_nzb_content(nzb_content, "test.nzb", DownloadOptions::default())
         .await
         .unwrap();
-    assert!(id1 > 0, "First download should succeed");
+    assert!(id1.0 > 0, "First download should succeed");
 
     // Subscribe to events to catch duplicate warning
     let mut events = downloader.subscribe();
@@ -386,19 +367,14 @@ async fn test_add_nzb_content_duplicate_block() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with duplicate detection enabled (Block action)
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        download: config::DownloadConfig {
-            download_dir: temp_dir.path().join("downloads"),
-            temp_dir: temp_dir.path().join("temp"),
-            ..Default::default()
-        },
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Block,
-            methods: vec![config::DuplicateMethod::NzbHash],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.download.download_dir = temp_dir.path().join("downloads");
+    config.download.temp_dir = temp_dir.path().join("temp");
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Block,
+        methods: vec![config::DuplicateMethod::NzbHash],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -421,7 +397,7 @@ async fn test_add_nzb_content_duplicate_block() {
         .add_nzb_content(nzb_content, "test.nzb", DownloadOptions::default())
         .await
         .unwrap();
-    assert!(id1 > 0, "First download should succeed");
+    assert!(id1.0 > 0, "First download should succeed");
 
     // Subscribe to events to catch duplicate warning
     let mut events = downloader.subscribe();
@@ -480,19 +456,14 @@ async fn test_add_nzb_content_duplicate_allow() {
     let temp_dir = tempdir().unwrap();
 
     // Create config with duplicate detection enabled (Allow action)
-    let config = Config {
-        database_path: temp_dir.path().join("test.db"),
-        download: config::DownloadConfig {
-            download_dir: temp_dir.path().join("downloads"),
-            temp_dir: temp_dir.path().join("temp"),
-            ..Default::default()
-        },
-        duplicate: config::DuplicateConfig {
-            enabled: true,
-            action: config::DuplicateAction::Allow,
-            methods: vec![config::DuplicateMethod::NzbHash],
-        },
-        ..Default::default()
+    let mut config = Config::default();
+    config.persistence.database_path = temp_dir.path().join("test.db");
+    config.download.download_dir = temp_dir.path().join("downloads");
+    config.download.temp_dir = temp_dir.path().join("temp");
+    config.processing.duplicate = config::DuplicateConfig {
+        enabled: true,
+        action: config::DuplicateAction::Allow,
+        methods: vec![config::DuplicateMethod::NzbHash],
     };
 
     let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
@@ -515,7 +486,7 @@ async fn test_add_nzb_content_duplicate_allow() {
         .add_nzb_content(nzb_content, "test.nzb", DownloadOptions::default())
         .await
         .unwrap();
-    assert!(id1 > 0, "First download should succeed");
+    assert!(id1.0 > 0, "First download should succeed");
 
     // Try to add the same NZB again (should allow without warning)
     let id2 = downloader

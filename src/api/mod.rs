@@ -145,7 +145,7 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
 
     // Merge Swagger UI routes if enabled in config (before applying state)
     // Note: SwaggerUi will use the existing /openapi.json endpoint we already defined
-    let router = if config.api.swagger_ui {
+    let router = if config.server.api.swagger_ui {
         router.merge(SwaggerUi::new("/swagger-ui").url("/api/v1/openapi.json", ApiDoc::openapi()))
     } else {
         router
@@ -155,8 +155,8 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     let router = router.with_state(state);
 
     // Apply rate limiting middleware if enabled in config
-    let router = if config.api.rate_limit.enabled {
-        let limiter = Arc::new(rate_limit::RateLimiter::new(config.api.rate_limit.clone()));
+    let router = if config.server.api.rate_limit.enabled {
+        let limiter = Arc::new(rate_limit::RateLimiter::new(config.server.api.rate_limit.clone()));
         router.layer(middleware::from_fn_with_state(
             limiter,
             rate_limit::rate_limit_middleware,
@@ -166,9 +166,9 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     };
 
     // Apply authentication middleware if API key is configured
-    let router = if config.api.api_key.is_some() {
+    let router = if config.server.api.api_key.is_some() {
         router.layer(middleware::from_fn_with_state(
-            config.api.api_key.clone(),
+            config.server.api.api_key.clone(),
             auth::require_api_key,
         ))
     } else {
@@ -176,8 +176,8 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     };
 
     // Apply CORS middleware if enabled in config
-    if config.api.cors_enabled {
-        let cors = build_cors_layer(&config.api.cors_origins);
+    if config.server.api.cors_enabled {
+        let cors = build_cors_layer(&config.server.api.cors_origins);
         router.layer(cors)
     } else {
         router
@@ -249,7 +249,7 @@ pub async fn start_api_server(
     downloader: Arc<UsenetDownloader>,
     config: Arc<Config>,
 ) -> Result<()> {
-    let bind_address = config.api.bind_address;
+    let bind_address = config.server.api.bind_address;
 
     tracing::info!(
         address = %bind_address,

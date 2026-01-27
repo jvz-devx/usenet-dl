@@ -30,40 +30,70 @@ mod state;
 /// New download to be inserted into the database
 #[derive(Debug, Clone)]
 pub struct NewDownload {
+    /// Display name for this download
     pub name: String,
+    /// Path to the NZB file
     pub nzb_path: String,
+    /// Original name from NZB metadata
     pub nzb_meta_name: Option<String>,
+    /// SHA-256 hash of the NZB file for duplicate detection
     pub nzb_hash: Option<String>,
+    /// Job name for post-processing scripts
     pub job_name: Option<String>,
+    /// Category for organizing downloads
     pub category: Option<String>,
+    /// Destination directory for extracted files
     pub destination: String,
+    /// Post-processing flags (bitfield: 1=unpack, 2=verify, 4=repair, 8=delete)
     pub post_process: i32,
+    /// Download priority (higher values download first)
     pub priority: i32,
+    /// Current status (0=queued, 1=downloading, 2=completed, etc.)
     pub status: i32,
+    /// Total size in bytes
     pub size_bytes: i64,
 }
 
 /// Download record from database
 #[derive(Debug, Clone, FromRow)]
 pub struct Download {
+    /// Unique database ID
     pub id: i64,
+    /// Display name for this download
     pub name: String,
+    /// Path to the NZB file
     pub nzb_path: String,
+    /// Original name from NZB metadata
     pub nzb_meta_name: Option<String>,
+    /// SHA-256 hash of the NZB file for duplicate detection
     pub nzb_hash: Option<String>,
+    /// Job name for post-processing scripts
     pub job_name: Option<String>,
+    /// Category for organizing downloads
     pub category: Option<String>,
+    /// Destination directory for extracted files
     pub destination: String,
+    /// Post-processing flags (bitfield: 1=unpack, 2=verify, 4=repair, 8=delete)
     pub post_process: i32,
+    /// Download priority (higher values download first)
     pub priority: i32,
+    /// Current status (0=queued, 1=downloading, 2=completed, etc.)
     pub status: i32,
+    /// Download progress as a fraction (0.0-1.0)
     pub progress: f32,
+    /// Current download speed in bytes per second
     pub speed_bps: i64,
+    /// Total size in bytes
     pub size_bytes: i64,
+    /// Number of bytes downloaded so far
     pub downloaded_bytes: i64,
+    /// Error message if download failed
     pub error_message: Option<String>,
+    /// Unix timestamp when download was created
     pub created_at: i64,
+    /// Unix timestamp when download started
     pub started_at: Option<i64>,
+    /// Unix timestamp when download completed
     pub completed_at: Option<i64>,
 }
 
@@ -167,6 +197,62 @@ pub struct RssFilterRow {
     pub exclude_patterns: Option<String>,
     pub min_size: Option<i64>,
     pub max_size: Option<i64>,
+    pub max_age_secs: Option<i64>,
+}
+
+/// Parameters for inserting a new RSS feed
+pub struct InsertRssFeedParams<'a> {
+    /// Feed name
+    pub name: &'a str,
+    /// Feed URL
+    pub url: &'a str,
+    /// Check interval in seconds
+    pub check_interval_secs: i64,
+    /// Optional category
+    pub category: Option<&'a str>,
+    /// Whether to auto-download matching items
+    pub auto_download: bool,
+    /// Download priority
+    pub priority: i32,
+    /// Whether the feed is enabled
+    pub enabled: bool,
+}
+
+/// Parameters for updating an existing RSS feed
+pub struct UpdateRssFeedParams<'a> {
+    /// Feed ID
+    pub id: i64,
+    /// Feed name
+    pub name: &'a str,
+    /// Feed URL
+    pub url: &'a str,
+    /// Check interval in seconds
+    pub check_interval_secs: i64,
+    /// Optional category
+    pub category: Option<&'a str>,
+    /// Whether to auto-download matching items
+    pub auto_download: bool,
+    /// Download priority
+    pub priority: i32,
+    /// Whether the feed is enabled
+    pub enabled: bool,
+}
+
+/// Parameters for inserting a new RSS filter
+pub struct InsertRssFilterParams<'a> {
+    /// Feed ID this filter belongs to
+    pub feed_id: i64,
+    /// Filter name
+    pub name: &'a str,
+    /// Include patterns (comma-separated regex)
+    pub include_patterns: Option<&'a str>,
+    /// Exclude patterns (comma-separated regex)
+    pub exclude_patterns: Option<&'a str>,
+    /// Minimum file size in bytes
+    pub min_size: Option<i64>,
+    /// Maximum file size in bytes
+    pub max_size: Option<i64>,
+    /// Maximum age in seconds
     pub max_age_secs: Option<i64>,
 }
 

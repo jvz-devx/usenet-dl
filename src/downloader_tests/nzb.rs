@@ -14,7 +14,7 @@ async fn test_add_nzb_content_basic() {
         .await
         .unwrap();
 
-    assert!(download_id > 0);
+    assert!(download_id.0 > 0);
 
     // Verify download was created in database
     let download = downloader.db.get_download(download_id).await.unwrap();
@@ -198,7 +198,7 @@ async fn test_add_nzb_content_emits_event() {
 
     match event {
         Event::Queued { id, name } => {
-            assert!(id > 0);
+            assert!(id.0 > 0);
             assert_eq!(name, "test");
         }
         _ => panic!("Expected Queued event, got {:?}", event),
@@ -219,7 +219,7 @@ async fn test_add_nzb_from_file() {
         .await
         .unwrap();
 
-    assert!(download_id > 0);
+    assert!(download_id.0 > 0);
 
     // Verify download was created with correct name (filename without extension)
     let download = downloader
@@ -332,7 +332,7 @@ async fn test_add_nzb_url_success() {
         .await
         .unwrap();
 
-    assert!(download_id > 0);
+    assert!(download_id.0 > 0);
 
     // Verify download was created with filename from Content-Disposition
     let download = downloader
@@ -575,14 +575,21 @@ async fn test_start_folder_watcher_with_configured_folders() {
 
     // Create config with watch folder
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
-        watch_folders: vec![config::WatchFolderConfig {
+        automation: config::AutomationConfig {
+            watch_folders: vec![config::WatchFolderConfig {
             path: watch_path.clone(),
             after_import: config::WatchFolderAction::Delete,
             category: Some("test".to_string()),
             scan_interval: Duration::from_secs(5),
         }],
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -619,14 +626,21 @@ async fn test_start_folder_watcher_creates_missing_directory() {
 
     // Create config with non-existent watch folder
     let config = Config {
-        database_path: temp_dir.path().join("test.db"),
+        persistence: crate::config::PersistenceConfig {
+            database_path: temp_dir.path().join("test.db"),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         servers: vec![],
-        watch_folders: vec![config::WatchFolderConfig {
-            path: watch_path.clone(),
-            after_import: config::WatchFolderAction::MoveToProcessed,
-            category: None,
-            scan_interval: Duration::from_secs(5),
-        }],
+        automation: config::AutomationConfig {
+            watch_folders: vec![config::WatchFolderConfig {
+                path: watch_path.clone(),
+                after_import: config::WatchFolderAction::MoveToProcessed,
+                category: None,
+                scan_interval: Duration::from_secs(5),
+            }],
+            ..Default::default()
+        },
         ..Default::default()
     };
 

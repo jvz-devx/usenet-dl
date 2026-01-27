@@ -99,7 +99,19 @@ impl Database {
     async fn migrate_v1(conn: &mut SqliteConnection) -> Result<()> {
         tracing::info!("Applying database migration v1");
 
-        // Downloads table
+        Self::create_downloads_schema(conn).await?;
+        Self::create_articles_schema(conn).await?;
+        Self::create_passwords_table(conn).await?;
+        Self::create_processed_nzbs_table(conn).await?;
+        Self::create_history_schema(conn).await?;
+        Self::record_migration(conn, 1).await?;
+
+        tracing::info!("Database migration v1 complete");
+        Ok(())
+    }
+
+    /// Create downloads table and its indexes
+    async fn create_downloads_schema(conn: &mut SqliteConnection) -> Result<()> {
         sqlx::query(
             r#"
             CREATE TABLE downloads (
@@ -134,7 +146,7 @@ impl Database {
             )))
         })?;
 
-        // Indexes for downloads
+        // Create indexes
         sqlx::query("CREATE INDEX idx_downloads_status ON downloads(status)")
             .execute(&mut *conn)
             .await
@@ -177,7 +189,11 @@ impl Database {
                 )))
             })?;
 
-        // Download articles table (for resume support)
+        Ok(())
+    }
+
+    /// Create download_articles table and its indexes
+    async fn create_articles_schema(conn: &mut SqliteConnection) -> Result<()> {
         sqlx::query(
             r#"
             CREATE TABLE download_articles (
@@ -201,7 +217,7 @@ impl Database {
             )))
         })?;
 
-        // Indexes for download_articles
+        // Create indexes
         sqlx::query("CREATE INDEX idx_articles_download ON download_articles(download_id)")
             .execute(&mut *conn)
             .await
@@ -222,7 +238,11 @@ impl Database {
                 )))
             })?;
 
-        // Password cache table
+        Ok(())
+    }
+
+    /// Create passwords table
+    async fn create_passwords_table(conn: &mut SqliteConnection) -> Result<()> {
         sqlx::query(
             r#"
             CREATE TABLE passwords (
@@ -240,7 +260,11 @@ impl Database {
             )))
         })?;
 
-        // Processed NZBs table (for watch folder tracking)
+        Ok(())
+    }
+
+    /// Create processed_nzbs table
+    async fn create_processed_nzbs_table(conn: &mut SqliteConnection) -> Result<()> {
         sqlx::query(
             r#"
             CREATE TABLE processed_nzbs (
@@ -258,7 +282,11 @@ impl Database {
             )))
         })?;
 
-        // History table
+        Ok(())
+    }
+
+    /// Create history table and its index
+    async fn create_history_schema(conn: &mut SqliteConnection) -> Result<()> {
         sqlx::query(
             r#"
             CREATE TABLE history (
@@ -282,7 +310,7 @@ impl Database {
             )))
         })?;
 
-        // Index for history
+        // Create index
         sqlx::query("CREATE INDEX idx_history_completed ON history(completed_at DESC)")
             .execute(&mut *conn)
             .await
@@ -293,9 +321,14 @@ impl Database {
                 )))
             })?;
 
-        // Record migration
+        Ok(())
+    }
+
+    /// Record a migration version
+    async fn record_migration(conn: &mut SqliteConnection, version: i32) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (1, ?)")
+        sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)")
+            .bind(version)
             .bind(now)
             .execute(&mut *conn)
             .await
@@ -305,8 +338,6 @@ impl Database {
                     e
                 )))
             })?;
-
-        tracing::info!("Database migration v1 complete");
 
         Ok(())
     }
@@ -353,16 +384,7 @@ impl Database {
         })?;
 
         // Record migration
-        sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (2, ?)")
-            .bind(now)
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| {
-                Error::Database(DatabaseError::MigrationFailed(format!(
-                    "Failed to record migration: {}",
-                    e
-                )))
-            })?;
+        Self::record_migration(conn, 2).await?;
 
         tracing::info!("Database migration v2 complete");
 
@@ -456,17 +478,7 @@ impl Database {
             })?;
 
         // Record migration
-        let now = chrono::Utc::now().timestamp();
-        sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (3, ?)")
-            .bind(now)
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| {
-                Error::Database(DatabaseError::MigrationFailed(format!(
-                    "Failed to record migration: {}",
-                    e
-                )))
-            })?;
+        Self::record_migration(conn, 3).await?;
 
         tracing::info!("Database migration v3 complete");
 

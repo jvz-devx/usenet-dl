@@ -10,7 +10,11 @@ async fn test_webhook_triggers_on_queued() {
     let webhook_url = "https://httpbin.org/post".to_string();
 
     let config = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: config::DownloadConfig {
             download_dir: temp_dir.path().join("downloads"),
             temp_dir: temp_dir.path().join("temp"),
@@ -52,7 +56,7 @@ async fn test_webhook_triggers_on_queued() {
         .await
         .unwrap();
 
-    assert!(id > 0, "Download should be queued successfully");
+    assert!(id.0 > 0, "Download should be queued successfully");
 
     // Wait a bit for webhook to be sent (it's async/background)
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -85,7 +89,11 @@ async fn test_webhook_failed_event_on_invalid_url() {
     let db_path = temp_dir.path().join("test.db");
 
     let config = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: config::DownloadConfig {
             download_dir: temp_dir.path().join("downloads"),
             temp_dir: temp_dir.path().join("temp"),
@@ -171,7 +179,11 @@ async fn test_webhook_auth_header() {
     let db_path = temp_dir.path().join("test.db");
 
     let config = Config {
-        database_path: db_path.clone(),
+        persistence: crate::config::PersistenceConfig {
+            database_path: db_path.clone(),
+            schedule_rules: vec![],
+            categories: std::collections::HashMap::new(),
+        },
         download: config::DownloadConfig {
             download_dir: temp_dir.path().join("downloads"),
             temp_dir: temp_dir.path().join("temp"),
@@ -214,7 +226,7 @@ async fn test_webhook_auth_header() {
         .await
         .unwrap();
 
-    assert!(id > 0, "Download should be queued successfully");
+    assert!(id.0 > 0, "Download should be queued successfully");
 
     // Wait for webhook to be sent
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;

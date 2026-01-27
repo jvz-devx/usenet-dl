@@ -14,11 +14,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use usenet_dl::api::start_api_server;
 use usenet_dl::config::{
-    ApiConfig, Config, DeobfuscationConfig, DiskSpaceConfig, DownloadConfig, DuplicateAction,
-    DuplicateConfig, DuplicateMethod, ExtractionConfig, FailedDownloadAction, FileCollisionAction,
-    NotificationConfig, PostProcess, RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule,
-    ScriptConfig, ScriptEvent, ServerConfig, ToolsConfig, WatchFolderAction, WatchFolderConfig,
-    WebhookConfig, WebhookEvent, Weekday,
+    ApiConfig, AutomationConfig, CleanupConfig, Config, DeobfuscationConfig, DiskSpaceConfig,
+    DownloadConfig, DuplicateAction, DuplicateConfig, DuplicateMethod, ExtractionConfig,
+    FailedDownloadAction, FileCollisionAction, NotificationConfig, PersistenceConfig, PostProcess,
+    ProcessingConfig, RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig,
+    ScriptEvent, ServerConfig, ServerIntegrationConfig, ToolsConfig, WatchFolderAction,
+    WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
 };
 use usenet_dl::{Priority, UsenetDownloader};
 
@@ -185,45 +186,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             scripts: vec![script],
         },
 
-        // Database
-        database_path: PathBuf::from("/data/usenet-dl.db"),
-
-        // Resilience
-        retry: retry_config,
-
-        // Extraction
-        extraction: extraction_config,
-
-        // File handling
-        deobfuscation: deobfuscation_config,
-        duplicate: duplicate_config,
-
-        // Safety
-        disk_space: disk_space_config,
-
-        // API
-        api: ApiConfig {
-            bind_address: "0.0.0.0:6789".parse().unwrap(),
-            api_key: Some("your-secret-key".to_string()),
-            swagger_ui: true,
+        // Persistence (database and schedules)
+        persistence: PersistenceConfig {
+            database_path: PathBuf::from("/data/usenet-dl.db"),
+            schedule_rules: vec![night_schedule, work_schedule],
             ..Default::default()
         },
 
-        // Automation
-        watch_folders: vec![movies_watch],
-        rss_feeds: vec![tv_rss],
-        schedule_rules: vec![night_schedule, work_schedule],
+        // Processing (retry, extraction, duplicates, disk space)
+        processing: ProcessingConfig {
+            retry: retry_config,
+            extraction: extraction_config,
+            duplicate: duplicate_config,
+            disk_space: disk_space_config,
+            cleanup: CleanupConfig::default(),
+        },
+
+        // Automation (watch folders, RSS, deobfuscation)
+        automation: AutomationConfig {
+            watch_folders: vec![movies_watch],
+            rss_feeds: vec![tv_rss],
+            deobfuscation: deobfuscation_config,
+        },
+
+        // Server integration (API)
+        server: ServerIntegrationConfig {
+            api: ApiConfig {
+                bind_address: "0.0.0.0:6789".parse().unwrap(),
+                api_key: Some("your-secret-key".to_string()),
+                swagger_ui: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
 
         ..Default::default()
     };
 
     println!("Configuration:");
     println!("  Servers: {}", config.servers.len());
-    println!("  Max concurrent: {}", config.max_concurrent_downloads);
-    println!("  Watch folders: {}", config.watch_folders.len());
-    println!("  RSS feeds: {}", config.rss_feeds.len());
-    println!("  Schedule rules: {}", config.schedule_rules.len());
-    println!("  API: {}", config.api.bind_address);
+    println!("  Max concurrent: {}", config.download.max_concurrent_downloads);
+    println!("  Watch folders: {}", config.automation.watch_folders.len());
+    println!("  RSS feeds: {}", config.automation.rss_feeds.len());
+    println!("  Schedule rules: {}", config.persistence.schedule_rules.len());
+    println!("  API: {}", config.server.api.bind_address);
 
     // Create downloader with this configuration
     let downloader = Arc::new(UsenetDownloader::new(config.clone()).await?);

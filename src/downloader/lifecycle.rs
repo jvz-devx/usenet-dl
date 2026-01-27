@@ -1,7 +1,7 @@
 //! Startup and shutdown coordination.
 
 use crate::error::Result;
-use crate::types::{Event, Status};
+use crate::types::{DownloadId, Event, Status};
 
 use super::UsenetDownloader;
 
@@ -23,7 +23,7 @@ impl UsenetDownloader {
         tracing::info!("Initiating graceful shutdown");
 
         // 1. Stop accepting new downloads
-        self.accepting_new
+        self.queue_state.accepting_new
             .store(false, std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Stopped accepting new downloads");
 
@@ -87,14 +87,14 @@ impl UsenetDownloader {
     /// will complete their current article before stopping, ensuring no partial
     /// article downloads and maintaining data integrity.
     pub(crate) async fn pause_graceful_all(&self) {
-        let active = self.active_downloads.lock().await;
+        let active = self.queue_state.active_downloads.lock().await;
         tracing::debug!(
             active_count = active.len(),
             "Gracefully pausing all active downloads"
         );
 
         for (id, token) in active.iter() {
-            tracing::debug!(download_id = id, "Signaling graceful pause");
+            tracing::debug!(download_id = id.0, "Signaling graceful pause");
             token.cancel();
         }
     }
@@ -106,7 +106,7 @@ impl UsenetDownloader {
     async fn wait_for_active_downloads(&self) -> Result<()> {
         loop {
             let active_count = {
-                let active = self.active_downloads.lock().await;
+                let active = self.queue_state.active_downloads.lock().await;
                 active.len()
             };
 
@@ -136,8 +136,8 @@ impl UsenetDownloader {
             // For downloads in Downloading or Processing state that are no longer active,
             // ensure their state reflects they were interrupted during shutdown
             let is_active = {
-                let active = self.active_downloads.lock().await;
-                active.contains_key(&download.id)
+                let active = self.queue_state.active_downloads.lock().await;
+                active.contains_key(&DownloadId(download.id))
             };
 
             // If a download is in an active state but not in active_downloads,
@@ -148,7 +148,7 @@ impl UsenetDownloader {
             {
                 // Mark as Paused so it can be resumed on next startup
                 self.db
-                    .update_status(download.id, Status::Paused.to_i32())
+                    .update_status(DownloadId(download.id), Status::Paused.to_i32())
                     .await?;
                 persisted_count += 1;
                 tracing::debug!(
