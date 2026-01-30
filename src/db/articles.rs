@@ -4,7 +4,7 @@ use crate::error::DatabaseError;
 use crate::types::DownloadId;
 use crate::{Error, Result};
 
-use super::{article_status, Article, Database, NewArticle};
+use super::{Article, Database, NewArticle, article_status};
 
 impl Database {
     /// Insert a single article
@@ -40,7 +40,7 @@ impl Database {
 
         // Build a multi-row insert query
         let mut query_builder = sqlx::QueryBuilder::new(
-            "INSERT INTO download_articles (download_id, message_id, segment_number, size_bytes, status) "
+            "INSERT INTO download_articles (download_id, message_id, segment_number, size_bytes, status) ",
         );
 
         query_builder.push_values(articles, |mut b, article| {

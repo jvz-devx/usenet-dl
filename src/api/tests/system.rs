@@ -313,10 +313,12 @@ async fn test_scheduler_endpoints() {
         .unwrap();
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"]["code"], "invalid_input");
-    assert!(json["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("Invalid start_time format"));
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid start_time format")
+    );
     println!("   ✓ 400 Bad Request returned for invalid time format");
 
     // Test 9: DELETE /scheduler/:id - delete a rule
@@ -387,7 +389,7 @@ async fn test_scheduler_endpoints() {
 /// Test 28.8: Test duplicate detection with same NZB added twice via API
 #[tokio::test]
 async fn test_duplicate_detection_via_api() {
-    use axum::http::{header, Method};
+    use axum::http::{Method, header};
     use serde_json::Value;
 
     println!("\n=== Testing Duplicate Detection via API ===");

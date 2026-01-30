@@ -251,20 +251,15 @@ async fn test_resume_download_nonexistent() {
 
 #[tokio::test]
 async fn test_resume_download_emits_event() {
+    // resume_download() is a pure state function — it sets status to Processing
+    // when no pending articles remain (post-processing is spawned by the caller).
     let (downloader, _temp_dir) = create_test_downloader().await;
 
-    // Subscribe to events
-    let mut events = downloader.subscribe();
-
-    // Add a download (will emit Queued event)
+    // Add a download
     let download_id = downloader
         .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
         .await
         .unwrap();
-
-    // Consume the Queued event
-    let event = events.recv().await.unwrap();
-    assert!(matches!(event, Event::Queued { .. }));
 
     // Mark all articles as downloaded
     let articles = downloader
@@ -280,14 +275,19 @@ async fn test_resume_download_emits_event() {
             .unwrap();
     }
 
-    // Resume should emit Verifying event (post-processing start)
+    // Resume should set status to Processing (no spawn, no event)
     downloader.resume_download(download_id).await.unwrap();
 
-    // Check for Verifying event
-    let event = events.recv().await.unwrap();
-    assert!(
-        matches!(event, Event::Verifying { id } if id == download_id),
-        "Should emit Verifying event when no pending articles"
+    let download = downloader
+        .db
+        .get_download(download_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        Status::from_i32(download.status),
+        Status::Processing,
+        "Should set status to Processing when no pending articles"
     );
 }
 
@@ -558,10 +558,10 @@ async fn test_restore_queue_called_on_startup() {
     {
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -635,10 +635,10 @@ async fn test_resume_after_simulated_crash() {
     {
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -881,7 +881,8 @@ async fn test_shutdown_rejects_new_downloads() {
     // Initially, should accept new downloads
     assert!(
         downloader
-            .queue_state.accepting_new
+            .queue_state
+            .accepting_new
             .load(std::sync::atomic::Ordering::SeqCst),
         "Should accept new downloads initially"
     );
@@ -911,7 +912,8 @@ async fn test_shutdown_rejects_new_downloads() {
     // After shutdown, accepting_new should be false
     assert!(
         !downloader
-            .queue_state.accepting_new
+            .queue_state
+            .accepting_new
             .load(std::sync::atomic::Ordering::SeqCst),
         "Should not accept new downloads after shutdown"
     );
@@ -999,7 +1001,7 @@ async fn test_graceful_pause_completes_current_article() {
     // which checks cancellation BEFORE starting each article, not during.
     // This means the current article always completes before pausing.
 
-    let (downloader, _temp_dir) = create_test_downloader().await;
+    let (_downloader, _temp_dir) = create_test_downloader().await;
 
     // Create a cancellation token
     let token = tokio_util::sync::CancellationToken::new();
@@ -1288,10 +1290,10 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
     {
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,
@@ -1391,10 +1393,10 @@ async fn test_graceful_shutdown_and_recovery_on_restart() {
         // Now create the downloader (which will call set_clean_start() internally)
         let config = Config {
             persistence: crate::config::PersistenceConfig {
-            database_path: db_path.clone(),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
+                database_path: db_path.clone(),
+                schedule_rules: vec![],
+                categories: std::collections::HashMap::new(),
+            },
             servers: vec![],
             download: config::DownloadConfig {
                 max_concurrent_downloads: 3,

@@ -23,8 +23,8 @@
 mod common;
 
 use common::{
-    assert_download_status, create_downloader_bad_auth, create_live_downloader,
-    has_live_credentials, wait_for_completion, wait_for_downloading, WaitResult,
+    WaitResult, assert_download_status, create_downloader_bad_auth, create_live_downloader,
+    has_live_credentials, wait_for_completion, wait_for_downloading,
 };
 use serial_test::serial;
 use std::time::Duration;

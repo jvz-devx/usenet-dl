@@ -17,14 +17,18 @@ async fn test_database() -> Arc<crate::db::Database> {
 async fn test_post_processing_none() {
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
     let download_path = PathBuf::from("/tmp/download");
     let destination = PathBuf::from("/tmp/destination");
 
     let result = processor
-        .start_post_processing(DownloadId(1), download_path.clone(), PostProcess::None, destination)
+        .start_post_processing(
+            DownloadId(1),
+            download_path.clone(),
+            PostProcess::None,
+            destination,
+        )
         .await;
 
     assert!(result.is_ok());
@@ -37,8 +41,7 @@ async fn test_post_processing_verify() {
 
     let (tx, mut rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
     // Create temporary directory for testing
     let temp_dir = TempDir::new().unwrap();
@@ -47,7 +50,12 @@ async fn test_post_processing_verify() {
     tokio::fs::create_dir_all(&download_path).await.unwrap();
 
     let result = processor
-        .start_post_processing(DownloadId(1), download_path.clone(), PostProcess::Verify, destination)
+        .start_post_processing(
+            DownloadId(1),
+            download_path.clone(),
+            PostProcess::Verify,
+            destination,
+        )
         .await;
 
     assert!(result.is_ok());
@@ -73,8 +81,7 @@ async fn test_post_processing_unpack_and_cleanup() {
 
     let (tx, mut rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
     // Create temporary directories and files for testing
     let temp_dir = TempDir::new().unwrap();
@@ -105,13 +112,17 @@ async fn test_post_processing_unpack_and_cleanup() {
 
     // Should have: Verifying, VerifyComplete, Extracting, ExtractComplete, Moving, Cleaning
     assert!(events.iter().any(|e| matches!(e, Event::Verifying { .. })));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::VerifyComplete { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::VerifyComplete { .. }))
+    );
     assert!(events.iter().any(|e| matches!(e, Event::Extracting { .. })));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::ExtractComplete { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ExtractComplete { .. }))
+    );
     assert!(events.iter().any(|e| matches!(e, Event::Moving { .. })));
     assert!(events.iter().any(|e| matches!(e, Event::Cleaning { .. })));
 
@@ -127,8 +138,7 @@ async fn test_stage_executor_ordering() {
     // Verify that stages execute in the correct order
     let (tx, mut rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
     // Create temporary directories and files
     let temp_dir = TempDir::new().unwrap();
@@ -141,7 +151,12 @@ async fn test_stage_executor_ordering() {
         .unwrap();
 
     processor
-        .start_post_processing(DownloadId(1), download_path, PostProcess::UnpackAndCleanup, destination)
+        .start_post_processing(
+            DownloadId(1),
+            download_path,
+            PostProcess::UnpackAndCleanup,
+            destination,
+        )
         .await
         .unwrap();
 
@@ -178,8 +193,7 @@ async fn test_move_files_single_file_no_collision() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
     let temp_dir = TempDir::new().unwrap();
     let source = temp_dir.path().join("source.txt");
@@ -302,8 +316,7 @@ async fn test_move_directory_contents() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(tx, config, test_parity_handler(), test_database().await);
 
     let temp_dir = TempDir::new().unwrap();
     let source_dir = temp_dir.path().join("source");
@@ -324,7 +337,9 @@ async fn test_move_directory_contents() {
         .await
         .unwrap();
 
-    let result = processor.move_files(DownloadId(1), &source_dir, &dest_dir).await;
+    let result = processor
+        .move_files(DownloadId(1), &source_dir, &dest_dir)
+        .await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), dest_dir);
 
@@ -370,7 +385,9 @@ async fn test_move_directory_with_collision_rename() {
         .await
         .unwrap();
 
-    let result = processor.move_files(DownloadId(1), &source_dir, &dest_dir).await;
+    let result = processor
+        .move_files(DownloadId(1), &source_dir, &dest_dir)
+        .await;
     assert!(result.is_ok());
 
     // Both files should exist (one renamed)
@@ -394,8 +411,12 @@ async fn test_cleanup_removes_target_extensions() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -455,8 +476,12 @@ async fn test_cleanup_removes_archive_files() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -503,8 +528,12 @@ async fn test_cleanup_removes_sample_folders() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -555,8 +584,12 @@ async fn test_cleanup_case_insensitive() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -595,8 +628,12 @@ async fn test_cleanup_recursive() {
 
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -645,8 +682,12 @@ async fn test_cleanup_disabled() {
     let mut config = Config::default();
     config.processing.cleanup.enabled = false;
     let config = Arc::new(config);
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -683,8 +724,12 @@ async fn test_cleanup_delete_samples_disabled() {
     let mut config = Config::default();
     config.processing.cleanup.delete_samples = false;
     let config = Arc::new(config);
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let temp_dir = TempDir::new().unwrap();
     let download_path = temp_dir.path().join("download");
@@ -723,8 +768,12 @@ async fn test_cleanup_delete_samples_disabled() {
 async fn test_cleanup_nonexistent_path() {
     let (tx, _rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
-    let processor =
-        PostProcessor::new(tx, config.clone(), test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx,
+        config.clone(),
+        test_parity_handler(),
+        test_database().await,
+    );
 
     let nonexistent_path = PathBuf::from("/tmp/nonexistent_path_12345");
 
@@ -747,8 +796,12 @@ async fn test_verify_stage_handles_not_supported() {
     let (tx, mut rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
     // NoOpParityHandler returns Error::NotSupported for verify
-    let processor =
-        PostProcessor::new(tx.clone(), config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx.clone(),
+        config,
+        test_parity_handler(),
+        test_database().await,
+    );
 
     // Create temporary directory with a PAR2 file
     let temp_dir = TempDir::new().unwrap();
@@ -791,8 +844,12 @@ async fn test_repair_stage_handles_not_supported() {
     let (tx, mut rx) = broadcast::channel(100);
     let config = Arc::new(Config::default());
     // NoOpParityHandler returns Error::NotSupported for both verify and repair
-    let processor =
-        PostProcessor::new(tx.clone(), config, test_parity_handler(), test_database().await);
+    let processor = PostProcessor::new(
+        tx.clone(),
+        config,
+        test_parity_handler(),
+        test_database().await,
+    );
 
     // Create temporary directory with a PAR2 file
     let temp_dir = TempDir::new().unwrap();

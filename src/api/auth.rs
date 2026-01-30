@@ -5,11 +5,11 @@
 //! X-Api-Key header or they will receive a 401 Unauthorized response.
 
 use axum::{
+    Json,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -89,11 +89,11 @@ fn unauthorized_response(message: &str) -> Response {
 mod tests {
     use super::*;
     use axum::{
+        Router,
         body::Body,
         http::{Request, StatusCode},
         middleware,
         routing::get,
-        Router,
     };
     use tower::ServiceExt; // for oneshot
 

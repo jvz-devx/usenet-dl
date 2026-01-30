@@ -2,10 +2,10 @@
 
 use crate::api::AppState;
 use axum::{
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -96,7 +96,8 @@ pub async fn queue_stats(State(state): State<AppState>) -> Response {
             let speed_limit_bps = state.downloader.speed_limiter.get_limit();
             let accepting_new = state
                 .downloader
-                .queue_state.accepting_new
+                .queue_state
+                .accepting_new
                 .load(std::sync::atomic::Ordering::SeqCst);
 
             let stats = crate::types::QueueStats {

@@ -25,15 +25,15 @@ async fn test_start_scheduler_with_rules() {
         persistence: crate::config::PersistenceConfig {
             database_path: temp_dir.path().join("test.db"),
             schedule_rules: vec![config::ScheduleRule {
-            name: "Test Rule".to_string(),
-            days: vec![], // All days
-            start_time: "09:00".to_string(),
-            end_time: "17:00".to_string(),
-            action: config::ScheduleAction::SpeedLimit {
-                limit_bps: 1_000_000,
-            },
-            enabled: true,
-        }],
+                name: "Test Rule".to_string(),
+                days: vec![], // All days
+                start_time: "09:00".to_string(),
+                end_time: "17:00".to_string(),
+                action: config::ScheduleAction::SpeedLimit {
+                    limit_bps: 1_000_000,
+                },
+                enabled: true,
+            }],
             categories: std::collections::HashMap::new(),
         },
         servers: vec![],
@@ -67,13 +67,13 @@ async fn test_start_scheduler_respects_shutdown() {
         persistence: crate::config::PersistenceConfig {
             database_path: temp_dir.path().join("test.db"),
             schedule_rules: vec![config::ScheduleRule {
-            name: "Test Rule".to_string(),
-            days: vec![],
-            start_time: "09:00".to_string(),
-            end_time: "17:00".to_string(),
-            action: config::ScheduleAction::Unlimited,
-            enabled: true,
-        }],
+                name: "Test Rule".to_string(),
+                days: vec![],
+                start_time: "09:00".to_string(),
+                end_time: "17:00".to_string(),
+                action: config::ScheduleAction::Unlimited,
+                enabled: true,
+            }],
             categories: std::collections::HashMap::new(),
         },
         servers: vec![],
@@ -84,7 +84,8 @@ async fn test_start_scheduler_respects_shutdown() {
 
     // Trigger shutdown before starting the task
     downloader
-        .queue_state.accepting_new
+        .queue_state
+        .accepting_new
         .store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Start scheduler

@@ -15,7 +15,7 @@
 //! - [`rss`] — RSS feed CRUD
 
 use crate::types::{HistoryEntry, Status};
-use sqlx::{sqlite::SqlitePool, FromRow};
+use sqlx::{FromRow, sqlite::SqlitePool};
 use std::path::PathBuf;
 
 mod articles;
@@ -100,53 +100,82 @@ pub struct Download {
 /// New article to be inserted into the database
 #[derive(Debug, Clone)]
 pub struct NewArticle {
+    /// Download this article belongs to
     pub download_id: crate::types::DownloadId,
+    /// Usenet message-ID
     pub message_id: String,
+    /// Segment number within the file
     pub segment_number: i32,
+    /// Size of this segment in bytes
     pub size_bytes: i64,
 }
 
 /// Article record from database
 #[derive(Debug, Clone, FromRow)]
 pub struct Article {
+    /// Unique database ID
     pub id: i64,
+    /// Download this article belongs to
     pub download_id: i64,
+    /// Usenet message-ID
     pub message_id: String,
+    /// Segment number within the file
     pub segment_number: i32,
+    /// Size of this segment in bytes
     pub size_bytes: i64,
+    /// Article status (see [`article_status`])
     pub status: i32,
+    /// Unix timestamp when article was downloaded
     pub downloaded_at: Option<i64>,
 }
 
 /// Article status constants
 pub mod article_status {
+    /// Article is queued and not yet downloaded
     pub const PENDING: i32 = 0;
+    /// Article has been successfully downloaded
     pub const DOWNLOADED: i32 = 1;
+    /// Article download failed
     pub const FAILED: i32 = 2;
 }
 
 /// New history entry to be inserted into the database
 #[derive(Debug, Clone)]
 pub struct NewHistoryEntry {
+    /// Download name
     pub name: String,
+    /// Category label
     pub category: Option<String>,
+    /// Destination directory on disk
     pub destination: Option<PathBuf>,
+    /// Completion status code
     pub status: i32,
+    /// Total size in bytes
     pub size_bytes: u64,
+    /// Total download duration in seconds
     pub download_time_secs: i64,
+    /// Unix timestamp when download completed
     pub completed_at: i64,
 }
 
 /// History record from database (raw from SQLite)
 #[derive(Debug, Clone, FromRow)]
 pub struct HistoryRow {
+    /// Unique database ID
     pub id: i64,
+    /// Download name
     pub name: String,
+    /// Category label
     pub category: Option<String>,
+    /// Destination directory on disk
     pub destination: Option<String>,
+    /// Completion status code
     pub status: i32,
+    /// Total size in bytes
     pub size_bytes: i64,
+    /// Total download duration in seconds
     pub download_time_secs: i64,
+    /// Unix timestamp when download completed
     pub completed_at: i64,
 }
 
@@ -174,29 +203,48 @@ impl From<HistoryRow> for HistoryEntry {
 /// RSS feed record from database
 #[derive(Debug, Clone, FromRow)]
 pub struct RssFeed {
+    /// Unique database ID
     pub id: i64,
+    /// Feed display name
     pub name: String,
+    /// Feed URL
     pub url: String,
+    /// Interval between checks in seconds
     pub check_interval_secs: i64,
+    /// Category label for matched downloads
     pub category: Option<String>,
+    /// Whether to automatically download matched items (0 = no, 1 = yes)
     pub auto_download: i32,
+    /// Download priority
     pub priority: i32,
+    /// Whether the feed is enabled (0 = disabled, 1 = enabled)
     pub enabled: i32,
+    /// Unix timestamp of last feed check
     pub last_check: Option<i64>,
+    /// Last error message from checking the feed
     pub last_error: Option<String>,
+    /// Unix timestamp when feed was created
     pub created_at: i64,
 }
 
 /// RSS filter record from database
 #[derive(Debug, Clone, FromRow)]
 pub struct RssFilterRow {
+    /// Unique database ID
     pub id: i64,
+    /// ID of the parent RSS feed
     pub feed_id: i64,
+    /// Filter display name
     pub name: String,
+    /// Comma-separated include patterns
     pub include_patterns: Option<String>,
+    /// Comma-separated exclude patterns
     pub exclude_patterns: Option<String>,
+    /// Minimum file size in bytes
     pub min_size: Option<i64>,
+    /// Maximum file size in bytes
     pub max_size: Option<i64>,
+    /// Maximum age of items in seconds
     pub max_age_secs: Option<i64>,
 }
 

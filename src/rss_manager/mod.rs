@@ -5,10 +5,10 @@
 //! and Atom feed formats, with regex-based filtering, size constraints, age limits, and duplicate
 //! detection.
 
+use crate::UsenetDownloader;
 use crate::config::{RssFeedConfig, RssFilter};
 use crate::db::Database;
 use crate::error::{Error, Result};
-use crate::UsenetDownloader;
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use std::sync::Arc;

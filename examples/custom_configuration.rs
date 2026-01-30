@@ -225,10 +225,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Configuration:");
     println!("  Servers: {}", config.servers.len());
-    println!("  Max concurrent: {}", config.download.max_concurrent_downloads);
+    println!(
+        "  Max concurrent: {}",
+        config.download.max_concurrent_downloads
+    );
     println!("  Watch folders: {}", config.automation.watch_folders.len());
     println!("  RSS feeds: {}", config.automation.rss_feeds.len());
-    println!("  Schedule rules: {}", config.persistence.schedule_rules.len());
+    println!(
+        "  Schedule rules: {}",
+        config.persistence.schedule_rules.len()
+    );
     println!("  API: {}", config.server.api.bind_address);
 
     // Create downloader with this configuration

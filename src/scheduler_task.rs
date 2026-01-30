@@ -34,13 +34,13 @@
 //! ```
 
 use crate::{
-    scheduler::{ScheduleAction, Scheduler},
     UsenetDownloader,
+    scheduler::{ScheduleAction, Scheduler},
 };
 use chrono::Local;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use std::sync::atomic::Ordering;
+use tokio::time::{Duration, sleep};
 use tracing::{debug, info};
 
 /// Scheduler task that periodically checks schedule rules and applies actions
@@ -88,7 +88,12 @@ impl SchedulerTask {
 
         loop {
             // Check for shutdown signal via downloader's accepting_new flag
-            if !self.downloader.queue_state.accepting_new.load(Ordering::SeqCst) {
+            if !self
+                .downloader
+                .queue_state
+                .accepting_new
+                .load(Ordering::SeqCst)
+            {
                 info!("Scheduler task shutting down");
                 break;
             }
@@ -203,7 +208,10 @@ mod tests {
         let downloader_arc = Arc::new(downloader);
 
         // Set shutdown signal immediately
-        downloader_arc.queue_state.accepting_new.store(false, Ordering::SeqCst);
+        downloader_arc
+            .queue_state
+            .accepting_new
+            .store(false, Ordering::SeqCst);
 
         let task = SchedulerTask::new(downloader_arc.clone(), Arc::new(scheduler));
 
@@ -308,7 +316,10 @@ mod tests {
         assert_eq!(scheduler_arc.rules().len(), 0);
 
         // Set shutdown signal immediately
-        downloader_arc.queue_state.accepting_new.store(false, Ordering::SeqCst);
+        downloader_arc
+            .queue_state
+            .accepting_new
+            .store(false, Ordering::SeqCst);
 
         let task = SchedulerTask::new(downloader_arc.clone(), scheduler_arc.clone());
 

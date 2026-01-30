@@ -3,10 +3,10 @@
 use super::ScheduleRuleResponse;
 use crate::api::AppState;
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde_json::json;
 

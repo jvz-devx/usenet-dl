@@ -1,8 +1,8 @@
 //! Background tasks for progress reporting and database batch updates.
 
 use crate::types::{DownloadId, Event};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Buffer size for the article status update channel
@@ -37,7 +37,9 @@ pub(crate) struct ProgressReporterParams {
 }
 
 /// Spawn a background task that periodically reports download progress.
-pub(crate) fn spawn_progress_reporter(params: ProgressReporterParams) -> tokio::task::JoinHandle<()> {
+pub(crate) fn spawn_progress_reporter(
+    params: ProgressReporterParams,
+) -> tokio::task::JoinHandle<()> {
     let ProgressReporterParams {
         id,
         total_articles,

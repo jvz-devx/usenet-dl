@@ -501,12 +501,11 @@ async fn test_extract_archive_case_insensitive() {
 
 #[tokio::test]
 async fn test_7z_password_list_integration() {
-    use std::path::Path;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::NamedTempFile;
 
     // Create a temporary database
     let temp_db = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_db.path()).await.unwrap();
+    let _db = Database::new(temp_db.path()).await.unwrap();
 
     // Create a password list with multiple passwords
     let passwords = PasswordList::collect(
@@ -543,12 +542,11 @@ async fn test_7z_password_list_integration() {
 
 #[tokio::test]
 async fn test_zip_password_list_integration() {
-    use std::path::Path;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::NamedTempFile;
 
     // Create a temporary database
     let temp_db = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_db.path()).await.unwrap();
+    let _db = Database::new(temp_db.path()).await.unwrap();
 
     // Create a password list with multiple passwords
     let passwords = PasswordList::collect(None, Some("secret123"), None, None, true).await;
@@ -572,7 +570,7 @@ async fn test_7z_password_priority_order() {
     // 5. Empty password (lowest)
 
     let temp_db = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_db.path()).await.unwrap();
+    let _db = Database::new(temp_db.path()).await.unwrap();
 
     // All password sources
     let passwords =
@@ -591,7 +589,7 @@ async fn test_zip_password_priority_order() {
     use tempfile::NamedTempFile;
 
     let temp_db = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_db.path()).await.unwrap();
+    let _db = Database::new(temp_db.path()).await.unwrap();
 
     // Test priority: cached > download > nzb > file > empty
     let passwords = PasswordList::collect(
@@ -646,7 +644,7 @@ async fn test_7z_password_deduplication() {
     use tempfile::NamedTempFile;
 
     let temp_db = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_db.path()).await.unwrap();
+    let _db = Database::new(temp_db.path()).await.unwrap();
 
     // Test that duplicate passwords are removed
     let passwords = PasswordList::collect(
@@ -669,7 +667,7 @@ async fn test_zip_password_deduplication() {
     use tempfile::NamedTempFile;
 
     let temp_db = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_db.path()).await.unwrap();
+    let _db = Database::new(temp_db.path()).await.unwrap();
 
     // Test that duplicate passwords are removed
     let passwords = PasswordList::collect(

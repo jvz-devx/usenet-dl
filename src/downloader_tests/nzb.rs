@@ -583,11 +583,11 @@ async fn test_start_folder_watcher_with_configured_folders() {
         servers: vec![],
         automation: config::AutomationConfig {
             watch_folders: vec![config::WatchFolderConfig {
-            path: watch_path.clone(),
-            after_import: config::WatchFolderAction::Delete,
-            category: Some("test".to_string()),
-            scan_interval: Duration::from_secs(5),
-        }],
+                path: watch_path.clone(),
+                after_import: config::WatchFolderAction::Delete,
+                category: Some("test".to_string()),
+                scan_interval: Duration::from_secs(5),
+            }],
             ..Default::default()
         },
         ..Default::default()

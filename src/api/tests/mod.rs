@@ -1,7 +1,6 @@
 use super::*;
-use crate::config::{CategoryConfig, PostProcess};
-use crate::types::DownloadId;
 use crate::Config;
+use crate::config::{CategoryConfig, PostProcess};
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::StatusCode;
@@ -1061,7 +1060,6 @@ async fn test_openapi_spec_validation() {
 async fn test_api_documentation_completeness() {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use serde_json::Value;
     use tower::ServiceExt; // for oneshot
 
     println!("\n=== Testing API Documentation Completeness ===\n");

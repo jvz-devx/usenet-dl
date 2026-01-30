@@ -5,9 +5,9 @@
 
 use crate::error::{ApiError, Error, ToHttpStatus};
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 
 /// Implement IntoResponse for Error to automatically convert errors to HTTP responses
@@ -35,8 +35,6 @@ impl IntoResponse for ApiError {
 mod tests {
     use super::*;
     use crate::error::{DatabaseError, DownloadError, PostProcessError};
-    use axum::body::Body;
-    use axum::http::Request;
     use std::path::PathBuf;
 
     #[test]

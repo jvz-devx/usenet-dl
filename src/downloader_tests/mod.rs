@@ -14,7 +14,9 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     config.download.max_concurrent_downloads = 3;
 
     // Initialize database
-    let db = Database::new(&config.persistence.database_path).await.unwrap();
+    let db = Database::new(&config.persistence.database_path)
+        .await
+        .unwrap();
 
     // Create broadcast channel
     let (event_tx, _rx) = tokio::sync::broadcast::channel(1000);
@@ -26,8 +28,9 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let queue = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BinaryHeap::new()));
 
     // Create semaphore
-    let concurrent_limit =
-        std::sync::Arc::new(tokio::sync::Semaphore::new(config.download.max_concurrent_downloads));
+    let concurrent_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(
+        config.download.max_concurrent_downloads,
+    ));
 
     // Create active downloads tracking map
     let active_downloads =
@@ -40,7 +43,9 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let config_arc = std::sync::Arc::new(config.clone());
 
     // Initialize runtime-mutable categories from config
-    let categories = std::sync::Arc::new(tokio::sync::RwLock::new(config.persistence.categories.clone()));
+    let categories = std::sync::Arc::new(tokio::sync::RwLock::new(
+        config.persistence.categories.clone(),
+    ));
 
     // Initialize runtime-mutable schedule rules (empty for tests)
     let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(vec![]));
@@ -116,15 +121,15 @@ const SAMPLE_NZB: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   </file>
 </nzb>"#;
 
+mod control;
+mod disk_space;
+mod duplicates;
+mod lifecycle;
 mod nzb;
 mod queue;
-mod control;
-mod lifecycle;
-mod speed;
-mod duplicates;
-mod webhooks;
-mod scripts;
-mod disk_space;
-mod server;
 mod rss;
 mod scheduler;
+mod scripts;
+mod server;
+mod speed;
+mod webhooks;

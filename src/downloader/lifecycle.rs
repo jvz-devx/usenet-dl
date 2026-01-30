@@ -23,7 +23,8 @@ impl UsenetDownloader {
         tracing::info!("Initiating graceful shutdown");
 
         // 1. Stop accepting new downloads
-        self.queue_state.accepting_new
+        self.queue_state
+            .accepting_new
             .store(false, std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Stopped accepting new downloads");
 

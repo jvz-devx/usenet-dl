@@ -168,23 +168,16 @@ impl UsenetDownloader {
         let pending_articles = self.db.get_pending_articles(id).await?;
 
         if pending_articles.is_empty() {
-            // All articles downloaded, proceed to post-processing
+            // All articles downloaded — mark as Processing.
+            // The caller is responsible for spawning post-processing if needed.
             tracing::info!(
                 download_id = id.0,
-                "No pending articles - proceeding to post-processing"
+                "No pending articles - marking as Processing"
             );
 
-            // Start post-processing pipeline asynchronously
-            let downloader = self.clone();
-            tokio::spawn(async move {
-                if let Err(e) = downloader.start_post_processing(id).await {
-                    tracing::error!(
-                        download_id = id.0,
-                        error = %e,
-                        "Post-processing failed"
-                    );
-                }
-            });
+            self.db
+                .update_status(id, Status::Processing.to_i32())
+                .await?;
 
             Ok(())
         } else {
@@ -248,7 +241,11 @@ impl UsenetDownloader {
         self.remove_from_queue(id).await;
 
         // Delete downloaded files from temp directory
-        let download_temp_dir = self.config.download.temp_dir.join(format!("download_{}", id.0));
+        let download_temp_dir = self
+            .config
+            .download
+            .temp_dir
+            .join(format!("download_{}", id.0));
         if download_temp_dir.exists() {
             if let Err(e) = tokio::fs::remove_dir_all(&download_temp_dir).await {
                 tracing::warn!(
@@ -337,7 +334,11 @@ impl UsenetDownloader {
             .ok_or_else(|| Error::NotFound(format!("Download {} not found", id.0)))?;
 
         // Determine download path (temp directory)
-        let download_path = self.config.download.temp_dir.join(format!("download_{}", id.0));
+        let download_path = self
+            .config
+            .download
+            .temp_dir
+            .join(format!("download_{}", id.0));
 
         // Verify download files still exist
         if !download_path.exists() {
@@ -397,7 +398,11 @@ impl UsenetDownloader {
             .ok_or_else(|| Error::NotFound(format!("Download {} not found", id.0)))?;
 
         // Determine download path (temp directory)
-        let download_path = self.config.download.temp_dir.join(format!("download_{}", id.0));
+        let download_path = self
+            .config
+            .download
+            .temp_dir
+            .join(format!("download_{}", id.0));
 
         // Verify download files still exist
         if !download_path.exists() {
@@ -440,7 +445,9 @@ impl UsenetDownloader {
                 .await
             {
                 Ok(final_path) => {
-                    downloader.handle_reextract_success(id, final_path, download).await;
+                    downloader
+                        .handle_reextract_success(id, final_path, download)
+                        .await;
                 }
                 Err(e) => {
                     downloader.handle_reextract_failure(id, e, download).await;
@@ -461,11 +468,7 @@ impl UsenetDownloader {
         tracing::info!(download_id = id.0, ?final_path, "Re-extraction complete");
 
         // Update status to complete
-        if let Err(e) = self
-            .db
-            .update_status(id, Status::Complete.to_i32())
-            .await
-        {
+        if let Err(e) = self.db.update_status(id, Status::Complete.to_i32()).await {
             tracing::error!(
                 download_id = id.0,
                 error = %e,
@@ -520,11 +523,7 @@ impl UsenetDownloader {
         );
 
         // Update status to failed
-        if let Err(db_err) = self
-            .db
-            .update_status(id, Status::Failed.to_i32())
-            .await
-        {
+        if let Err(db_err) = self.db.update_status(id, Status::Failed.to_i32()).await {
             tracing::error!(
                 download_id = id.0,
                 error = %db_err,

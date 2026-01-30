@@ -1,7 +1,6 @@
 //! Custom test assertions for E2E tests
 
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use usenet_dl::{DownloadId, Event, Status, UsenetDownloader};
 

@@ -30,14 +30,14 @@ async fn test_start_rss_scheduler_with_feeds() {
         servers: vec![],
         automation: config::AutomationConfig {
             rss_feeds: vec![config::RssFeedConfig {
-            url: "https://example.com/feed.xml".to_string(),
-            check_interval: Duration::from_secs(60), // 1 minute
-            category: Some("test".to_string()),
-            filters: vec![],
-            auto_download: true,
-            priority: Priority::Normal,
-            enabled: true,
-        }],
+                url: "https://example.com/feed.xml".to_string(),
+                check_interval: Duration::from_secs(60), // 1 minute
+                category: Some("test".to_string()),
+                filters: vec![],
+                auto_download: true,
+                priority: Priority::Normal,
+                enabled: true,
+            }],
             ..Default::default()
         },
         ..Default::default()
@@ -75,14 +75,14 @@ async fn test_start_rss_scheduler_respects_shutdown() {
         servers: vec![],
         automation: config::AutomationConfig {
             rss_feeds: vec![config::RssFeedConfig {
-            url: "https://example.com/feed.xml".to_string(),
-            check_interval: Duration::from_secs(60),
-            category: None,
-            filters: vec![],
-            auto_download: false,
-            priority: Priority::Normal,
-            enabled: true,
-        }],
+                url: "https://example.com/feed.xml".to_string(),
+                check_interval: Duration::from_secs(60),
+                category: None,
+                filters: vec![],
+                auto_download: false,
+                priority: Priority::Normal,
+                enabled: true,
+            }],
             ..Default::default()
         },
         ..Default::default()
@@ -98,7 +98,8 @@ async fn test_start_rss_scheduler_respects_shutdown() {
 
     // Trigger shutdown
     downloader
-        .queue_state.accepting_new
+        .queue_state
+        .accepting_new
         .store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Wait for scheduler to detect shutdown
@@ -181,14 +182,14 @@ async fn test_start_rss_scheduler_only_enabled_feeds() {
         servers: vec![],
         automation: config::AutomationConfig {
             rss_feeds: vec![config::RssFeedConfig {
-            url: "https://example.com/feed.xml".to_string(),
-            check_interval: Duration::from_secs(60),
-            category: None,
-            filters: vec![],
-            auto_download: false,
-            priority: Priority::Normal,
-            enabled: false, // Disabled
-        }],
+                url: "https://example.com/feed.xml".to_string(),
+                check_interval: Duration::from_secs(60),
+                category: None,
+                filters: vec![],
+                auto_download: false,
+                priority: Priority::Normal,
+                enabled: false, // Disabled
+            }],
             ..Default::default()
         },
         ..Default::default()

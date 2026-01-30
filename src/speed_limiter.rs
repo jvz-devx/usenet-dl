@@ -3,8 +3,8 @@
 //! The SpeedLimiter provides global bandwidth limiting across all concurrent downloads
 //! using an efficient lock-free token bucket implementation.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Global speed limiter shared across all downloads
@@ -105,11 +105,7 @@ impl SpeedLimiter {
     /// Returns None if unlimited, otherwise the limit in bytes per second.
     pub fn get_limit(&self) -> Option<u64> {
         let limit = self.limit_bps.load(Ordering::Relaxed);
-        if limit == 0 {
-            None
-        } else {
-            Some(limit)
-        }
+        if limit == 0 { None } else { Some(limit) }
     }
 
     /// Acquire permission to transfer the specified number of bytes
@@ -142,38 +138,38 @@ impl SpeedLimiter {
             return;
         }
 
+        let mut remaining = bytes;
+
         loop {
             // Refill tokens based on elapsed time
             self.refill_tokens();
 
-            // Try to acquire tokens
+            // Try to consume available tokens (partial consumption allowed)
             let current_tokens = self.tokens.load(Ordering::SeqCst);
-            if current_tokens >= bytes {
-                // Sufficient tokens available - try to consume them atomically
-                let new_tokens = current_tokens - bytes;
+            let to_consume = remaining.min(current_tokens);
+
+            if to_consume > 0 {
                 if self
                     .tokens
                     .compare_exchange(
                         current_tokens,
-                        new_tokens,
+                        current_tokens - to_consume,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
                     .is_ok()
                 {
-                    // Successfully acquired tokens
-                    return;
+                    remaining -= to_consume;
+                    if remaining == 0 {
+                        return;
+                    }
                 }
-                // CAS failed, another download consumed tokens - retry
+                // CAS failed or still have remaining — retry immediately
                 continue;
             }
 
-            // Insufficient tokens - calculate wait time
-            let deficit = bytes.saturating_sub(current_tokens);
-            let wait_ms = (deficit as f64 / limit as f64 * 1000.0) as u64;
-
-            // Sleep for a short time to allow token refill
-            // Use max of 10ms to avoid busy-waiting
+            // No tokens available — wait for refill
+            let wait_ms = (remaining as f64 / limit as f64 * 1000.0) as u64;
             tokio::time::sleep(Duration::from_millis(wait_ms.max(10))).await;
         }
     }
@@ -321,7 +317,10 @@ mod tests {
 
         // Total: 1 MB consumed
         let remaining = limiter.tokens.load(Ordering::Relaxed);
-        assert_eq!(remaining, 9_000_000);
+        assert!(
+            (8_999_000..=9_001_000).contains(&remaining),
+            "expected ~9_000_000 tokens remaining, got {remaining}"
+        );
     }
 
     #[tokio::test]

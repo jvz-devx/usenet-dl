@@ -26,13 +26,14 @@
 
 mod common;
 
-use common::{create_live_downloader, has_live_credentials, wait_for_completion, WaitResult};
+use common::{WaitResult, create_live_downloader, has_live_credentials, wait_for_completion};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::time::Duration;
 use usenet_dl::{DownloadOptions, Event, Status};
 
 /// Get test configuration from environment
+#[allow(dead_code)]
 struct TestConfig {
     nzb_path: PathBuf,
     timeout_secs: u64,
@@ -95,7 +96,9 @@ async fn test_real_nzb_download() {
         Some(c) => c,
         None => {
             eprintln!("Skipping: TEST_NZB_PATH environment variable not set");
-            eprintln!("Usage: TEST_NZB_PATH=/path/to/file.nzb cargo test --test e2e_real_nzb -- --ignored");
+            eprintln!(
+                "Usage: TEST_NZB_PATH=/path/to/file.nzb cargo test --test e2e_real_nzb -- --ignored"
+            );
             return;
         }
     };
@@ -142,7 +145,7 @@ async fn test_real_nzb_download() {
 
     // Subscribe to events for progress reporting
     let mut events = downloader.subscribe();
-    let downloader_clone = downloader.clone();
+    let _downloader_clone = downloader.clone();
     let progress_task = tokio::spawn(async move {
         let mut last_percent = -1.0_f32;
         loop {

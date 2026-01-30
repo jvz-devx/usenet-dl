@@ -43,7 +43,9 @@ use std::str::FromStr;
 use utoipa::ToSchema;
 
 /// Unique identifier for a schedule rule
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
 #[serde(transparent)]
 pub struct RuleId(pub i64);
 

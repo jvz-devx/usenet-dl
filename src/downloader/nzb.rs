@@ -66,7 +66,11 @@ impl UsenetDownloader {
         options: DownloadOptions,
     ) -> Result<DownloadId> {
         // Check if accepting new downloads (reject during shutdown)
-        if !self.queue_state.accepting_new.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self
+            .queue_state
+            .accepting_new
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             return Err(Error::ShuttingDown);
         }
 
@@ -78,8 +82,7 @@ impl UsenetDownloader {
         self.handle_duplicate_check(content, name).await?;
 
         // Determine destination directory and post-processing mode from category
-        let (destination, post_process) =
-            self.resolve_destination_and_post_process(&options).await;
+        let (destination, post_process) = self.resolve_destination_and_post_process(&options).await;
 
         // Determine job name (for deobfuscation and duplicate detection)
         // Use NZB meta title if available, otherwise the provided name
@@ -89,22 +92,26 @@ impl UsenetDownloader {
         let final_password = options.password.clone().or(nzb_password);
 
         // Create and insert download record
-        let download_id = self.create_download_record(
-            name,
-            &nzb,
-            nzb_meta_name,
-            nzb_hash,
-            job_name,
-            &options,
-            destination,
-            post_process,
-        ).await?;
+        let download_id = self
+            .create_download_record(
+                name,
+                &nzb,
+                nzb_meta_name,
+                nzb_hash,
+                job_name,
+                &options,
+                destination,
+                post_process,
+            )
+            .await?;
 
         // Insert all articles and cache password
-        self.insert_articles_and_password(&nzb, download_id, final_password).await?;
+        self.insert_articles_and_password(&nzb, download_id, final_password)
+            .await?;
 
         // Emit events, trigger webhooks, and add to queue
-        self.finalize_nzb_addition(download_id, name, &options).await?;
+        self.finalize_nzb_addition(download_id, name, &options)
+            .await?;
 
         Ok(download_id)
     }
@@ -192,17 +199,27 @@ impl UsenetDownloader {
         if let Some(category) = &options.category {
             let categories = self.runtime_config.categories.read().await;
             if let Some(cat_config) = categories.get(category) {
-                let dest = options.destination.clone().unwrap_or_else(|| cat_config.destination.clone());
+                let dest = options
+                    .destination
+                    .clone()
+                    .unwrap_or_else(|| cat_config.destination.clone());
                 let pp = options.post_process.unwrap_or_else(|| {
-                    cat_config.post_process.unwrap_or(self.config.download.default_post_process)
+                    cat_config
+                        .post_process
+                        .unwrap_or(self.config.download.default_post_process)
                 });
                 return (dest, pp);
             }
             // Category not found, fall through to defaults
         }
         // No category specified or category not found, use provided options or defaults
-        let dest = options.destination.clone().unwrap_or_else(|| self.config.download.download_dir.clone());
-        let pp = options.post_process.unwrap_or(self.config.download.default_post_process);
+        let dest = options
+            .destination
+            .clone()
+            .unwrap_or_else(|| self.config.download.download_dir.clone());
+        let pp = options
+            .post_process
+            .unwrap_or(self.config.download.default_post_process);
         (dest, pp)
     }
 
@@ -464,7 +481,8 @@ impl UsenetDownloader {
         }
 
         // Calculate required space: download size × multiplier + buffer
-        let required = (size_bytes as f64 * self.config.processing.disk_space.size_multiplier) as u64;
+        let required =
+            (size_bytes as f64 * self.config.processing.disk_space.size_multiplier) as u64;
         let required_with_buffer = required + self.config.processing.disk_space.min_free_space;
 
         // Determine path to check - use download_dir if it exists, otherwise check parent

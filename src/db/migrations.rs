@@ -2,8 +2,8 @@
 
 use crate::error::DatabaseError;
 use crate::{Error, Result};
-use sqlx::sqlite::SqlitePool;
 use sqlx::SqliteConnection;
+use sqlx::sqlite::SqlitePool;
 use std::path::Path;
 
 use super::Database;

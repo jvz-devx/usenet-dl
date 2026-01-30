@@ -145,7 +145,10 @@ impl UsenetDownloader {
             size_bytes,
         });
 
-        tracing::info!(download_id = download_id.0, "post-processing completed successfully");
+        tracing::info!(
+            download_id = download_id.0,
+            "post-processing completed successfully"
+        );
         Ok(())
     }
 

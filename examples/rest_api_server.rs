@@ -11,9 +11,9 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use usenet_dl::UsenetDownloader;
 use usenet_dl::api::start_api_server;
 use usenet_dl::config::{ApiConfig, Config, DownloadConfig, ServerConfig, ServerIntegrationConfig};
-use usenet_dl::UsenetDownloader;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -35,10 +35,10 @@
 //! # }
 //! ```
 
+use crate::UsenetDownloader;
 use crate::config::{WatchFolderAction, WatchFolderConfig};
 use crate::error::{Error, Result};
 use crate::types::DownloadOptions;
-use crate::UsenetDownloader;
 use notify::{
     Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
 };
@@ -319,7 +319,7 @@ mod tests {
     use super::*;
     use crate::config::{Config, WatchFolderAction, WatchFolderConfig};
     use tempfile::TempDir;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     async fn create_test_downloader() -> Arc<UsenetDownloader> {
         let temp_dir = TempDir::new().unwrap();

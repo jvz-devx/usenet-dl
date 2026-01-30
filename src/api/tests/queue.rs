@@ -303,7 +303,7 @@ async fn test_queue_stats_endpoint() {
   </file>
 </nzb>"#;
 
-    let download_id_1 = downloader
+    let _download_id_1 = downloader
         .add_nzb_content(
             nzb_content_1.as_bytes(),
             "test1.nzb",

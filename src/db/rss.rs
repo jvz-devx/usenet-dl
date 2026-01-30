@@ -3,7 +3,10 @@
 use crate::error::DatabaseError;
 use crate::{Error, Result};
 
-use super::{Database, InsertRssFilterParams, InsertRssFeedParams, RssFeed, RssFilterRow, UpdateRssFeedParams};
+use super::{
+    Database, InsertRssFeedParams, InsertRssFilterParams, RssFeed, RssFilterRow,
+    UpdateRssFeedParams,
+};
 
 impl Database {
     /// Get all RSS feeds
