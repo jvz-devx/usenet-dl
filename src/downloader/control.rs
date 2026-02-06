@@ -246,16 +246,16 @@ impl UsenetDownloader {
             .download
             .temp_dir
             .join(format!("download_{}", id.0));
-        if download_temp_dir.exists() {
-            if let Err(e) = tokio::fs::remove_dir_all(&download_temp_dir).await {
-                tracing::warn!(
-                    download_id = id.0,
-                    path = ?download_temp_dir,
-                    error = %e,
-                    "Failed to delete download temp directory"
-                );
-                // Continue anyway - database deletion is more important
-            }
+        if download_temp_dir.exists()
+            && let Err(e) = tokio::fs::remove_dir_all(&download_temp_dir).await
+        {
+            tracing::warn!(
+                download_id = id.0,
+                path = ?download_temp_dir,
+                error = %e,
+                "Failed to delete download temp directory"
+            );
+            // Continue anyway - database deletion is more important
         }
 
         // Delete download from database (cascades to articles, passwords)

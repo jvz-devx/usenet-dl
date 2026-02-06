@@ -115,23 +115,19 @@ pub(crate) async fn run_verify_stage(
 async fn find_par2_files(download_path: &Path) -> Result<Vec<PathBuf>> {
     let mut par2_files = Vec::new();
 
-    let mut entries = tokio::fs::read_dir(download_path).await.map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("failed to read directory: {}", e),
-        )
-    })?;
+    let mut entries = tokio::fs::read_dir(download_path)
+        .await
+        .map_err(|e| std::io::Error::other(format!("failed to read directory: {}", e)))?;
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
 
         let metadata = entry.metadata().await?;
-        if metadata.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext.eq_ignore_ascii_case("par2") {
-                    par2_files.push(path);
-                }
-            }
+        if metadata.is_file()
+            && let Some(ext) = path.extension()
+            && ext.eq_ignore_ascii_case("par2")
+        {
+            par2_files.push(path);
         }
     }
 

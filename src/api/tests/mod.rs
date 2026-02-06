@@ -55,7 +55,6 @@ async fn test_api_server_spawns() {
     api_handle.abort();
 
     // The test passes if we got here without panicking
-    assert!(true, "API server spawned successfully");
 }
 
 #[tokio::test]
@@ -170,7 +169,6 @@ async fn test_spawn_api_server_method() {
     api_handle.abort();
 
     // Test passes if we got here
-    assert!(true, "spawn_api_server method works");
 }
 
 #[tokio::test]
@@ -330,7 +328,7 @@ async fn test_server_starts_and_responds_to_health() {
     // Make an HTTP request to /health using reqwest
     let client = reqwest::Client::new();
     let url = format!("http://{}/health", addr);
-    let response = client.get(&url).send().await.unwrap();
+    let response = client.get(url).send().await.unwrap();
 
     // Verify response status
     assert_eq!(response.status(), reqwest::StatusCode::OK);
@@ -740,28 +738,26 @@ async fn test_swagger_ui_try_it_out_functionality() {
             );
 
             // 5. For POST/PUT/PATCH, check for request body schema
-            if ["post", "put", "patch"].contains(&method.as_str()) {
-                if op.contains_key("requestBody") {
-                    endpoints_with_request_body += 1;
-                    let request_body = op["requestBody"].as_object().unwrap();
-                    assert!(
-                        request_body.contains_key("content"),
-                        "Request body for {} {} must have content",
-                        method.to_uppercase(),
-                        path
-                    );
-                    println!("   ✅ Has request body schema");
-                }
+            if ["post", "put", "patch"].contains(&method.as_str()) && op.contains_key("requestBody")
+            {
+                endpoints_with_request_body += 1;
+                let request_body = op["requestBody"].as_object().unwrap();
+                assert!(
+                    request_body.contains_key("content"),
+                    "Request body for {} {} must have content",
+                    method.to_uppercase(),
+                    path
+                );
+                println!("   ✅ Has request body schema");
             }
 
             // 6. Check if success response has a schema (for "Try it out" to show response)
             for (status, response) in responses {
-                if status == "200" || status == "201" {
-                    let resp_obj = response.as_object().unwrap();
-                    if resp_obj.contains_key("content") {
-                        endpoints_with_response_schema += 1;
-                        println!("   ✅ Has response schema");
-                    }
+                if (status == "200" || status == "201")
+                    && response.as_object().unwrap().contains_key("content")
+                {
+                    endpoints_with_response_schema += 1;
+                    println!("   ✅ Has response schema");
                 }
             }
 
@@ -791,14 +787,14 @@ async fn test_swagger_ui_try_it_out_functionality() {
             }
 
             // 9. Check for examples (enhances "Try it out" experience)
-            if let Some(request_body) = op.get("requestBody") {
-                if request_body["content"].is_object() {
-                    for (_content_type, content) in request_body["content"].as_object().unwrap() {
-                        if content.get("example").is_some() || content.get("examples").is_some() {
-                            endpoints_with_examples += 1;
-                            println!("   ✅ Has request examples");
-                            break;
-                        }
+            if let Some(request_body) = op.get("requestBody")
+                && request_body["content"].is_object()
+            {
+                for (_content_type, content) in request_body["content"].as_object().unwrap() {
+                    if content.get("example").is_some() || content.get("examples").is_some() {
+                        endpoints_with_examples += 1;
+                        println!("   ✅ Has request examples");
+                        break;
                     }
                 }
             }
@@ -1035,11 +1031,11 @@ async fn test_openapi_spec_validation() {
     println!("   ✅ {} operations validated", total_operations);
 
     // Check components/schemas
-    if let Some(components) = spec_json.get("components") {
-        if let Some(schemas) = components.get("schemas") {
-            let schema_count = schemas.as_object().unwrap().len();
-            println!("   ✅ {} component schemas defined", schema_count);
-        }
+    if let Some(components) = spec_json.get("components")
+        && let Some(schemas) = components.get("schemas")
+    {
+        let schema_count = schemas.as_object().unwrap().len();
+        println!("   ✅ {} component schemas defined", schema_count);
     }
 
     // Clean up temp file
@@ -1414,7 +1410,7 @@ async fn test_rate_limiting_returns_429_when_exceeded() {
     // Make burst_size requests - should all succeed
     for i in 0..3 {
         let response = client
-            .get(&format!("{}/downloads", base_url))
+            .get(format!("{}/downloads", base_url))
             .send()
             .await
             .unwrap();
@@ -1440,7 +1436,7 @@ async fn test_rate_limiting_returns_429_when_exceeded() {
 
     println!("\n2. Testing rate limit exceeded (next request should return 429)...");
     let response = client
-        .get(&format!("{}/downloads", base_url))
+        .get(format!("{}/downloads", base_url))
         .send()
         .await
         .unwrap();
@@ -1492,7 +1488,7 @@ async fn test_rate_limiting_returns_429_when_exceeded() {
     tokio::time::sleep(Duration::from_secs(retry_after + 1)).await;
 
     let response = client
-        .get(&format!("{}/downloads", base_url))
+        .get(format!("{}/downloads", base_url))
         .send()
         .await
         .unwrap();
@@ -1511,7 +1507,7 @@ async fn test_rate_limiting_returns_429_when_exceeded() {
     // Make many requests to exempt path - should all succeed
     for i in 0..10 {
         let response = client
-            .get(&format!("{}/health", base_url))
+            .get(format!("{}/health", base_url))
             .send()
             .await
             .unwrap();

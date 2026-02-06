@@ -209,30 +209,30 @@ impl UsenetDownloader {
         }
 
         // Category scripts first
-        if let Some(cat_name) = &category {
-            if let Some(cat_config) = self.config.persistence.categories.get(cat_name) {
-                // Check if any category scripts match this event before cloning
-                let matching_scripts: Vec<_> = cat_config
-                    .scripts
-                    .iter()
-                    .filter(|s| s.events.contains(&event_type))
-                    .collect();
+        if let Some(cat_name) = &category
+            && let Some(cat_config) = self.config.persistence.categories.get(cat_name)
+        {
+            // Check if any category scripts match this event before cloning
+            let matching_scripts: Vec<_> = cat_config
+                .scripts
+                .iter()
+                .filter(|s| s.events.contains(&event_type))
+                .collect();
 
-                if !matching_scripts.is_empty() {
-                    // Only clone env_vars if we have matching scripts
-                    let mut cat_env_vars = env_vars.clone();
-                    cat_env_vars.insert(
-                        "USENET_DL_CATEGORY_DESTINATION".to_string(),
-                        cat_config.destination.display().to_string(),
-                    );
-                    cat_env_vars.insert(
-                        "USENET_DL_IS_CATEGORY_SCRIPT".to_string(),
-                        "true".to_string(),
-                    );
+            if !matching_scripts.is_empty() {
+                // Only clone env_vars if we have matching scripts
+                let mut cat_env_vars = env_vars.clone();
+                cat_env_vars.insert(
+                    "USENET_DL_CATEGORY_DESTINATION".to_string(),
+                    cat_config.destination.display().to_string(),
+                );
+                cat_env_vars.insert(
+                    "USENET_DL_IS_CATEGORY_SCRIPT".to_string(),
+                    "true".to_string(),
+                );
 
-                    for script in matching_scripts {
-                        self.run_script_async(&script.path, script.timeout, &cat_env_vars);
-                    }
+                for script in matching_scripts {
+                    self.run_script_async(&script.path, script.timeout, &cat_env_vars);
                 }
             }
         }

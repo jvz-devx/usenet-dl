@@ -309,5 +309,7 @@ pub struct Database {
     pool: SqlitePool,
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests;

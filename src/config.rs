@@ -134,7 +134,7 @@ pub struct NotificationConfig {
 /// meaning the JSON/TOML format remains unchanged (no nesting).
 /// Individual fields are also accessible directly on `Config` via `Deref`-style
 /// accessor methods for convenience.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct Config {
     /// NNTP server configurations (at least one required)
     pub servers: Vec<ServerConfig>,
@@ -178,21 +178,6 @@ impl Config {
     /// Temporary directory
     pub fn temp_dir(&self) -> &PathBuf {
         &self.download.temp_dir
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            servers: vec![],
-            download: DownloadConfig::default(),
-            tools: ToolsConfig::default(),
-            notifications: NotificationConfig::default(),
-            processing: ProcessingConfig::default(),
-            persistence: PersistenceConfig::default(),
-            automation: AutomationConfig::default(),
-            server: ServerIntegrationConfig::default(),
-        }
     }
 }
 
@@ -270,7 +255,7 @@ impl Default for RetryConfig {
 }
 
 /// Post-processing mode
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PostProcess {
     /// Just download, no post-processing
@@ -282,13 +267,8 @@ pub enum PostProcess {
     /// Above + extract archives
     Unpack,
     /// Above + remove intermediate files (default)
+    #[default]
     UnpackAndCleanup,
-}
-
-impl Default for PostProcess {
-    fn default() -> Self {
-        PostProcess::UnpackAndCleanup
-    }
 }
 
 impl PostProcess {
@@ -317,21 +297,16 @@ impl PostProcess {
 }
 
 /// Action to take when post-processing fails
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FailedDownloadAction {
     /// Keep files in the download directory (default)
+    #[default]
     Keep,
     /// Delete all downloaded files
     Delete,
     /// Move to a dedicated failed downloads directory
     MoveToFailed,
-}
-
-impl Default for FailedDownloadAction {
-    fn default() -> Self {
-        FailedDownloadAction::Keep
-    }
 }
 
 /// Archive extraction configuration
@@ -356,21 +331,16 @@ impl Default for ExtractionConfig {
 }
 
 /// File collision handling strategy
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FileCollisionAction {
     /// Append (1), (2), etc. to filename (default)
+    #[default]
     Rename,
     /// Overwrite existing file
     Overwrite,
     /// Skip the file, keep existing
     Skip,
-}
-
-impl Default for FileCollisionAction {
-    fn default() -> Self {
-        FileCollisionAction::Rename
-    }
 }
 
 /// Obfuscated filename detection and renaming configuration
@@ -421,21 +391,16 @@ impl Default for DuplicateConfig {
 }
 
 /// Action to take when duplicate detected
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DuplicateAction {
     /// Block the download entirely
     Block,
     /// Allow but emit warning event (default)
+    #[default]
     Warn,
     /// Allow silently
     Allow,
-}
-
-impl Default for DuplicateAction {
-    fn default() -> Self {
-        DuplicateAction::Warn
-    }
 }
 
 /// Duplicate detection method
@@ -517,7 +482,7 @@ impl Default for CleanupConfig {
 /// Groups settings related to post-download file processing, validation,
 /// and cleanup. All settings in this config are used together during the
 /// post-processing pipeline.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct ProcessingConfig {
     /// Archive extraction configuration
     #[serde(default)]
@@ -540,23 +505,11 @@ pub struct ProcessingConfig {
     pub cleanup: CleanupConfig,
 }
 
-impl Default for ProcessingConfig {
-    fn default() -> Self {
-        Self {
-            extraction: ExtractionConfig::default(),
-            duplicate: DuplicateConfig::default(),
-            disk_space: DiskSpaceConfig::default(),
-            retry: RetryConfig::default(),
-            cleanup: CleanupConfig::default(),
-        }
-    }
-}
-
 /// Automated content discovery and ingestion configuration
 ///
 /// Groups settings related to automated content sources (RSS, watch folders)
 /// and content naming intelligence (deobfuscation).
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct AutomationConfig {
     /// RSS feed configurations
     #[serde(default)]
@@ -569,16 +522,6 @@ pub struct AutomationConfig {
     /// Filename deobfuscation configuration
     #[serde(default)]
     pub deobfuscation: DeobfuscationConfig,
-}
-
-impl Default for AutomationConfig {
-    fn default() -> Self {
-        Self {
-            rss_feeds: vec![],
-            watch_folders: vec![],
-            deobfuscation: DeobfuscationConfig::default(),
-        }
-    }
 }
 
 /// Data storage and state management configuration
@@ -613,19 +556,11 @@ impl Default for PersistenceConfig {
 /// API and external server integration configuration
 ///
 /// Groups settings for external access and control interfaces.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct ServerIntegrationConfig {
     /// REST API configuration
     #[serde(default)]
     pub api: ApiConfig,
-}
-
-impl Default for ServerIntegrationConfig {
-    fn default() -> Self {
-        Self {
-            api: ApiConfig::default(),
-        }
-    }
 }
 
 /// REST API configuration
@@ -783,21 +718,16 @@ pub struct WatchFolderConfig {
 }
 
 /// Action to take with NZB file after import
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WatchFolderAction {
     /// Delete NZB file
     Delete,
     /// Move to a 'processed' subfolder (default)
+    #[default]
     MoveToProcessed,
     /// Keep in place
     Keep,
-}
-
-impl Default for WatchFolderAction {
-    fn default() -> Self {
-        WatchFolderAction::MoveToProcessed
-    }
 }
 
 /// Webhook configuration
@@ -1150,6 +1080,8 @@ pub struct ConfigUpdate {
     pub speed_limit_bps: Option<Option<u64>>,
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

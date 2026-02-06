@@ -217,10 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 swagger_ui: true,
                 ..Default::default()
             },
-            ..Default::default()
         },
-
-        ..Default::default()
     };
 
     println!("Configuration:");

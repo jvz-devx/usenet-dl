@@ -362,41 +362,41 @@ impl RssManager {
 
         // Check size constraints
         if let Some(size) = item.size {
-            if let Some(min_size) = filter.min_size {
-                if size < min_size {
-                    debug!(
-                        "Item '{}' rejected: size {} < min {}",
-                        item.title, size, min_size
-                    );
-                    return false;
-                }
+            if let Some(min_size) = filter.min_size
+                && size < min_size
+            {
+                debug!(
+                    "Item '{}' rejected: size {} < min {}",
+                    item.title, size, min_size
+                );
+                return false;
             }
 
-            if let Some(max_size) = filter.max_size {
-                if size > max_size {
-                    debug!(
-                        "Item '{}' rejected: size {} > max {}",
-                        item.title, size, max_size
-                    );
-                    return false;
-                }
+            if let Some(max_size) = filter.max_size
+                && size > max_size
+            {
+                debug!(
+                    "Item '{}' rejected: size {} > max {}",
+                    item.title, size, max_size
+                );
+                return false;
             }
         }
 
         // Check age constraint
-        if let Some(max_age) = filter.max_age {
-            if let Some(pub_date) = item.pub_date {
-                let age = Utc::now().signed_duration_since(pub_date);
-                let max_age_chrono =
-                    chrono::Duration::from_std(max_age).unwrap_or_else(|_| chrono::Duration::MAX);
+        if let Some(max_age) = filter.max_age
+            && let Some(pub_date) = item.pub_date
+        {
+            let age = Utc::now().signed_duration_since(pub_date);
+            let max_age_chrono =
+                chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::MAX);
 
-                if age > max_age_chrono {
-                    debug!(
-                        "Item '{}' rejected: age {:?} > max {:?}",
-                        item.title, age, max_age_chrono
-                    );
-                    return false;
-                }
+            if age > max_age_chrono {
+                debug!(
+                    "Item '{}' rejected: age {:?} > max {:?}",
+                    item.title, age, max_age_chrono
+                );
+                return false;
             }
         }
 
@@ -494,5 +494,7 @@ impl RssManager {
     }
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests;

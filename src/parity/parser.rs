@@ -65,55 +65,53 @@ pub fn parse_par2_verify_output(
         let line_lower = line.to_lowercase();
 
         // Look for damaged/missing block counts
-        if line_lower.contains("damaged") || line_lower.contains("missing") {
-            // Try to extract numbers from patterns like "X blocks damaged" or "Missing X blocks"
-            if let Some(count) = extract_number_before_blocks(&line_lower) {
-                damaged_blocks = damaged_blocks.max(count);
-            }
+        if (line_lower.contains("damaged") || line_lower.contains("missing"))
+            && let Some(count) = extract_number_before_blocks(&line_lower)
+        {
+            damaged_blocks = damaged_blocks.max(count);
         }
 
         // Look for recovery block information
-        if line_lower.contains("recovery") && line_lower.contains("block") {
-            if let Some(count) = extract_number_before_blocks(&line_lower) {
-                recovery_blocks_available = recovery_blocks_available.max(count);
-            }
+        if line_lower.contains("recovery")
+            && line_lower.contains("block")
+            && let Some(count) = extract_number_before_blocks(&line_lower)
+        {
+            recovery_blocks_available = recovery_blocks_available.max(count);
         }
 
         // Look for specific file mentions
-        if line_lower.contains("damaged:") || line_lower.contains("corrupt:") {
-            if let Some(filename) = line.split(':').nth(1) {
-                let filename = filename.trim().to_string();
-                if !filename.is_empty() && !damaged_files.contains(&filename) {
-                    damaged_files.push(filename);
-                }
+        if (line_lower.contains("damaged:") || line_lower.contains("corrupt:"))
+            && let Some(filename) = line.split(':').nth(1)
+        {
+            let filename = filename.trim().to_string();
+            if !filename.is_empty() && !damaged_files.contains(&filename) {
+                damaged_files.push(filename);
             }
         }
 
-        if line_lower.contains("missing:") {
-            if let Some(filename) = line.split(':').nth(1) {
-                let filename = filename.trim().to_string();
-                if !filename.is_empty() && !missing_files.contains(&filename) {
-                    missing_files.push(filename);
-                }
+        if line_lower.contains("missing:")
+            && let Some(filename) = line.split(':').nth(1)
+        {
+            let filename = filename.trim().to_string();
+            if !filename.is_empty() && !missing_files.contains(&filename) {
+                missing_files.push(filename);
             }
         }
 
         // Handle par2cmdline format: Target: "filename" - missing.
-        if line_lower.contains("- missing") {
-            if let Some(filename) = extract_filename_from_line(line) {
-                if !missing_files.contains(&filename) {
-                    missing_files.push(filename);
-                }
-            }
+        if line_lower.contains("- missing")
+            && let Some(filename) = extract_filename_from_line(line)
+            && !missing_files.contains(&filename)
+        {
+            missing_files.push(filename);
         }
 
         // Handle par2cmdline format: Target: "filename" - damaged.
-        if line_lower.contains("- damaged") {
-            if let Some(filename) = extract_filename_from_line(line) {
-                if !damaged_files.contains(&filename) {
-                    damaged_files.push(filename);
-                }
-            }
+        if line_lower.contains("- damaged")
+            && let Some(filename) = extract_filename_from_line(line)
+            && !damaged_files.contains(&filename)
+        {
+            damaged_files.push(filename);
         }
     }
 
@@ -168,28 +166,24 @@ pub fn parse_par2_repair_output(
         let line_lower = line.to_lowercase();
 
         // Look for repair success indicators
-        if line_lower.contains("repaired") || line_lower.contains("restored") {
-            if let Some(filename) = extract_filename_from_line(line) {
-                if !repaired_files.contains(&filename) {
-                    repaired_files.push(filename);
-                }
-            }
+        if (line_lower.contains("repaired") || line_lower.contains("restored"))
+            && let Some(filename) = extract_filename_from_line(line)
+            && !repaired_files.contains(&filename)
+        {
+            repaired_files.push(filename);
         }
 
         // Look for repair failures
-        if line_lower.contains("failed") || line_lower.contains("could not repair") {
-            if let Some(filename) = extract_filename_from_line(line) {
-                if !failed_files.contains(&filename) {
-                    failed_files.push(filename);
-                }
-            }
+        if (line_lower.contains("failed") || line_lower.contains("could not repair"))
+            && let Some(filename) = extract_filename_from_line(line)
+            && !failed_files.contains(&filename)
+        {
+            failed_files.push(filename);
         }
 
         // Capture error messages
-        if line_lower.contains("error") {
-            if error.is_none() {
-                error = Some(line.trim().to_string());
-            }
+        if line_lower.contains("error") && error.is_none() {
+            error = Some(line.trim().to_string());
         }
     }
 
@@ -234,10 +228,10 @@ fn extract_number_before_blocks(line: &str) -> Option<u32> {
 /// Extract filename from a line (look for quoted strings or after colons)
 fn extract_filename_from_line(line: &str) -> Option<String> {
     // Try to find quoted filename first
-    if let Some(start) = line.find('"') {
-        if let Some(end) = line[start + 1..].find('"') {
-            return Some(line[start + 1..start + 1 + end].to_string());
-        }
+    if let Some(start) = line.find('"')
+        && let Some(end) = line[start + 1..].find('"')
+    {
+        return Some(line[start + 1..start + 1 + end].to_string());
     }
 
     // Try to find filename after colon
@@ -251,6 +245,8 @@ fn extract_filename_from_line(line: &str) -> Option<String> {
     None
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,8 +317,14 @@ mod tests {
         assert_eq!(extract_number_before_blocks("10 block available"), Some(10));
         assert_eq!(extract_number_before_blocks("damaged blocks"), None);
         // par2cmdline formats with intervening words
-        assert_eq!(extract_number_before_blocks("found 1999 of 2000 data blocks"), Some(2000));
-        assert_eq!(extract_number_before_blocks("you have 577 recovery blocks available"), Some(577));
+        assert_eq!(
+            extract_number_before_blocks("found 1999 of 2000 data blocks"),
+            Some(2000)
+        );
+        assert_eq!(
+            extract_number_before_blocks("you have 577 recovery blocks available"),
+            Some(577)
+        );
     }
 
     #[test]

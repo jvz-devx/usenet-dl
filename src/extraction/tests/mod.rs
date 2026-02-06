@@ -77,7 +77,7 @@ async fn test_password_list_from_file() {
     writeln!(temp_file, "password1").unwrap();
     writeln!(temp_file, "password2").unwrap();
     writeln!(temp_file, "password3").unwrap();
-    writeln!(temp_file, "").unwrap(); // Empty line should be ignored
+    writeln!(temp_file).unwrap(); // Empty line should be ignored
     writeln!(temp_file, "  password4  ").unwrap(); // Should be trimmed
     temp_file.flush().unwrap();
 
@@ -776,8 +776,10 @@ async fn test_extract_recursive_depth_limit() {
     let _db = Database::new(temp_db.path()).await.unwrap();
     let passwords = PasswordList::collect(None, None, None, None, false).await;
 
-    let mut config = ExtractionConfig::default();
-    config.max_recursion_depth = 0; // Don't recurse at all
+    let config = ExtractionConfig {
+        max_recursion_depth: 0, // Don't recurse at all
+        ..ExtractionConfig::default()
+    };
 
     // This will fail because the file doesn't exist, but we're testing the depth limit
     // In a real scenario with a working archive, it would extract but not recurse
@@ -804,8 +806,10 @@ async fn test_extract_recursive_respects_depth() {
     let _db = Database::new(temp_db.path()).await.unwrap();
     let passwords = PasswordList::collect(None, None, None, None, false).await;
 
-    let mut config = ExtractionConfig::default();
-    config.max_recursion_depth = 2; // Allow 2 levels of nesting
+    let config = ExtractionConfig {
+        max_recursion_depth: 2, // Allow 2 levels of nesting
+        ..ExtractionConfig::default()
+    };
 
     // Test that current_depth is tracked properly
     // At depth 2, should not recurse further
@@ -832,8 +836,10 @@ async fn test_extract_recursive_custom_extensions() {
     let _db = Database::new(temp_db.path()).await.unwrap();
     let _passwords = PasswordList::collect(None, None, None, None, false);
 
-    let mut config = ExtractionConfig::default();
-    config.archive_extensions = vec!["rar".to_string()]; // Only RAR files
+    let config = ExtractionConfig {
+        archive_extensions: vec!["rar".to_string()], // Only RAR files
+        ..ExtractionConfig::default()
+    };
 
     // This verifies that the config is used for extension checking
     assert!(is_archive(

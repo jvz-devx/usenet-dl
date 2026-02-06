@@ -28,7 +28,7 @@ impl Database {
         })?;
 
         // If the value is missing or "false", it was an unclean shutdown
-        Ok(value.map_or(true, |v| v != "true"))
+        Ok(value.is_none_or(|v| v != "true"))
     }
 
     /// Mark that the application has started cleanly

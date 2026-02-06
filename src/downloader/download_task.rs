@@ -10,6 +10,11 @@ use super::UsenetDownloader;
 /// Maximum article failure ratio before considering a download failed (50%)
 const MAX_FAILURE_RATIO: f64 = 0.5;
 
+/// Result type for a collection of downloaded article batches.
+/// Each batch either succeeds with a list of (segment_number, size_bytes) pairs,
+/// or fails with an error message and the number of articles in the batch.
+type BatchResultVec = Vec<std::result::Result<Vec<(i32, u64)>, (String, usize)>>;
+
 /// Shared context for a single download task, reducing parameter passing between helpers.
 pub(crate) struct DownloadTaskContext {
     pub(crate) id: DownloadId,
@@ -209,17 +214,17 @@ async fn download_articles(
         prepare_batches(&ctx.config, pending_articles);
 
     // Download all batches in parallel
-    let results = download_all_batches(
+    let results = download_all_batches(DownloadAllBatchesParams {
         id,
         article_batches,
         ctx,
-        &batch_tx,
-        &downloaded_bytes,
-        &downloaded_articles,
+        batch_tx: &batch_tx,
+        downloaded_bytes: &downloaded_bytes,
+        downloaded_articles: &downloaded_articles,
         download_temp_dir,
         concurrency,
         pipeline_depth,
-    )
+    })
     .await;
 
     // Clean up background tasks
@@ -289,18 +294,32 @@ fn prepare_batches(
     (concurrency, pipeline_depth, article_batches)
 }
 
-/// Download all article batches in parallel using a buffered stream.
-async fn download_all_batches(
+/// Parameters for downloading all article batches
+struct DownloadAllBatchesParams<'a> {
     id: DownloadId,
     article_batches: Vec<Vec<crate::db::Article>>,
-    ctx: &DownloadTaskContext,
-    batch_tx: &tokio::sync::mpsc::Sender<(i64, i32)>,
-    downloaded_bytes: &Arc<AtomicU64>,
-    downloaded_articles: &Arc<AtomicU64>,
-    download_temp_dir: &std::path::Path,
+    ctx: &'a DownloadTaskContext,
+    batch_tx: &'a tokio::sync::mpsc::Sender<(i64, i32)>,
+    downloaded_bytes: &'a Arc<AtomicU64>,
+    downloaded_articles: &'a Arc<AtomicU64>,
+    download_temp_dir: &'a std::path::Path,
     concurrency: usize,
     pipeline_depth: usize,
-) -> Vec<std::result::Result<Vec<(i32, u64)>, (String, usize)>> {
+}
+
+/// Download all article batches in parallel using a buffered stream.
+async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResultVec {
+    let DownloadAllBatchesParams {
+        id,
+        article_batches,
+        ctx,
+        batch_tx,
+        downloaded_bytes,
+        downloaded_articles,
+        download_temp_dir,
+        concurrency,
+        pipeline_depth,
+    } = params;
     stream::iter(article_batches)
         .map(|article_batch| {
             let pool = Arc::clone(&ctx.nntp_pools);
@@ -347,9 +366,7 @@ async fn cleanup_background_tasks(
 }
 
 /// Aggregate batch results into success/failure counts and first error.
-fn aggregate_results(
-    results: Vec<std::result::Result<Vec<(i32, u64)>, (String, usize)>>,
-) -> DownloadResults {
+fn aggregate_results(results: BatchResultVec) -> DownloadResults {
     let mut success_count = 0;
     let mut failed_count = 0;
     let mut first_error: Option<String> = None;

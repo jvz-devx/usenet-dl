@@ -1114,7 +1114,7 @@ fn test_day_transition_friday_to_saturday() {
 
     // Create a Friday at 23:00:00 (safely within the window)
     while test_day.weekday() != chrono::Weekday::Fri {
-        test_day = test_day + chrono::Duration::days(1);
+        test_day += chrono::Duration::days(1);
     }
     let friday_night = test_day
         .with_hour(23)
@@ -1165,7 +1165,7 @@ fn test_day_transition_saturday_to_sunday_weekend_rule() {
     let base = Local::now();
     let mut saturday = base;
     while saturday.weekday() != chrono::Weekday::Sat {
-        saturday = saturday + chrono::Duration::days(1);
+        saturday += chrono::Duration::days(1);
     }
 
     // Saturday afternoon
@@ -1366,7 +1366,7 @@ fn test_specific_day_vs_all_days_priority() {
     let base = Local::now();
     let mut monday = base;
     while monday.weekday() != chrono::Weekday::Mon {
-        monday = monday + chrono::Duration::days(1);
+        monday += chrono::Duration::days(1);
     }
 
     let rules = vec![

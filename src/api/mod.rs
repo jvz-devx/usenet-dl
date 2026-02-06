@@ -270,7 +270,7 @@ pub async fn start_api_server(
     // Bind TCP listener to the configured address
     let listener = TcpListener::bind(bind_address)
         .await
-        .map_err(|e| crate::error::Error::Io(e))?;
+        .map_err(crate::error::Error::Io)?;
 
     tracing::info!(
         address = %bind_address,
@@ -291,5 +291,7 @@ pub async fn start_api_server(
     Ok(())
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests;

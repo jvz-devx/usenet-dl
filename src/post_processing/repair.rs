@@ -16,23 +16,19 @@ use super::PostProcessError;
 async fn find_par2_files(download_path: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut par2_files = Vec::new();
 
-    let mut entries = tokio::fs::read_dir(download_path).await.map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("failed to read directory: {}", e),
-        )
-    })?;
+    let mut entries = tokio::fs::read_dir(download_path)
+        .await
+        .map_err(|e| std::io::Error::other(format!("failed to read directory: {}", e)))?;
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
 
         let metadata = entry.metadata().await?;
-        if metadata.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext.eq_ignore_ascii_case("par2") {
-                    par2_files.push(path);
-                }
-            }
+        if metadata.is_file()
+            && let Some(ext) = path.extension()
+            && ext.eq_ignore_ascii_case("par2")
+        {
+            par2_files.push(path);
         }
     }
 
@@ -105,7 +101,7 @@ pub(crate) async fn run_repair_stage(
             // Emit RepairSkipped event
             event_tx
                 .send(Event::RepairSkipped {
-                    id: download_id.into(),
+                    id: download_id,
                     reason: format!("PAR2 verification not supported: {}", msg),
                 })
                 .ok();
@@ -118,7 +114,7 @@ pub(crate) async fn run_repair_stage(
     // Emit Repairing event
     event_tx
         .send(Event::Repairing {
-            id: download_id.into(),
+            id: download_id,
             blocks_needed: verify_result.damaged_blocks,
             blocks_available: verify_result.recovery_blocks_available,
         })
@@ -138,7 +134,7 @@ pub(crate) async fn run_repair_stage(
             // Emit RepairSkipped event
             event_tx
                 .send(Event::RepairSkipped {
-                    id: download_id.into(),
+                    id: download_id,
                     reason: msg.clone(),
                 })
                 .ok();
@@ -159,7 +155,7 @@ pub(crate) async fn run_repair_stage(
     // Emit RepairComplete event
     event_tx
         .send(Event::RepairComplete {
-            id: download_id.into(),
+            id: download_id,
             success: repair_result.success,
         })
         .ok();

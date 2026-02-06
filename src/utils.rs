@@ -32,7 +32,6 @@ const MAX_RENAME_ATTEMPTS: u32 = 9999;
 /// // If /tmp/movie.mkv exists, returns /tmp/movie (1).mkv
 /// // If that exists too, returns /tmp/movie (2).mkv, etc.
 /// ```
-#[must_use]
 pub fn get_unique_path(path: &Path, action: FileCollisionAction) -> Result<PathBuf> {
     match action {
         FileCollisionAction::Overwrite => {
@@ -168,39 +167,39 @@ pub fn is_sample(path: &Path) -> bool {
 /// ```
 pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -> String {
     // Try to extract from Content-Disposition header
-    if let Some(content_disposition) = response.headers().get("content-disposition") {
-        if let Ok(value) = content_disposition.to_str() {
-            // Parse filename from Content-Disposition header
-            // Format: attachment; filename="file.nzb" or filename*=UTF-8''file.nzb
-            for part in value.split(';') {
-                let part = part.trim();
-                if part.starts_with("filename=") {
-                    let filename = part
-                        .trim_start_matches("filename=")
-                        .trim_matches('"')
-                        .to_string();
-                    // Remove extension
-                    if let Some(stem) = std::path::Path::new(&filename).file_stem() {
-                        if let Some(stem_str) = stem.to_str() {
+    if let Some(content_disposition) = response.headers().get("content-disposition")
+        && let Ok(value) = content_disposition.to_str()
+    {
+        // Parse filename from Content-Disposition header
+        // Format: attachment; filename="file.nzb" or filename*=UTF-8''file.nzb
+        for part in value.split(';') {
+            let part = part.trim();
+            if part.starts_with("filename=") {
+                let filename = part
+                    .trim_start_matches("filename=")
+                    .trim_matches('"')
+                    .to_string();
+                // Remove extension
+                if let Some(stem) = std::path::Path::new(&filename).file_stem()
+                    && let Some(stem_str) = stem.to_str()
+                {
+                    return stem_str.to_string();
+                }
+                return filename;
+            } else if part.starts_with("filename*=") {
+                // Handle RFC 5987 encoded filename
+                let filename = part.trim_start_matches("filename*=");
+                // Format is: charset'lang'encoded-filename
+                if let Some(idx) = filename.rfind('\'') {
+                    let encoded = &filename[idx + 1..];
+                    // URL decode the filename
+                    if let Ok(decoded) = urlencoding::decode(encoded) {
+                        if let Some(stem) = std::path::Path::new(decoded.as_ref()).file_stem()
+                            && let Some(stem_str) = stem.to_str()
+                        {
                             return stem_str.to_string();
                         }
-                    }
-                    return filename;
-                } else if part.starts_with("filename*=") {
-                    // Handle RFC 5987 encoded filename
-                    let filename = part.trim_start_matches("filename*=");
-                    // Format is: charset'lang'encoded-filename
-                    if let Some(idx) = filename.rfind('\'') {
-                        let encoded = &filename[idx + 1..];
-                        // URL decode the filename
-                        if let Ok(decoded) = urlencoding::decode(encoded) {
-                            if let Some(stem) = std::path::Path::new(decoded.as_ref()).file_stem() {
-                                if let Some(stem_str) = stem.to_str() {
-                                    return stem_str.to_string();
-                                }
-                            }
-                            return decoded.to_string();
-                        }
+                        return decoded.to_string();
                     }
                 }
             }
@@ -208,20 +207,18 @@ pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -
     }
 
     // Fall back to extracting from URL path
-    if let Ok(parsed_url) = url::Url::parse(url) {
-        if let Some(segments) = parsed_url.path_segments() {
-            if let Some(last_segment) = segments.last() {
-                if !last_segment.is_empty() {
-                    // Remove extension
-                    if let Some(stem) = std::path::Path::new(last_segment).file_stem() {
-                        if let Some(stem_str) = stem.to_str() {
-                            return stem_str.to_string();
-                        }
-                    }
-                    return last_segment.to_string();
-                }
-            }
+    if let Ok(parsed_url) = url::Url::parse(url)
+        && let Some(mut segments) = parsed_url.path_segments()
+        && let Some(last_segment) = segments.next_back()
+        && !last_segment.is_empty()
+    {
+        // Remove extension
+        if let Some(stem) = std::path::Path::new(last_segment).file_stem()
+            && let Some(stem_str) = stem.to_str()
+        {
+            return stem_str.to_string();
         }
+        return last_segment.to_string();
     }
 
     // Last resort fallback
@@ -249,7 +246,6 @@ pub fn extract_filename_from_response(response: &reqwest::Response, url: &str) -
 /// let available = get_available_space(Path::new("/downloads"))?;
 /// println!("Available space: {} GB", available / (1024 * 1024 * 1024));
 /// ```
-#[must_use]
 pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
     #[cfg(unix)]
     {
@@ -325,6 +321,8 @@ pub fn get_available_space(path: &Path) -> std::io::Result<u64> {
     }
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

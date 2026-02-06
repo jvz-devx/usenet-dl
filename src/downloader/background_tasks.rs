@@ -132,10 +132,8 @@ pub(crate) fn spawn_batch_updater(
                     }
                 }
                 _ = cancel_token.cancelled() => {
-                    if !buffer.is_empty() {
-                        if let Err(e) = db.update_articles_status_batch(&buffer).await {
-                            tracing::error!(download_id = id.0, batch_size = buffer.len(), error = %e, "Failed to batch update article statuses on cancellation");
-                        }
+                    if !buffer.is_empty() && let Err(e) = db.update_articles_status_batch(&buffer).await {
+                        tracing::error!(download_id = id.0, batch_size = buffer.len(), error = %e, "Failed to batch update article statuses on cancellation");
                     }
                     break;
                 }
@@ -146,10 +144,10 @@ pub(crate) fn spawn_batch_updater(
         while let Ok((article_id, status)) = batch_rx.try_recv() {
             buffer.push((article_id, status));
         }
-        if !buffer.is_empty() {
-            if let Err(e) = db.update_articles_status_batch(&buffer).await {
-                tracing::error!(download_id = id.0, batch_size = buffer.len(), error = %e, "Failed to flush remaining article statuses");
-            }
+        if !buffer.is_empty()
+            && let Err(e) = db.update_articles_status_batch(&buffer).await
+        {
+            tracing::error!(download_id = id.0, batch_size = buffer.len(), error = %e, "Failed to flush remaining article statuses");
         }
     })
 }

@@ -479,7 +479,7 @@ async fn test_clear_history_endpoint() {
     // Delete old entries
     let request = Request::builder()
         .method("DELETE")
-        .uri(&format!("/history?before={}", old_timestamp))
+        .uri(format!("/history?before={}", old_timestamp))
         .body(Body::empty())
         .unwrap();
 
@@ -554,10 +554,7 @@ async fn test_clear_history_endpoint() {
     // Delete only old complete entries
     let request = Request::builder()
         .method("DELETE")
-        .uri(&format!(
-            "/history?before={}&status=complete",
-            old_timestamp
-        ))
+        .uri(format!("/history?before={}&status=complete", old_timestamp))
         .body(Body::empty())
         .unwrap();
 

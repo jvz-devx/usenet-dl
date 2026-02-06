@@ -143,15 +143,13 @@ impl RssScheduler {
 
                 // Check if it's time to check this feed
                 let should_check = match last_check_times.get(&feed_row.url) {
-                    Some(last_check) => {
-                        match now.duration_since(*last_check) {
-                            Ok(elapsed) => elapsed >= feed_config.check_interval,
-                            Err(_) => {
-                                warn!(url = %feed_row.url, "System time went backwards, checking feed");
-                                true
-                            }
+                    Some(last_check) => match now.duration_since(*last_check) {
+                        Ok(elapsed) => elapsed >= feed_config.check_interval,
+                        Err(_) => {
+                            warn!(url = %feed_row.url, "System time went backwards, checking feed");
+                            true
                         }
-                    }
+                    },
                     None => true,
                 };
 
@@ -178,8 +176,14 @@ impl RssScheduler {
                     .into_iter()
                     .map(|row| crate::config::RssFilter {
                         name: row.name,
-                        include: row.include_patterns.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-                        exclude: row.exclude_patterns.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+                        include: row
+                            .include_patterns
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default(),
+                        exclude: row
+                            .exclude_patterns
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default(),
                         min_size: row.min_size.map(|s| s as u64),
                         max_size: row.max_size.map(|s| s as u64),
                         max_age: row.max_age_secs.map(|s| Duration::from_secs(s as u64)),
@@ -200,7 +204,11 @@ impl RssScheduler {
                         );
 
                         // Use the actual database feed_id instead of hardcoded 0
-                        match self.rss_manager.process_feed_items(feed_row.id, &feed_with_filters, items).await {
+                        match self
+                            .rss_manager
+                            .process_feed_items(feed_row.id, &feed_with_filters, items)
+                            .await
+                        {
                             Ok(downloaded_count) => {
                                 if downloaded_count > 0 {
                                     info!(
@@ -220,7 +228,12 @@ impl RssScheduler {
                         }
 
                         // Update check status in DB
-                        if let Err(e) = self.downloader.db.update_rss_feed_check_status(feed_row.id, None).await {
+                        if let Err(e) = self
+                            .downloader
+                            .db
+                            .update_rss_feed_check_status(feed_row.id, None)
+                            .await
+                        {
                             warn!(feed_id = feed_row.id, error = %e, "Failed to update feed check status");
                         }
                     }
@@ -231,9 +244,11 @@ impl RssScheduler {
                             "Failed to fetch RSS feed"
                         );
                         // Record the error in DB
-                        let _ = self.downloader.db.update_rss_feed_check_status(
-                            feed_row.id, Some(&e.to_string())
-                        ).await;
+                        let _ = self
+                            .downloader
+                            .db
+                            .update_rss_feed_check_status(feed_row.id, Some(&e.to_string()))
+                            .await;
                     }
                 }
 

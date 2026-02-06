@@ -107,12 +107,12 @@ fn is_high_entropy(s: &str) -> bool {
 
     // Each type must be within tight range of 1/3
     // Real filenames rarely have this perfect balance
-    let balanced_upper = upper_ratio >= ENTROPY_RATIO_LOWER_BOUND_LETTERS
-        && upper_ratio <= ENTROPY_RATIO_UPPER_BOUND_LETTERS;
-    let balanced_lower = lower_ratio >= ENTROPY_RATIO_LOWER_BOUND_LETTERS
-        && lower_ratio <= ENTROPY_RATIO_UPPER_BOUND_LETTERS;
-    let balanced_digit = digit_ratio >= ENTROPY_RATIO_LOWER_BOUND
-        && digit_ratio <= ENTROPY_RATIO_UPPER_BOUND_LETTERS;
+    let balanced_upper = (ENTROPY_RATIO_LOWER_BOUND_LETTERS..=ENTROPY_RATIO_UPPER_BOUND_LETTERS)
+        .contains(&upper_ratio);
+    let balanced_lower = (ENTROPY_RATIO_LOWER_BOUND_LETTERS..=ENTROPY_RATIO_UPPER_BOUND_LETTERS)
+        .contains(&lower_ratio);
+    let balanced_digit =
+        (ENTROPY_RATIO_LOWER_BOUND..=ENTROPY_RATIO_UPPER_BOUND_LETTERS).contains(&digit_ratio);
 
     balanced_upper && balanced_lower && balanced_digit
 }
@@ -200,19 +200,18 @@ pub fn determine_final_name(
     }
 
     // 2. NZB meta title - if present and not obfuscated
-    if let Some(meta_name) = nzb_meta_name {
-        if !is_obfuscated(meta_name) {
-            return meta_name.to_string();
-        }
+    if let Some(meta_name) = nzb_meta_name
+        && !is_obfuscated(meta_name)
+    {
+        return meta_name.to_string();
     }
 
     // 3. Largest non-obfuscated file
-    if let Some(largest) = find_largest_file(extracted_files) {
-        if let Some(name) = largest.file_stem().and_then(|s| s.to_str()) {
-            if !is_obfuscated(name) {
-                return name.to_string();
-            }
-        }
+    if let Some(largest) = find_largest_file(extracted_files)
+        && let Some(name) = largest.file_stem().and_then(|s| s.to_str())
+        && !is_obfuscated(name)
+    {
+        return name.to_string();
     }
 
     // Fallback to job name even if obfuscated
@@ -264,6 +263,8 @@ pub fn find_largest_file(files: &[PathBuf]) -> Option<PathBuf> {
     largest_idx.map(|idx| files[idx].clone())
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

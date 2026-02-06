@@ -51,10 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             temp_dir: "temp".into(),
             ..Default::default()
         },
-        server: ServerIntegrationConfig {
-            api: api_config,
-            ..Default::default()
-        },
+        server: ServerIntegrationConfig { api: api_config },
         ..Default::default()
     };
 

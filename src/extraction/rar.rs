@@ -22,18 +22,18 @@ impl RarExtractor {
 
         // Read directory
         let entries = std::fs::read_dir(download_path).map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to read directory: {}", e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "failed to read directory: {}",
+                e
+            )))
         })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to read entry: {}", e),
-                ))
+                Error::Io(std::io::Error::other(format!(
+                    "failed to read entry: {}",
+                    e
+                )))
             })?;
             let path = entry.path();
 
@@ -98,10 +98,10 @@ impl RarExtractor {
 
         // Create destination directory if it doesn't exist
         std::fs::create_dir_all(dest_path).map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to create destination: {}", e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "failed to create destination: {}",
+                e
+            )))
         })?;
 
         // Create archive with optional password

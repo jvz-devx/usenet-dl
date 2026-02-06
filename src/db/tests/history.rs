@@ -251,7 +251,7 @@ async fn test_history_ordering() {
     let now = chrono::Utc::now().timestamp();
 
     // Insert entries with different timestamps
-    let timestamps = vec![now - 1000, now, now - 500];
+    let timestamps = [now - 1000, now, now - 500];
     for (i, ts) in timestamps.iter().enumerate() {
         let entry = NewHistoryEntry {
             name: format!("Download.{}", i),

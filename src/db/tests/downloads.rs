@@ -57,7 +57,7 @@ async fn test_list_downloads() {
             category: None,
             destination: "/downloads".to_string(),
             post_process: 4,
-            priority: i as i32,
+            priority: i,
             status: 0,
             size_bytes: 1024,
         };

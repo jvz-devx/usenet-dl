@@ -19,18 +19,18 @@ impl ZipExtractor {
 
         // Read directory
         let entries = std::fs::read_dir(download_path).map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to read directory: {}", e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "failed to read directory: {}",
+                e
+            )))
         })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to read entry: {}", e),
-                ))
+                Error::Io(std::io::Error::other(format!(
+                    "failed to read entry: {}",
+                    e
+                )))
             })?;
             let path = entry.path();
 
@@ -116,29 +116,29 @@ impl ZipExtractor {
         if file.is_dir() {
             // Create directory
             std::fs::create_dir_all(&file_path).map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to create directory: {}", e),
-                ))
+                Error::Io(std::io::Error::other(format!(
+                    "failed to create directory: {}",
+                    e
+                )))
             })?;
             Ok(None)
         } else {
             // Create parent directories if needed
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("failed to create parent directories: {}", e),
-                    ))
+                    Error::Io(std::io::Error::other(format!(
+                        "failed to create parent directories: {}",
+                        e
+                    )))
                 })?;
             }
 
             // Extract file
             let mut outfile = std::fs::File::create(&file_path).map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to create output file: {}", e),
-                ))
+                Error::Io(std::io::Error::other(format!(
+                    "failed to create output file: {}",
+                    e
+                )))
             })?;
 
             std::io::copy(&mut file, &mut outfile).map_err(|e| {
@@ -148,10 +148,10 @@ impl ZipExtractor {
                         archive: archive_path.to_path_buf(),
                     })
                 } else {
-                    Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("failed to extract file: {}", e),
-                    ))
+                    Error::Io(std::io::Error::other(format!(
+                        "failed to extract file: {}",
+                        e
+                    )))
                 }
             })?;
 
@@ -174,18 +174,18 @@ impl ZipExtractor {
 
         // Create destination directory if it doesn't exist
         std::fs::create_dir_all(dest_path).map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to create destination: {}", e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "failed to create destination: {}",
+                e
+            )))
         })?;
 
         // Open the archive
         let file = std::fs::File::open(archive_path).map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to open ZIP archive: {}", e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "failed to open ZIP archive: {}",
+                e
+            )))
         })?;
 
         let mut archive = zip::ZipArchive::new(file).map_err(|e| {

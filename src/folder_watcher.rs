@@ -219,7 +219,7 @@ impl FolderWatcher {
                 );
 
                 // Handle after_import action
-                if let Err(e) = self.handle_after_import(path, &config).await {
+                if let Err(e) = self.handle_after_import(path, config).await {
                     error!(
                         "Failed to handle after_import action for {}: {}",
                         path.display(),
@@ -314,6 +314,8 @@ impl FolderWatcher {
     }
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

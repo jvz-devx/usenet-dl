@@ -59,7 +59,9 @@ pub async fn require_api_key(
     // Check if the provided API key matches the expected one
     // Uses constant-time comparison to prevent timing side-channel attacks
     match api_key_header {
-        Some(provided_key) if constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) => {
+        Some(provided_key)
+            if constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) =>
+        {
             // API key is valid, proceed to the next handler
             next.run(request).await
         }
@@ -99,6 +101,8 @@ fn unauthorized_response(message: &str) -> Response {
     (StatusCode::UNAUTHORIZED, body).into_response()
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -58,7 +58,6 @@ impl UsenetDownloader {
     ///     Ok(())
     /// }
     /// ```
-    #[must_use]
     pub async fn add_nzb_content(
         &self,
         content: &[u8],
@@ -346,17 +345,16 @@ impl UsenetDownloader {
     /// Add NZB from URL
     ///
     /// This method fetches an NZB file from a given HTTP(S) URL and adds it to the queue.
-    #[must_use]
     pub async fn add_nzb_url(&self, url: &str, options: DownloadOptions) -> Result<DownloadId> {
         // Create HTTP client with timeout to prevent hanging
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(NZB_FETCH_TIMEOUT_SECS))
             .build()
             .map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to create HTTP client: {}", e),
-                ))
+                Error::Io(std::io::Error::other(format!(
+                    "Failed to create HTTP client: {}",
+                    e
+                )))
             })?;
 
         // Fetch NZB from URL with timeout
@@ -371,15 +369,16 @@ impl UsenetDownloader {
             } else {
                 format!("Failed to fetch NZB from URL '{}': {}", url, e)
             };
-            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, error_msg))
+            Error::Io(std::io::Error::other(error_msg))
         })?;
 
         // Check HTTP status
         if !response.status().is_success() {
-            return Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("HTTP error fetching NZB: {} {}", response.status(), url),
-            )));
+            return Err(Error::Io(std::io::Error::other(format!(
+                "HTTP error fetching NZB: {} {}",
+                response.status(),
+                url
+            ))));
         }
 
         // Extract filename from Content-Disposition header or URL
@@ -387,10 +386,10 @@ impl UsenetDownloader {
 
         // Read response body
         let content = response.bytes().await.map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read response body from '{}': {}", url, e),
-            ))
+            Error::Io(std::io::Error::other(format!(
+                "Failed to read response body from '{}': {}",
+                url, e
+            )))
         })?;
 
         // Delegate to add_nzb_content
@@ -541,11 +540,7 @@ impl UsenetDownloader {
     /// ```
     pub fn extract_job_name(name: &str) -> String {
         // Remove .nzb extension if present
-        let name = if name.ends_with(".nzb") {
-            &name[..name.len() - 4]
-        } else {
-            name
-        };
+        let name = name.strip_suffix(".nzb").unwrap_or(name);
 
         // For now, just return the cleaned name
         // Future enhancement: could apply deobfuscation logic here

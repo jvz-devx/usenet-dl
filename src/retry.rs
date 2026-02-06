@@ -56,16 +56,16 @@ impl IsRetryable for Error {
                 e.is_timeout() || e.is_connect()
             }
             // I/O errors can be retryable in some cases
-            Error::Io(e) => match e.kind() {
+            Error::Io(e) => matches!(
+                e.kind(),
                 std::io::ErrorKind::TimedOut
-                | std::io::ErrorKind::ConnectionRefused
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::NotConnected
-                | std::io::ErrorKind::BrokenPipe
-                | std::io::ErrorKind::Interrupted => true,
-                _ => false,
-            },
+                    | std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::Interrupted
+            ),
             // NNTP errors need to be classified based on content
             // For now, we treat them as potentially retryable
             Error::Nntp(msg) => {
@@ -227,6 +227,8 @@ fn add_jitter(delay: Duration) -> Duration {
     Duration::from_secs_f64(jittered_secs)
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

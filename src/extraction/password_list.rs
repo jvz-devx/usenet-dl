@@ -37,18 +37,16 @@ impl PasswordList {
         }
 
         // Add from file - need owned strings for file content
-        let file_content;
-        if let Some(path) = global_file {
-            if let Ok(content) = tokio::fs::read_to_string(path).await {
-                file_content = content;
-                for line in file_content.lines() {
-                    let pw = line.trim();
-                    // For file passwords, we need to check if already seen as &str
-                    // but the HashSet contains &str from the parameters above
-                    // We need a different approach - collect file passwords separately
-                    if !pw.is_empty() && !passwords.iter().any(|p| p == pw) {
-                        passwords.push(pw.to_string());
-                    }
+        if let Some(path) = global_file
+            && let Ok(file_content) = tokio::fs::read_to_string(path).await
+        {
+            for line in file_content.lines() {
+                let pw = line.trim();
+                // For file passwords, we need to check if already seen as &str
+                // but the HashSet contains &str from the parameters above
+                // We need a different approach - collect file passwords separately
+                if !pw.is_empty() && !passwords.iter().any(|p| p == pw) {
+                    passwords.push(pw.to_string());
                 }
             }
         }

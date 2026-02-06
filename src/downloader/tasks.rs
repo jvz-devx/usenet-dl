@@ -9,7 +9,7 @@ use crate::error::{DatabaseError, Error, Result};
 use crate::types::{DownloadId, Event, Status};
 use futures::stream::{self, StreamExt};
 use nntp_rs::NntpPool;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
@@ -23,7 +23,7 @@ const MAX_FAILURE_RATIO: f64 = 0.5;
 async fn fetch_article(
     pool: &NntpPool,
     article: Article,
-    temp_dir: &PathBuf,
+    temp_dir: &Path,
     db: &Arc<Database>,
     download_id: DownloadId,
 ) -> std::result::Result<(i32, u64), String> {
@@ -145,17 +145,30 @@ async fn handle_download_failure(
     )))
 }
 
-/// Emit final progress event and update database
-async fn emit_final_progress(
-    db: &Arc<Database>,
-    event_tx: &broadcast::Sender<Event>,
+/// Parameters for emitting final progress
+struct FinalProgressParams<'a> {
+    db: &'a Arc<Database>,
+    event_tx: &'a broadcast::Sender<Event>,
     download_id: DownloadId,
     downloaded_bytes: u64,
     downloaded_articles: u64,
     total_size_bytes: u64,
     total_articles: usize,
     download_start: std::time::Instant,
-) -> Result<()> {
+}
+
+/// Emit final progress event and update database
+async fn emit_final_progress(params: FinalProgressParams<'_>) -> Result<()> {
+    let FinalProgressParams {
+        db,
+        event_tx,
+        download_id,
+        downloaded_bytes,
+        downloaded_articles,
+        total_size_bytes,
+        total_articles,
+        download_start,
+    } = params;
     let final_percent = if total_size_bytes > 0 {
         (downloaded_bytes as f32 / total_size_bytes as f32) * 100.0
     } else {
@@ -345,16 +358,16 @@ impl UsenetDownloader {
             // Emit final progress event
             let final_bytes = downloaded_bytes.load(Ordering::Relaxed);
             let final_articles = downloaded_articles.load(Ordering::Relaxed);
-            emit_final_progress(
-                &db,
-                &event_tx,
+            emit_final_progress(FinalProgressParams {
+                db: &db,
+                event_tx: &event_tx,
                 download_id,
-                final_bytes,
-                final_articles,
+                downloaded_bytes: final_bytes,
+                downloaded_articles: final_articles,
                 total_size_bytes,
                 total_articles,
                 download_start,
-            )
+            })
             .await?;
 
             // All articles downloaded successfully

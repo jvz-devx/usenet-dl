@@ -61,7 +61,7 @@ async fn test_get_config_endpoint() {
 
     // Verify sensitive fields are redacted
     assert!(
-        returned_config.servers.len() > 0,
+        !returned_config.servers.is_empty(),
         "Should have at least one server"
     );
 

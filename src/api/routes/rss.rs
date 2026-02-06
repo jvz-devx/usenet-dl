@@ -215,13 +215,17 @@ pub async fn delete_rss_feed(
 
 /// Validate that a feed URL is safe (not targeting internal services).
 fn validate_feed_url(url_str: &str) -> std::result::Result<(), String> {
-    let parsed = url::Url::parse(url_str)
-        .map_err(|_| "Invalid URL format".to_string())?;
+    let parsed = url::Url::parse(url_str).map_err(|_| "Invalid URL format".to_string())?;
 
     // Only allow http and https schemes
     match parsed.scheme() {
         "http" | "https" => {}
-        scheme => return Err(format!("URL scheme '{}' is not allowed; only http and https are supported", scheme)),
+        scheme => {
+            return Err(format!(
+                "URL scheme '{}' is not allowed; only http and https are supported",
+                scheme
+            ));
+        }
     }
 
     // Check for localhost / loopback / private IP ranges
@@ -242,7 +246,9 @@ fn validate_feed_url(url_str: &str) -> std::result::Result<(), String> {
         }
         // Check 172.16.0.0/12 range
         if host_lower.starts_with("172.")
-            && let Some(second_octet) = host_lower.strip_prefix("172.").and_then(|s| s.split('.').next())
+            && let Some(second_octet) = host_lower
+                .strip_prefix("172.")
+                .and_then(|s| s.split('.').next())
             && let Ok(octet) = second_octet.parse::<u8>()
             && (16..=31).contains(&octet)
         {

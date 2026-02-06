@@ -30,7 +30,7 @@ pub async fn get_history(
     State(state): State<AppState>,
     Query(query): Query<HistoryQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(50).max(1).min(1000) as usize;
+    let limit = query.limit.unwrap_or(50).clamp(1, 1000) as usize;
     let offset = query.offset.unwrap_or(0).max(0) as usize;
 
     let status_filter = if let Some(status_str) = query.status {

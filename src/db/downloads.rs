@@ -8,7 +8,6 @@ use super::{Database, Download, NewDownload};
 
 impl Database {
     /// Insert a new download record
-    #[must_use]
     pub async fn insert_download(&self, download: &NewDownload) -> Result<DownloadId> {
         let now = chrono::Utc::now().timestamp();
 
@@ -29,9 +28,9 @@ impl Database {
         .bind(&download.job_name)
         .bind(&download.category)
         .bind(&download.destination)
-        .bind(download.post_process as i32)
-        .bind(download.priority as i32)
-        .bind(download.status as i32)
+        .bind(download.post_process)
+        .bind(download.priority)
+        .bind(download.status)
         .bind(0.0f32) // progress
         .bind(0i64) // speed_bps
         .bind(download.size_bytes)

@@ -154,21 +154,22 @@ fn collect_cleanup_targets<'a>(
             .await
             .map(|m| m.is_dir())
             .unwrap_or(false);
-        if is_dir && config.processing.cleanup.delete_samples {
-            if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
-                // Check if folder name matches any sample folder names (case-insensitive)
-                let is_sample = config
-                    .processing
-                    .cleanup
-                    .sample_folder_names
-                    .iter()
-                    .any(|sample_name| folder_name.eq_ignore_ascii_case(sample_name));
+        if is_dir
+            && config.processing.cleanup.delete_samples
+            && let Some(folder_name) = path.file_name().and_then(|n| n.to_str())
+        {
+            // Check if folder name matches any sample folder names (case-insensitive)
+            let is_sample = config
+                .processing
+                .cleanup
+                .sample_folder_names
+                .iter()
+                .any(|sample_name| folder_name.eq_ignore_ascii_case(sample_name));
 
-                if is_sample {
-                    // Mark this entire folder for deletion
-                    folders_to_delete.push(path.to_path_buf());
-                    return; // Don't recurse into sample folders
-                }
+            if is_sample {
+                // Mark this entire folder for deletion
+                folders_to_delete.push(path.to_path_buf());
+                return; // Don't recurse into sample folders
             }
         }
 
@@ -190,16 +191,13 @@ fn collect_cleanup_targets<'a>(
                 Err(_) => continue,
             };
 
-            if file_type.is_file() {
-                // Check if file extension matches target extensions (case-insensitive)
-                if let Some(extension) = entry_path.extension().and_then(|e| e.to_str()) {
-                    if target_extensions
-                        .iter()
-                        .any(|ext| ext.eq_ignore_ascii_case(extension))
-                    {
-                        files_to_delete.push(entry_path);
-                    }
-                }
+            if file_type.is_file()
+                && let Some(extension) = entry_path.extension().and_then(|e| e.to_str())
+                && target_extensions
+                    .iter()
+                    .any(|ext| ext.eq_ignore_ascii_case(extension))
+            {
+                files_to_delete.push(entry_path);
             } else if file_type.is_dir() {
                 // Recursively check subdirectories
                 collect_cleanup_targets(

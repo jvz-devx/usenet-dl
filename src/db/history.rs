@@ -34,7 +34,7 @@ impl Database {
         .bind(entry.completed_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Sqlx(e))?;
+        .map_err(Error::Sqlx)?;
 
         Ok(result.last_insert_rowid())
     }
@@ -77,10 +77,7 @@ impl Database {
             .bind(offset as i64)
         };
 
-        let rows = query
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| Error::Sqlx(e))?;
+        let rows = query.fetch_all(&self.pool).await.map_err(Error::Sqlx)?;
 
         Ok(rows.into_iter().map(HistoryEntry::from).collect())
     }
@@ -94,12 +91,12 @@ impl Database {
                 .bind(status)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| Error::Sqlx(e))?
+                .map_err(Error::Sqlx)?
         } else {
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM history")
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| Error::Sqlx(e))?
+                .map_err(Error::Sqlx)?
         };
 
         Ok(count)
@@ -114,7 +111,7 @@ impl Database {
             .bind(before_timestamp)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Sqlx(e))?;
+            .map_err(Error::Sqlx)?;
 
         Ok(result.rows_affected())
     }
@@ -128,7 +125,7 @@ impl Database {
             .bind(status)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Sqlx(e))?;
+            .map_err(Error::Sqlx)?;
 
         Ok(result.rows_affected())
     }
@@ -141,7 +138,7 @@ impl Database {
         let result = sqlx::query("DELETE FROM history")
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Sqlx(e))?;
+            .map_err(Error::Sqlx)?;
 
         Ok(result.rows_affected())
     }
@@ -180,7 +177,7 @@ impl Database {
                         .bind(status_val)
                         .execute(&self.pool)
                         .await
-                        .map_err(|e| Error::Sqlx(e))?;
+                        .map_err(Error::Sqlx)?;
 
                 Ok(result.rows_affected())
             }
@@ -200,7 +197,7 @@ impl Database {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Sqlx(e))?;
+        .map_err(Error::Sqlx)?;
 
         Ok(row.map(HistoryEntry::from))
     }

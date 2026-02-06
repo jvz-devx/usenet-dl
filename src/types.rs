@@ -138,23 +138,20 @@ impl Status {
 }
 
 /// Download priority
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     /// Low priority (-1)
     Low = -1,
     /// Normal priority (0)
+    #[default]
     Normal = 0,
     /// High priority (1)
     High = 1,
     /// Force start immediately (2)
     Force = 2,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Priority::Normal
-    }
 }
 
 impl Priority {

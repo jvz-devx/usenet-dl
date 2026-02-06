@@ -49,7 +49,7 @@ pub async fn list_downloads(State(state): State<AppState>) -> impl IntoResponse 
                         eta_seconds,
                         priority: crate::types::Priority::from_i32(d.priority),
                         created_at: chrono::DateTime::from_timestamp(d.created_at, 0)
-                            .unwrap_or_else(|| chrono::Utc::now()),
+                            .unwrap_or_else(chrono::Utc::now),
                         started_at: d
                             .started_at
                             .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
@@ -111,7 +111,7 @@ pub async fn get_download(State(state): State<AppState>, Path(id): Path<i64>) ->
                 eta_seconds,
                 priority: crate::types::Priority::from_i32(d.priority),
                 created_at: chrono::DateTime::from_timestamp(d.created_at, 0)
-                    .unwrap_or_else(|| chrono::Utc::now()),
+                    .unwrap_or_else(chrono::Utc::now),
                 started_at: d
                     .started_at
                     .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
@@ -173,10 +173,10 @@ pub async fn add_download(State(state): State<AppState>, mut multipart: Multipar
                 }
             }
             "options" => {
-                if let Ok(bytes) = field.bytes().await {
-                    if let Ok(s) = String::from_utf8(bytes.to_vec()) {
-                        options_json = Some(s);
-                    }
+                if let Ok(bytes) = field.bytes().await
+                    && let Ok(s) = String::from_utf8(bytes.to_vec())
+                {
+                    options_json = Some(s);
                 }
             }
             _ => {}

@@ -113,9 +113,15 @@ impl Database {
         tracing::info!("Applying database migration v1");
 
         // Wrap migration in a transaction so partial failures don't leave the DB in a broken state
-        sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!("Failed to begin transaction: {}", e)))
-        })?;
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
 
         let result = async {
             Self::create_downloads_schema(conn).await?;
@@ -125,13 +131,20 @@ impl Database {
             Self::create_history_schema(conn).await?;
             Self::record_migration(conn, 1).await?;
             Ok::<(), Error>(())
-        }.await;
+        }
+        .await;
 
         match result {
             Ok(()) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| {
-                    Error::Database(DatabaseError::MigrationFailed(format!("Failed to commit migration v1: {}", e)))
-                })?;
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v1: {}",
+                            e
+                        )))
+                    })?;
             }
             Err(e) => {
                 let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
@@ -379,9 +392,15 @@ impl Database {
     async fn migrate_v2(conn: &mut SqliteConnection) -> Result<()> {
         tracing::info!("Applying database migration v2");
 
-        sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!("Failed to begin transaction: {}", e)))
-        })?;
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
 
         let result = async {
             // Runtime state table for tracking clean/unclean shutdown
@@ -424,13 +443,20 @@ impl Database {
             // Record migration
             Self::record_migration(conn, 2).await?;
             Ok::<(), Error>(())
-        }.await;
+        }
+        .await;
 
         match result {
             Ok(()) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| {
-                    Error::Database(DatabaseError::MigrationFailed(format!("Failed to commit migration v2: {}", e)))
-                })?;
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v2: {}",
+                            e
+                        )))
+                    })?;
             }
             Err(e) => {
                 let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
@@ -446,9 +472,15 @@ impl Database {
     async fn migrate_v3(conn: &mut SqliteConnection) -> Result<()> {
         tracing::info!("Applying database migration v3");
 
-        sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!("Failed to begin transaction: {}", e)))
-        })?;
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
 
         let result = async {
             // RSS feeds table
@@ -525,13 +557,20 @@ impl Database {
             // Record migration
             Self::record_migration(conn, 3).await?;
             Ok::<(), Error>(())
-        }.await;
+        }
+        .await;
 
         match result {
             Ok(()) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| {
-                    Error::Database(DatabaseError::MigrationFailed(format!("Failed to commit migration v3: {}", e)))
-                })?;
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v3: {}",
+                            e
+                        )))
+                    })?;
             }
             Err(e) => {
                 let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
