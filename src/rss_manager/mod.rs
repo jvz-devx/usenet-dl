@@ -137,6 +137,16 @@ impl RssManager {
             .await
             .map_err(|e| Error::Other(format!("Failed to fetch RSS feed: {}", e)))?;
 
+        // Check HTTP status before trying to parse the response body
+        let status = response.status();
+        if !status.is_success() {
+            return Err(Error::Other(format!(
+                "RSS feed returned HTTP {}: {}",
+                status.as_u16(),
+                feed_config.url
+            )));
+        }
+
         let content = response
             .text()
             .await
@@ -282,6 +292,24 @@ impl RssManager {
         Ok(items)
     }
 
+    /// Compile and validate a list of regex patterns, returning compiled regexes.
+    /// Invalid patterns are logged and skipped.
+    fn compile_patterns(patterns: &[String], kind: &str) -> Vec<Regex> {
+        patterns
+            .iter()
+            .filter_map(|pattern| {
+                // Use RegexBuilder with a size limit to prevent ReDoS via large compiled DFAs
+                regex::RegexBuilder::new(pattern)
+                    .size_limit(1024 * 1024) // 1MB compiled DFA limit
+                    .build()
+                    .map_err(|e| {
+                        warn!("Invalid {} regex pattern '{}': {}", kind, pattern, e);
+                    })
+                    .ok()
+            })
+            .collect()
+    }
+
     /// Check if an RSS item matches the configured filters
     ///
     /// This method applies filtering rules from an RssFilter to determine if an item should be accepted.
@@ -307,17 +335,8 @@ impl RssManager {
 
         // Check include patterns (OR logic - at least one must match)
         if !filter.include.is_empty() {
-            let any_include_matches =
-                filter
-                    .include
-                    .iter()
-                    .any(|pattern| match Regex::new(pattern) {
-                        Ok(re) => re.is_match(&search_text),
-                        Err(e) => {
-                            warn!("Invalid regex pattern '{}': {}", pattern, e);
-                            false
-                        }
-                    });
+            let compiled_includes = Self::compile_patterns(&filter.include, "include");
+            let any_include_matches = compiled_includes.iter().any(|re| re.is_match(&search_text));
 
             if !any_include_matches {
                 debug!(
@@ -329,20 +348,15 @@ impl RssManager {
         }
 
         // Check exclude patterns (ANY exclude match = reject)
-        for pattern in &filter.exclude {
-            match Regex::new(pattern) {
-                Ok(re) => {
-                    if re.is_match(&search_text) {
-                        debug!(
-                            "Item '{}' rejected: matched exclude pattern '{}'",
-                            item.title, pattern
-                        );
-                        return false;
-                    }
-                }
-                Err(e) => {
-                    warn!("Invalid exclude regex pattern '{}': {}", pattern, e);
-                }
+        let compiled_excludes = Self::compile_patterns(&filter.exclude, "exclude");
+        for re in &compiled_excludes {
+            if re.is_match(&search_text) {
+                debug!(
+                    "Item '{}' rejected: matched exclude pattern '{}'",
+                    item.title,
+                    re.as_str()
+                );
+                return false;
             }
         }
 

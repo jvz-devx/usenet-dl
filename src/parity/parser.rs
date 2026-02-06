@@ -97,6 +97,24 @@ pub fn parse_par2_verify_output(
                 }
             }
         }
+
+        // Handle par2cmdline format: Target: "filename" - missing.
+        if line_lower.contains("- missing") {
+            if let Some(filename) = extract_filename_from_line(line) {
+                if !missing_files.contains(&filename) {
+                    missing_files.push(filename);
+                }
+            }
+        }
+
+        // Handle par2cmdline format: Target: "filename" - damaged.
+        if line_lower.contains("- damaged") {
+            if let Some(filename) = extract_filename_from_line(line) {
+                if !damaged_files.contains(&filename) {
+                    damaged_files.push(filename);
+                }
+            }
+        }
     }
 
     // Determine completeness based on exit code and damaged blocks
@@ -188,14 +206,25 @@ pub fn parse_par2_repair_output(
     })
 }
 
-/// Extract a number that appears before the word "block" or "blocks" in a line
+/// Extract a number that appears before the word "block" or "blocks" in a line.
+///
+/// Handles various par2cmdline output formats:
+/// - "5 blocks damaged" (number directly before "blocks")
+/// - "Found 1999 of 2000 data blocks" (number before intervening words then "blocks")
+/// - "You have 577 recovery blocks available" (same pattern)
 fn extract_number_before_blocks(line: &str) -> Option<u32> {
-    // Look for patterns like "5 blocks" or "10 block"
     let words: Vec<&str> = line.split_whitespace().collect();
-    for i in 0..words.len().saturating_sub(1) {
-        if words[i + 1].starts_with("block") {
-            if let Ok(num) = words[i].parse::<u32>() {
-                return Some(num);
+
+    // Find the position of "block" or "blocks" in the line
+    for i in 0..words.len() {
+        if words[i].starts_with("block") {
+            // Search backwards from the "block(s)" word for the nearest number
+            // This handles patterns like "577 recovery blocks" where a word sits between
+            // the number and "blocks"
+            for j in (0..i).rev() {
+                if let Ok(num) = words[j].parse::<u32>() {
+                    return Some(num);
+                }
             }
         }
     }
@@ -291,6 +320,9 @@ mod tests {
         assert_eq!(extract_number_before_blocks("5 blocks damaged"), Some(5));
         assert_eq!(extract_number_before_blocks("10 block available"), Some(10));
         assert_eq!(extract_number_before_blocks("damaged blocks"), None);
+        // par2cmdline formats with intervening words
+        assert_eq!(extract_number_before_blocks("found 1999 of 2000 data blocks"), Some(2000));
+        assert_eq!(extract_number_before_blocks("you have 577 recovery blocks available"), Some(577));
     }
 
     #[test]
@@ -322,12 +354,7 @@ mod tests {
 
     #[test]
     fn test_parse_verify_real_output_damaged() {
-        // par2cmdline outputs "Found X of Y data blocks" for damaged files.
-        // Known parser limitations documented here:
-        // 1. "Found 1999 of 2000 data blocks" — "data" sits between the number and
-        //    "blocks", so extract_number_before_blocks can't extract block counts
-        // 2. "You have 577 recovery blocks available" — "recovery" sits between
-        //    the number and "blocks", so recovery blocks aren't extracted either
+        // par2cmdline outputs "Found X of Y data blocks" for damaged files
         let stdout = b"Target: \"file.tar\" - damaged. Found 1999 of 2000 data blocks.\n\
                        You have 577 recovery blocks available.\n\
                        Repair is possible.\n";
@@ -335,19 +362,16 @@ mod tests {
         let result = parse_par2_verify_output(stdout, stderr, ExitStatus::Failure).unwrap();
 
         assert!(!result.is_complete);
-        // Parser can't extract counts due to intervening words ("data", "recovery")
-        assert_eq!(result.damaged_blocks, 0);
-        assert_eq!(result.recovery_blocks_available, 0);
-        // Not repairable because parser couldn't extract any block counts
-        assert!(!result.repairable);
+        // Parser now correctly extracts counts with intervening words
+        assert_eq!(result.damaged_blocks, 2000);
+        assert_eq!(result.recovery_blocks_available, 577);
+        assert!(result.repairable);
+        assert!(result.damaged_files.contains(&"file.tar".to_string()));
     }
 
     #[test]
     fn test_parse_verify_real_output_missing() {
-        // par2cmdline outputs "Target: \"file.tar\" - missing." for missing files.
-        // The parser only detects missing files from lines matching "missing:" (with colon),
-        // not from "- missing." format. This means `missing_files` won't be populated
-        // from real par2cmdline output — a known parser limitation.
+        // par2cmdline outputs "Target: \"file.tar\" - missing." for missing files
         let stdout = b"Target: \"file.tar\" - missing.\n\
                        You have 50 recovery blocks available.\n\
                        Repair is possible.\n";
@@ -356,14 +380,11 @@ mod tests {
 
         assert!(!result.is_complete);
         assert_eq!(result.damaged_blocks, 0);
-        // "You have 50 recovery blocks available" — "recovery" sits between
-        // the number and "blocks", so the parser can't extract this
-        assert_eq!(result.recovery_blocks_available, 0);
-        // Known limitation: missing_files is empty because the parser doesn't
-        // handle par2cmdline's "- missing." format (only "missing:" with colon)
-        assert!(result.missing_files.is_empty());
-        // repairable is false because parser couldn't extract any counts
-        assert!(!result.repairable);
+        // Parser now correctly extracts "50 recovery blocks"
+        assert_eq!(result.recovery_blocks_available, 50);
+        // Parser now correctly detects "- missing." format
+        assert_eq!(result.missing_files, vec!["file.tar"]);
+        assert!(result.repairable);
     }
 
     #[test]

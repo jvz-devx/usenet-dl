@@ -32,6 +32,13 @@ pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
         redacted_config.server.api.api_key = Some("***REDACTED***".to_string());
     }
 
+    // Redact webhook auth headers
+    for webhook in &mut redacted_config.notifications.webhooks {
+        if webhook.auth_header.is_some() {
+            webhook.auth_header = Some("***REDACTED***".to_string());
+        }
+    }
+
     (StatusCode::OK, Json(redacted_config))
 }
 

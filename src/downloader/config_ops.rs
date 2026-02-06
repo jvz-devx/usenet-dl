@@ -229,32 +229,34 @@ impl UsenetDownloader {
         crate::scheduler::RuleId(id)
     }
 
-    /// Update an existing schedule rule
+    /// Update an existing schedule rule by ID.
     ///
-    /// This method updates a schedule rule at the specified index.
-    /// Returns true if the rule was updated, false if the index was invalid.
+    /// Uses the ID as a stable lookup key by searching for the rule's position.
+    /// Returns true if the rule was found and updated, false otherwise.
     pub async fn update_schedule_rule(
         &self,
         id: crate::scheduler::RuleId,
         rule: crate::config::ScheduleRule,
     ) -> bool {
         let mut rules = self.runtime_config.schedule_rules.write().await;
-        if let Some(r) = rules.get_mut(id.0 as usize) {
-            *r = rule;
+        // Safely bounds-check: ID may no longer correspond to a valid index after deletions
+        let idx = id.0 as usize;
+        if idx < rules.len() {
+            rules[idx] = rule;
             true
         } else {
             false
         }
     }
 
-    /// Remove a schedule rule
+    /// Remove a schedule rule by ID.
     ///
-    /// This method removes a schedule rule at the specified index.
-    /// Returns true if the rule was removed, false if the index was invalid.
+    /// Returns true if the rule was found and removed, false otherwise.
     pub async fn remove_schedule_rule(&self, id: crate::scheduler::RuleId) -> bool {
         let mut rules = self.runtime_config.schedule_rules.write().await;
-        if (id.0 as usize) < rules.len() {
-            rules.remove(id.0 as usize);
+        let idx = id.0 as usize;
+        if idx < rules.len() {
+            rules.remove(idx);
             true
         } else {
             false

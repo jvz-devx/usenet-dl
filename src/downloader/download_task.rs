@@ -422,20 +422,37 @@ async fn fetch_article_batch(
         return Err(("Download cancelled".to_string(), batch_size));
     }
 
-    // Get a connection from the first NNTP pool
-    let pool = match nntp_pools.first() {
-        Some(p) => p,
-        None => {
-            tracing::error!(download_id = id.0, "No NNTP pools configured");
-            return Err(("No NNTP pools configured".to_string(), batch_size));
-        }
-    };
+    // Try each NNTP pool in order (primary first, then backup/fill servers)
+    if nntp_pools.is_empty() {
+        tracing::error!(download_id = id.0, "No NNTP pools configured");
+        return Err(("No NNTP pools configured".to_string(), batch_size));
+    }
 
-    let mut conn = match pool.get().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(download_id = id.0, error = %e, "Failed to get NNTP connection");
-            return Err((format!("Failed to get NNTP connection: {}", e), batch_size));
+    let mut conn = None;
+    let mut last_error = String::new();
+    for (pool_idx, pool) in nntp_pools.iter().enumerate() {
+        match pool.get().await {
+            Ok(c) => {
+                conn = Some(c);
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    download_id = id.0,
+                    pool_index = pool_idx,
+                    error = %e,
+                    "Failed to get connection from NNTP pool, trying next server"
+                );
+                last_error = format!("Failed to get NNTP connection: {}", e);
+            }
+        }
+    }
+
+    let mut conn = match conn {
+        Some(c) => c,
+        None => {
+            tracing::error!(download_id = id.0, "All NNTP servers failed");
+            return Err((last_error, batch_size));
         }
     };
 

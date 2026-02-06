@@ -10,6 +10,7 @@ use axum::{
     middleware,
     routing::{delete, get, patch, post, put},
 };
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -154,7 +155,22 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
     // Add state to all routes
     let router = router.with_state(state);
 
-    // Apply rate limiting middleware if enabled in config
+    // Middleware layer ordering: In Axum's onion model, the LAST layer applied
+    // is the OUTERMOST (runs first on requests). We want:
+    //   Request → Rate Limit → Auth → Handler
+    // So we apply auth FIRST (innermost), then rate limiting SECOND (outermost).
+
+    // Apply authentication middleware if API key is configured (innermost)
+    let router = if config.server.api.api_key.is_some() {
+        router.layer(middleware::from_fn_with_state(
+            config.server.api.api_key.clone(),
+            auth::require_api_key,
+        ))
+    } else {
+        router
+    };
+
+    // Apply rate limiting middleware if enabled in config (outermost — runs first)
     let router = if config.server.api.rate_limit.enabled {
         let limiter = Arc::new(rate_limit::RateLimiter::new(
             config.server.api.rate_limit.clone(),
@@ -162,16 +178,6 @@ pub fn create_router(downloader: Arc<UsenetDownloader>, config: Arc<Config>) -> 
         router.layer(middleware::from_fn_with_state(
             limiter,
             rate_limit::rate_limit_middleware,
-        ))
-    } else {
-        router
-    };
-
-    // Apply authentication middleware if API key is configured
-    let router = if config.server.api.api_key.is_some() {
-        router.layer(middleware::from_fn_with_state(
-            config.server.api.api_key.clone(),
-            auth::require_api_key,
         ))
     } else {
         router
@@ -272,9 +278,14 @@ pub async fn start_api_server(
     );
 
     // Serve the API using the listener
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| crate::error::Error::ApiServerError(e.to_string()))?;
+    // Must use into_make_service_with_connect_info to provide ConnectInfo<SocketAddr>
+    // for the rate limiting middleware
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .map_err(|e| crate::error::Error::ApiServerError(e.to_string()))?;
 
     tracing::info!("API server stopped");
     Ok(())

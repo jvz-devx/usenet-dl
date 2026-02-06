@@ -130,7 +130,25 @@ impl RarExtractor {
 
             // Get the file header information (available in BeforeFile state)
             let header = at_file.entry();
-            let file_path = dest_path.join(&header.filename);
+
+            // Sanitize filename to prevent path traversal attacks (e.g., "../../../etc/passwd")
+            let sanitized = Path::new(&header.filename)
+                .components()
+                .filter(|c| matches!(c, std::path::Component::Normal(_)))
+                .collect::<PathBuf>();
+
+            if sanitized.as_os_str().is_empty() {
+                // Skip entries with no valid path components (e.g., pure ".." entries)
+                at_header = at_file.skip().map_err(|e| {
+                    Error::PostProcess(PostProcessError::ExtractionFailed {
+                        archive: archive_path.to_path_buf(),
+                        reason: format!("failed to skip unsafe entry: {}", e),
+                    })
+                })?;
+                continue;
+            }
+
+            let file_path = dest_path.join(&sanitized);
 
             // Check if it's a file (not a directory)
             if !header.is_directory() {

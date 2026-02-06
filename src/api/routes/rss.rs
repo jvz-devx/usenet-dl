@@ -105,6 +105,15 @@ pub async fn add_rss_feed(
             .into_response();
     }
 
+    // Validate URL scheme and host to prevent SSRF attacks
+    if let Err(msg) = validate_feed_url(&request.config.url) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"code": "invalid_input", "message": msg}})),
+        )
+            .into_response();
+    }
+
     match state
         .downloader
         .add_rss_feed(&request.name, request.config)
@@ -143,6 +152,15 @@ pub async fn update_rss_feed(
             Json(
                 json!({"error": {"code": "invalid_input", "message": "Feed URL cannot be empty"}}),
             ),
+        )
+            .into_response();
+    }
+
+    // Validate URL scheme and host to prevent SSRF attacks
+    if let Err(msg) = validate_feed_url(&request.config.url) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"code": "invalid_input", "message": msg}})),
         )
             .into_response();
     }
@@ -193,6 +211,48 @@ pub async fn delete_rss_feed(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"code": "database_error", "message": format!("Failed to delete RSS feed: {}", e)}}))).into_response()
         }
     }
+}
+
+/// Validate that a feed URL is safe (not targeting internal services).
+fn validate_feed_url(url_str: &str) -> std::result::Result<(), String> {
+    let parsed = url::Url::parse(url_str)
+        .map_err(|_| "Invalid URL format".to_string())?;
+
+    // Only allow http and https schemes
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("URL scheme '{}' is not allowed; only http and https are supported", scheme)),
+    }
+
+    // Check for localhost / loopback / private IP ranges
+    if let Some(host) = parsed.host_str() {
+        let host_lower = host.to_lowercase();
+        if host_lower == "localhost"
+            || host_lower == "127.0.0.1"
+            || host_lower == "::1"
+            || host_lower == "[::1]"
+            || host_lower == "0.0.0.0"
+            || host_lower.starts_with("10.")
+            || host_lower.starts_with("192.168.")
+            || host_lower == "169.254.169.254"
+            || host_lower.ends_with(".internal")
+            || host_lower.ends_with(".local")
+        {
+            return Err("URL targets a private/internal address".to_string());
+        }
+        // Check 172.16.0.0/12 range
+        if host_lower.starts_with("172.")
+            && let Some(second_octet) = host_lower.strip_prefix("172.").and_then(|s| s.split('.').next())
+            && let Ok(octet) = second_octet.parse::<u8>()
+            && (16..=31).contains(&octet)
+        {
+            return Err("URL targets a private/internal address".to_string());
+        }
+    } else {
+        return Err("URL has no host".to_string());
+    }
+
+    Ok(())
 }
 
 /// POST /rss/:id/check - Force check feed now

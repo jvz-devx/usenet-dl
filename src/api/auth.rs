@@ -57,8 +57,9 @@ pub async fn require_api_key(
         .and_then(|value| value.to_str().ok());
 
     // Check if the provided API key matches the expected one
+    // Uses constant-time comparison to prevent timing side-channel attacks
     match api_key_header {
-        Some(provided_key) if provided_key == expected_key => {
+        Some(provided_key) if constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) => {
             // API key is valid, proceed to the next handler
             next.run(request).await
         }
@@ -71,6 +72,19 @@ pub async fn require_api_key(
             unauthorized_response("Missing X-Api-Key header")
         }
     }
+}
+
+/// Constant-time byte comparison to prevent timing side-channel attacks.
+/// Always compares all bytes regardless of where the first mismatch occurs.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 /// Helper function to create a 401 Unauthorized response with a JSON error message

@@ -39,20 +39,24 @@ impl UsenetDownloader {
 
         tokio::spawn(async move {
             loop {
-                // Get the next download from the queue
-                let download_id = {
+                // Get the next download from the queue (keep full item for re-push on failure)
+                let queued_item = {
                     let mut queue_guard = queue.lock().await;
-                    queue_guard.pop().map(|item| item.id)
+                    queue_guard.pop()
                 };
 
-                if let Some(id) = download_id {
+                if let Some(item) = queued_item {
+                    let id = item.id;
+
                     // Acquire a permit from the semaphore (blocks if at max concurrent downloads)
                     let permit = concurrent_limit.clone().acquire_owned().await;
 
                     let permit = match permit {
                         Ok(p) => p,
                         Err(_) => {
-                            // Semaphore closed, exit processor
+                            // Semaphore closed — re-push the item so it isn't lost
+                            let mut queue_guard = queue.lock().await;
+                            queue_guard.push(item);
                             break;
                         }
                     };

@@ -84,6 +84,9 @@ impl SevenZipExtractor {
 
         match result {
             Ok(()) => {
+                // Validate that all extracted files are within dest_path (path traversal protection)
+                Self::validate_extracted_paths(dest_path)?;
+
                 // Collect the extracted files by scanning the destination directory
                 let extracted_files = Self::collect_extracted_files(dest_path)?;
 
@@ -114,22 +117,69 @@ impl SevenZipExtractor {
         }
     }
 
-    /// Recursively collect all files (not directories) from a directory
-    fn collect_extracted_files(dir: &Path) -> Result<Vec<PathBuf>> {
-        let mut files = Vec::new();
+    /// Validate that all extracted files are within the destination directory.
+    /// This protects against path traversal attacks in 7z archives.
+    fn validate_extracted_paths(dest_path: &Path) -> Result<()> {
+        let canonical_dest = dest_path.canonicalize().map_err(|e| {
+            Error::Io(std::io::Error::other(
+                format!("failed to canonicalize destination path: {}", e),
+            ))
+        })?;
 
-        fn visit_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        fn check_dir(dir: &Path, canonical_dest: &Path) -> Result<()> {
             let entries = std::fs::read_dir(dir).map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Error::Io(std::io::Error::other(
                     format!("failed to read directory: {}", e),
                 ))
             })?;
 
             for entry in entries {
                 let entry = entry.map_err(|e| {
-                    Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Error::Io(std::io::Error::other(
+                        format!("failed to read entry: {}", e),
+                    ))
+                })?;
+                let path = entry.path();
+                let canonical = path.canonicalize().map_err(|e| {
+                    Error::Io(std::io::Error::other(
+                        format!("failed to canonicalize extracted path: {}", e),
+                    ))
+                })?;
+
+                if !canonical.starts_with(canonical_dest) {
+                    return Err(Error::PostProcess(PostProcessError::ExtractionFailed {
+                        archive: dir.to_path_buf(),
+                        reason: format!(
+                            "path traversal detected: extracted file {:?} is outside destination",
+                            canonical
+                        ),
+                    }));
+                }
+
+                if path.is_dir() {
+                    check_dir(&path, canonical_dest)?;
+                }
+            }
+            Ok(())
+        }
+
+        check_dir(dest_path, &canonical_dest)
+    }
+
+    /// Recursively collect all files (not directories) from a directory
+    fn collect_extracted_files(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+
+        fn visit_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+            let entries = std::fs::read_dir(dir).map_err(|e| {
+                Error::Io(std::io::Error::other(
+                    format!("failed to read directory: {}", e),
+                ))
+            })?;
+
+            for entry in entries {
+                let entry = entry.map_err(|e| {
+                    Error::Io(std::io::Error::other(
                         format!("failed to read entry: {}", e),
                     ))
                 })?;

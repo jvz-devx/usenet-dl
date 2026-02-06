@@ -9,12 +9,12 @@
 //! # Example
 //!
 //! ```rust
-//! use usenet_dl::scheduler::{ScheduleRule, ScheduleAction, Weekday};
+//! use usenet_dl::scheduler::{ScheduleRule, ScheduleAction, RuleId, Weekday};
 //! use chrono::NaiveTime;
 //!
 //! // Unlimited at night (midnight to 6 AM)
 //! let night_rule = ScheduleRule {
-//!     id: 1,
+//!     id: RuleId::new(1),
 //!     name: "Night owl".into(),
 //!     days: vec![],  // All days
 //!     start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
@@ -25,7 +25,7 @@
 //!
 //! // Limited during work hours (weekdays only)
 //! let work_rule = ScheduleRule {
-//!     id: 2,
+//!     id: RuleId::new(2),
 //!     name: "Work hours".into(),
 //!     days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
 //!                Weekday::Thursday, Weekday::Friday],
@@ -200,12 +200,12 @@ impl Scheduler {
     /// # Example
     ///
     /// ```rust
-    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, Weekday};
+    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, RuleId, Weekday};
     /// use chrono::NaiveTime;
     ///
     /// let rules = vec![
     ///     ScheduleRule {
-    ///         id: 1,
+    ///         id: RuleId::new(1),
     ///         name: "Work hours".into(),
     ///         days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
     ///                    Weekday::Thursday, Weekday::Friday],
@@ -276,12 +276,12 @@ impl Scheduler {
     /// # Example
     ///
     /// ```rust
-    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, Weekday};
+    /// use usenet_dl::scheduler::{Scheduler, ScheduleRule, ScheduleAction, RuleId, Weekday};
     /// use chrono::{NaiveTime, Local};
     ///
     /// let rules = vec![
     ///     ScheduleRule {
-    ///         id: 1,
+    ///         id: RuleId::new(1),
     ///         name: "Work hours".into(),
     ///         days: vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday,
     ///                    Weekday::Thursday, Weekday::Friday],
@@ -307,10 +307,20 @@ impl Scheduler {
         self.rules
             .iter()
             .find(|r| {
-                r.enabled
-                    && (r.days.is_empty() || r.days.contains(&weekday))
-                    && time >= r.start_time
-                    && time < r.end_time
+                if !r.enabled {
+                    return false;
+                }
+                if !r.days.is_empty() && !r.days.contains(&weekday) {
+                    return false;
+                }
+                // Handle midnight-crossing rules (e.g., 22:00 to 06:00)
+                if r.start_time <= r.end_time {
+                    // Normal case: start < end (same day)
+                    time >= r.start_time && time < r.end_time
+                } else {
+                    // Midnight crossing: start > end (e.g., 22:00 to 06:00)
+                    time >= r.start_time || time < r.end_time
+                }
             })
             .map(|r| r.action.clone())
     }

@@ -33,31 +33,39 @@ impl Database {
     }
 
     /// Insert multiple articles in a batch (more efficient for large NZB files)
+    ///
+    /// Automatically chunks the input to stay within SQLite's bind variable limit
+    /// (5 variables per article, chunked to max 199 articles per INSERT).
     pub async fn insert_articles_batch(&self, articles: &[NewArticle]) -> Result<()> {
         if articles.is_empty() {
             return Ok(());
         }
 
-        // Build a multi-row insert query
-        let mut query_builder = sqlx::QueryBuilder::new(
-            "INSERT INTO download_articles (download_id, message_id, segment_number, size_bytes, status) ",
-        );
+        // SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999.
+        // Each article uses 5 bind variables, so max 199 articles per batch.
+        const MAX_ARTICLES_PER_BATCH: usize = 199;
 
-        query_builder.push_values(articles, |mut b, article| {
-            b.push_bind(article.download_id)
-                .push_bind(&article.message_id)
-                .push_bind(article.segment_number)
-                .push_bind(article.size_bytes)
-                .push_bind(0); // status = PENDING
-        });
+        for chunk in articles.chunks(MAX_ARTICLES_PER_BATCH) {
+            let mut query_builder = sqlx::QueryBuilder::new(
+                "INSERT INTO download_articles (download_id, message_id, segment_number, size_bytes, status) ",
+            );
 
-        let query = query_builder.build();
-        query.execute(&self.pool).await.map_err(|e| {
-            Error::Database(DatabaseError::QueryFailed(format!(
-                "Failed to insert articles batch: {}",
-                e
-            )))
-        })?;
+            query_builder.push_values(chunk, |mut b, article| {
+                b.push_bind(article.download_id)
+                    .push_bind(&article.message_id)
+                    .push_bind(article.segment_number)
+                    .push_bind(article.size_bytes)
+                    .push_bind(0); // status = PENDING
+            });
+
+            let query = query_builder.build();
+            query.execute(&self.pool).await.map_err(|e| {
+                Error::Database(DatabaseError::QueryFailed(format!(
+                    "Failed to insert articles batch: {}",
+                    e
+                )))
+            })?;
+        }
 
         Ok(())
     }
@@ -147,58 +155,69 @@ impl Database {
     /// ];
     /// db.update_articles_status_batch(&updates).await?;
     /// ```
+    /// Update multiple article statuses in a single transaction (more efficient for batch operations)
+    ///
+    /// Automatically chunks the input to stay within SQLite's bind variable limit.
+    /// Each update uses ~3-4 bind variables (article_id x3 + optional timestamp),
+    /// so we chunk to max 100 updates per query.
     pub async fn update_articles_status_batch(&self, updates: &[(i64, i32)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
         }
 
+        // Each update uses up to 4 bind variables (id in status CASE, status, id in downloaded_at CASE,
+        // optional timestamp, id in WHERE IN). Conservative limit of 100 per batch.
+        const MAX_UPDATES_PER_BATCH: usize = 100;
+
         let now = chrono::Utc::now().timestamp();
 
-        let mut query_builder =
-            sqlx::QueryBuilder::new("UPDATE download_articles SET status = CASE ");
+        for chunk in updates.chunks(MAX_UPDATES_PER_BATCH) {
+            let mut query_builder =
+                sqlx::QueryBuilder::new("UPDATE download_articles SET status = CASE ");
 
-        // Build status CASE clause
-        for (article_id, status) in updates {
-            query_builder.push("WHEN id = ");
-            query_builder.push_bind(*article_id);
-            query_builder.push(" THEN ");
-            query_builder.push_bind(*status);
-            query_builder.push(" ");
-        }
-        query_builder.push("END, downloaded_at = CASE ");
-
-        // Build downloaded_at CASE clause (only set timestamp for DOWNLOADED status)
-        for (article_id, status) in updates {
-            query_builder.push("WHEN id = ");
-            query_builder.push_bind(*article_id);
-            if *status == article_status::DOWNLOADED {
+            // Build status CASE clause
+            for (article_id, status) in chunk {
+                query_builder.push("WHEN id = ");
+                query_builder.push_bind(*article_id);
                 query_builder.push(" THEN ");
-                query_builder.push_bind(now);
-            } else {
-                query_builder.push(" THEN downloaded_at"); // Keep existing value
+                query_builder.push_bind(*status);
+                query_builder.push(" ");
             }
-            query_builder.push(" ");
-        }
-        query_builder.push("END WHERE id IN (");
+            query_builder.push("END, downloaded_at = CASE ");
 
-        // Build WHERE IN clause
-        let mut first = true;
-        for (article_id, _) in updates {
-            if !first {
-                query_builder.push(", ");
+            // Build downloaded_at CASE clause (only set timestamp for DOWNLOADED status)
+            for (article_id, status) in chunk {
+                query_builder.push("WHEN id = ");
+                query_builder.push_bind(*article_id);
+                if *status == article_status::DOWNLOADED {
+                    query_builder.push(" THEN ");
+                    query_builder.push_bind(now);
+                } else {
+                    query_builder.push(" THEN downloaded_at"); // Keep existing value
+                }
+                query_builder.push(" ");
             }
-            query_builder.push_bind(*article_id);
-            first = false;
-        }
-        query_builder.push(")");
+            query_builder.push("END WHERE id IN (");
 
-        let query = query_builder.build();
-        query.execute(&self.pool).await.map_err(|e| {
-            Error::Database(DatabaseError::QueryFailed(format!(
-                "Failed to update articles status batch: {}",
-                e
-            )))
-        })?;
+            // Build WHERE IN clause
+            let mut first = true;
+            for (article_id, _) in chunk {
+                if !first {
+                    query_builder.push(", ");
+                }
+                query_builder.push_bind(*article_id);
+                first = false;
+            }
+            query_builder.push(")");
+
+            let query = query_builder.build();
+            query.execute(&self.pool).await.map_err(|e| {
+                Error::Database(DatabaseError::QueryFailed(format!(
+                    "Failed to update articles status batch: {}",
+                    e
+                )))
+            })?;
+        }
 
         Ok(())
     }

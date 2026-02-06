@@ -23,9 +23,22 @@ impl Database {
             })?;
         }
 
-        // Connect to database
-        let connection_string = format!("sqlite:{}?mode=rwc", path.display());
-        let pool = SqlitePool::connect(&connection_string).await.map_err(|e| {
+        // Connect to database with foreign key enforcement and WAL mode
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+        use std::str::FromStr;
+
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))
+            .map_err(|e| {
+                Error::Database(DatabaseError::ConnectionFailed(format!(
+                    "Failed to parse database path: {}",
+                    e
+                )))
+            })?
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal);
+
+        let pool = SqlitePool::connect_with(options).await.map_err(|e| {
             Error::Database(DatabaseError::ConnectionFailed(format!(
                 "Failed to connect to database: {}",
                 e
@@ -99,12 +112,32 @@ impl Database {
     async fn migrate_v1(conn: &mut SqliteConnection) -> Result<()> {
         tracing::info!("Applying database migration v1");
 
-        Self::create_downloads_schema(conn).await?;
-        Self::create_articles_schema(conn).await?;
-        Self::create_passwords_table(conn).await?;
-        Self::create_processed_nzbs_table(conn).await?;
-        Self::create_history_schema(conn).await?;
-        Self::record_migration(conn, 1).await?;
+        // Wrap migration in a transaction so partial failures don't leave the DB in a broken state
+        sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| {
+            Error::Database(DatabaseError::MigrationFailed(format!("Failed to begin transaction: {}", e)))
+        })?;
+
+        let result = async {
+            Self::create_downloads_schema(conn).await?;
+            Self::create_articles_schema(conn).await?;
+            Self::create_passwords_table(conn).await?;
+            Self::create_processed_nzbs_table(conn).await?;
+            Self::create_history_schema(conn).await?;
+            Self::record_migration(conn, 1).await?;
+            Ok::<(), Error>(())
+        }.await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| {
+                    Error::Database(DatabaseError::MigrationFailed(format!("Failed to commit migration v1: {}", e)))
+                })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
 
         tracing::info!("Database migration v1 complete");
         Ok(())
@@ -346,48 +379,66 @@ impl Database {
     async fn migrate_v2(conn: &mut SqliteConnection) -> Result<()> {
         tracing::info!("Applying database migration v2");
 
-        // Runtime state table for tracking clean/unclean shutdown
-        sqlx::query(
-            r#"
-            CREATE TABLE runtime_state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
+        sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| {
+            Error::Database(DatabaseError::MigrationFailed(format!("Failed to begin transaction: {}", e)))
+        })?;
+
+        let result = async {
+            // Runtime state table for tracking clean/unclean shutdown
+            sqlx::query(
+                r#"
+                CREATE TABLE IF NOT EXISTS runtime_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                "#,
             )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!(
-                "Failed to create runtime_state table: {}",
-                e
-            )))
-        })?;
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to create runtime_state table: {}",
+                    e
+                )))
+            })?;
 
-        // Initialize shutdown state as unclean (will be set to clean on proper startup)
-        let now = chrono::Utc::now().timestamp();
-        sqlx::query(
-            r#"
-            INSERT INTO runtime_state (key, value, updated_at)
-            VALUES ('clean_shutdown', 'false', ?)
-            "#,
-        )
-        .bind(now)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!(
-                "Failed to initialize runtime_state: {}",
-                e
-            )))
-        })?;
+            // Initialize shutdown state as unclean (will be set to clean on proper startup)
+            let now = chrono::Utc::now().timestamp();
+            sqlx::query(
+                r#"
+                INSERT INTO runtime_state (key, value, updated_at)
+                VALUES ('clean_shutdown', 'false', ?)
+                "#,
+            )
+            .bind(now)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to initialize runtime_state: {}",
+                    e
+                )))
+            })?;
 
-        // Record migration
-        Self::record_migration(conn, 2).await?;
+            // Record migration
+            Self::record_migration(conn, 2).await?;
+            Ok::<(), Error>(())
+        }.await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| {
+                    Error::Database(DatabaseError::MigrationFailed(format!("Failed to commit migration v2: {}", e)))
+                })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
 
         tracing::info!("Database migration v2 complete");
-
         Ok(())
     }
 
@@ -395,93 +446,100 @@ impl Database {
     async fn migrate_v3(conn: &mut SqliteConnection) -> Result<()> {
         tracing::info!("Applying database migration v3");
 
-        // RSS feeds table
-        sqlx::query(
-            r#"
-            CREATE TABLE rss_feeds (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                url TEXT NOT NULL,
-                check_interval_secs INTEGER NOT NULL DEFAULT 900,
-                category TEXT,
-                auto_download INTEGER NOT NULL DEFAULT 1,
-                priority INTEGER NOT NULL DEFAULT 0,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                last_check INTEGER,
-                last_error TEXT,
-                created_at INTEGER NOT NULL
-            )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!(
-                "Failed to create rss_feeds table: {}",
-                e
-            )))
+        sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| {
+            Error::Database(DatabaseError::MigrationFailed(format!("Failed to begin transaction: {}", e)))
         })?;
 
-        // RSS filters table (per feed)
-        sqlx::query(
-            r#"
-            CREATE TABLE rss_filters (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
-                include_patterns TEXT,
-                exclude_patterns TEXT,
-                min_size INTEGER,
-                max_size INTEGER,
-                max_age_secs INTEGER
+        let result = async {
+            // RSS feeds table
+            sqlx::query(
+                r#"
+                CREATE TABLE IF NOT EXISTS rss_feeds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    check_interval_secs INTEGER NOT NULL DEFAULT 900,
+                    category TEXT,
+                    auto_download INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_check INTEGER,
+                    last_error TEXT,
+                    created_at INTEGER NOT NULL
+                )
+                "#,
             )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!(
-                "Failed to create rss_filters table: {}",
-                e
-            )))
-        })?;
-
-        // RSS seen items table (prevent re-downloading)
-        sqlx::query(
-            r#"
-            CREATE TABLE rss_seen (
-                feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
-                guid TEXT NOT NULL,
-                seen_at INTEGER NOT NULL,
-                PRIMARY KEY (feed_id, guid)
-            )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| {
-            Error::Database(DatabaseError::MigrationFailed(format!(
-                "Failed to create rss_seen table: {}",
-                e
-            )))
-        })?;
-
-        // Index for rss_seen
-        sqlx::query("CREATE INDEX idx_rss_seen_feed ON rss_seen(feed_id)")
             .execute(&mut *conn)
             .await
             .map_err(|e| {
                 Error::Database(DatabaseError::MigrationFailed(format!(
-                    "Failed to create index: {}",
+                    "Failed to create rss_feeds table: {}",
                     e
                 )))
             })?;
 
-        // Record migration
-        Self::record_migration(conn, 3).await?;
+            // RSS filters table (per feed)
+            sqlx::query(
+                r#"
+                CREATE TABLE IF NOT EXISTS rss_filters (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    include_patterns TEXT,
+                    exclude_patterns TEXT,
+                    min_size INTEGER,
+                    max_size INTEGER,
+                    max_age_secs INTEGER
+                )
+                "#,
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to create rss_filters table: {}",
+                    e
+                )))
+            })?;
+
+            // RSS seen items table (prevent re-downloading)
+            sqlx::query(
+                r#"
+                CREATE TABLE IF NOT EXISTS rss_seen (
+                    feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
+                    guid TEXT NOT NULL,
+                    seen_at INTEGER NOT NULL,
+                    PRIMARY KEY (feed_id, guid)
+                )
+                "#,
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to create rss_seen table: {}",
+                    e
+                )))
+            })?;
+
+            // Record migration
+            Self::record_migration(conn, 3).await?;
+            Ok::<(), Error>(())
+        }.await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| {
+                    Error::Database(DatabaseError::MigrationFailed(format!("Failed to commit migration v3: {}", e)))
+                })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
 
         tracing::info!("Database migration v3 complete");
-
         Ok(())
     }
 
