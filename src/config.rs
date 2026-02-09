@@ -31,14 +31,6 @@ pub struct DownloadConfig {
     #[serde(default)]
     pub default_post_process: PostProcess,
 
-    /// Action to take when post-processing fails
-    #[serde(default)]
-    pub failed_action: FailedDownloadAction,
-
-    /// Directory for failed downloads (when action is MoveToFailed)
-    #[serde(default)]
-    pub failed_directory: Option<PathBuf>,
-
     /// Delete sample files/folders
     #[serde(default = "default_true")]
     pub delete_samples: bool,
@@ -56,8 +48,6 @@ impl Default for DownloadConfig {
             max_concurrent_downloads: default_max_concurrent(),
             speed_limit_bps: None,
             default_post_process: PostProcess::default(),
-            failed_action: FailedDownloadAction::default(),
-            failed_directory: None,
             delete_samples: true,
             file_collision: FileCollisionAction::default(),
         }
@@ -294,19 +284,6 @@ impl PostProcess {
             _ => PostProcess::UnpackAndCleanup, // Default
         }
     }
-}
-
-/// Action to take when post-processing fails
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FailedDownloadAction {
-    /// Keep files in the download directory (default)
-    #[default]
-    Keep,
-    /// Delete all downloaded files
-    Delete,
-    /// Move to a dedicated failed downloads directory
-    MoveToFailed,
 }
 
 /// Archive extraction configuration
@@ -851,10 +828,6 @@ pub struct CategoryConfig {
     /// Override default post-processing
     #[serde(default)]
     pub post_process: Option<PostProcess>,
-
-    /// Category-specific watch folder
-    #[serde(default)]
-    pub watch_folder: Option<WatchFolderConfig>,
 
     /// Category-specific scripts
     #[serde(default)]

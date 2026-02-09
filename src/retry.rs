@@ -77,8 +77,8 @@ impl IsRetryable for Error {
                     || msg.contains("503") // Service unavailable
                     || msg.contains("400") // Server busy
             }
-            // Download errors - check if timeout (retryable)
-            Error::Download(e) => matches!(e, crate::error::DownloadError::Timeout { .. }),
+            // Download errors are not retryable (state/not-found/space errors)
+            Error::Download(_) => false,
             // Post-processing errors are generally permanent
             Error::PostProcess(_) => false,
             // Database errors should not be retried (likely permanent)

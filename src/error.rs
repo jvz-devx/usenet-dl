@@ -183,23 +183,6 @@ pub enum DownloadError {
         available: u64,
     },
 
-    /// Download failed during article retrieval
-    #[error("download {id} failed: {reason}")]
-    Failed {
-        /// The download ID that failed
-        id: i64,
-        /// The reason for the failure
-        reason: String,
-    },
-
-    /// Network timeout during download
-    #[error("download {id} timed out after {seconds}s")]
-    Timeout {
-        /// The download ID that timed out
-        id: i64,
-        /// The timeout duration in seconds
-        seconds: u64,
-    },
 }
 
 /// Post-processing errors (PAR2 verify, repair, extraction, etc.)
@@ -445,14 +428,10 @@ impl ToHttpStatus for Error {
 
             // 503 Service Unavailable
             Error::ShuttingDown => 503,
-            Error::Download(DownloadError::Timeout { .. }) => 503,
             Error::ExternalTool(_) => 503,
 
             // 501 Not Implemented - Feature not supported
             Error::NotSupported(_) => 501,
-
-            // 500 for download failures
-            Error::Download(DownloadError::Failed { .. }) => 500,
 
             // 500 for serialization errors
             Error::Serialization(_) => 500,
@@ -471,8 +450,6 @@ impl ToHttpStatus for Error {
                 DownloadError::AlreadyInState { .. } => "already_in_state",
                 DownloadError::InvalidState { .. } => "invalid_state",
                 DownloadError::InsufficientSpace { .. } => "insufficient_space",
-                DownloadError::Failed { .. } => "download_failed",
-                DownloadError::Timeout { .. } => "download_timeout",
             },
             Error::PostProcess(e) => match e {
                 PostProcessError::VerificationFailed { .. } => "verification_failed",

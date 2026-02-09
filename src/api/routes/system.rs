@@ -136,9 +136,22 @@ pub async fn event_stream(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn shutdown(State(_state): State<AppState>) -> impl IntoResponse {
+pub async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
+    // Spawn the shutdown sequence in a background task so we can return the response first
+    tokio::spawn(async move {
+        // Small delay to allow the HTTP response to be sent
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        if let Err(e) = state.downloader.shutdown().await {
+            tracing::error!(error = %e, "Error during graceful shutdown");
+        }
+
+        // Exit the process after shutdown completes
+        std::process::exit(0);
+    });
+
     (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"error": "not implemented"})),
+        StatusCode::ACCEPTED,
+        Json(json!({"status": "shutdown initiated"})),
     )
 }

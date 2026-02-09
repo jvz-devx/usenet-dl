@@ -107,7 +107,6 @@ use utoipa::OpenApi;
         crate::config::ServerConfig,
         crate::config::RetryConfig,
         crate::config::PostProcess,
-        crate::config::FailedDownloadAction,
         crate::config::ExtractionConfig,
         crate::config::FileCollisionAction,
         crate::config::DeobfuscationConfig,

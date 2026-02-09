@@ -63,7 +63,6 @@ rand = "0.8"
 axum = { version = "0.7", features = ["multipart"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-tower_governor = "0.3"
 
 # OpenAPI documentation
 utoipa = { version = "4", features = ["axum_extras"] }

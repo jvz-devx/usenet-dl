@@ -16,7 +16,7 @@ use usenet_dl::api::start_api_server;
 use usenet_dl::config::{
     ApiConfig, AutomationConfig, CleanupConfig, Config, DeobfuscationConfig, DiskSpaceConfig,
     DownloadConfig, DuplicateAction, DuplicateConfig, DuplicateMethod, ExtractionConfig,
-    FailedDownloadAction, FileCollisionAction, NotificationConfig, PersistenceConfig, PostProcess,
+    FileCollisionAction, NotificationConfig, PersistenceConfig, PostProcess,
     ProcessingConfig, RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig,
     ScriptEvent, ServerConfig, ServerIntegrationConfig, ToolsConfig, WatchFolderAction,
     WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
@@ -167,8 +167,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_concurrent_downloads: 3,
             speed_limit_bps: None, // Controlled by scheduler
             default_post_process: PostProcess::UnpackAndCleanup,
-            failed_action: FailedDownloadAction::Keep,
-            failed_directory: Some(PathBuf::from("/data/failed")),
             delete_samples: true,
             file_collision: FileCollisionAction::Rename,
         },

@@ -58,7 +58,6 @@ async fn test_create_or_update_category() {
     let category_config = CategoryConfig {
         destination: PathBuf::from("/downloads/movies"),
         post_process: Some(PostProcess::UnpackAndCleanup),
-        watch_folder: None,
         scripts: vec![],
     };
 
@@ -113,7 +112,6 @@ async fn test_create_or_update_category() {
     let updated_config = CategoryConfig {
         destination: PathBuf::from("/downloads/movies-updated"),
         post_process: Some(PostProcess::Unpack),
-        watch_folder: None,
         scripts: vec![],
     };
 
@@ -212,7 +210,6 @@ async fn test_delete_category() {
     let category_config = CategoryConfig {
         destination: PathBuf::from("/downloads/movies"),
         post_process: Some(PostProcess::UnpackAndCleanup),
-        watch_folder: None,
         scripts: vec![],
     };
 

@@ -394,7 +394,7 @@ pub async fn resume_download(
     tag = "downloads",
     params(
         ("id" = i64, Path, description = "Download ID"),
-        ("delete_files" = Option<bool>, Query, description = "Whether to delete downloaded files (not yet implemented, always deletes temp files)")
+        ("delete_files" = Option<bool>, Query, description = "Whether to delete downloaded files from the destination directory (default: false, always deletes temp files)")
     ),
     responses(
         (status = 204, description = "Download deleted successfully"),
@@ -405,10 +405,48 @@ pub async fn resume_download(
 pub async fn delete_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Query(_params): Query<DeleteDownloadQuery>,
+    Query(params): Query<DeleteDownloadQuery>,
 ) -> impl IntoResponse {
-    match state.downloader.cancel(crate::types::DownloadId(id)).await {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+    let download_id = crate::types::DownloadId(id);
+
+    // If delete_files is requested, look up the destination path before cancelling
+    // (cancel deletes the DB record, so we need the path first)
+    let destination = if params.delete_files {
+        match state.downloader.db.get_download(download_id).await {
+            Ok(Some(d)) => Some(std::path::PathBuf::from(d.destination)),
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(json!({"error": {"code": "not_found", "message": format!("Download {} not found", id)}}))).into_response();
+            }
+            Err(e) => {
+                tracing::error!(download_id = id, error = %e, "Failed to get download for file deletion");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": {"code": "internal_error", "message": e.to_string()}})),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    match state.downloader.cancel(download_id).await {
+        Ok(_) => {
+            // If delete_files was requested, remove the destination directory
+            if let Some(dest) = destination
+                && dest.exists()
+                && let Err(e) = tokio::fs::remove_dir_all(&dest).await
+            {
+                tracing::warn!(
+                    download_id = id,
+                    path = ?dest,
+                    error = %e,
+                    "Failed to delete destination files"
+                );
+                // Return success anyway — the download record is already gone
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => {
             if e.to_string().contains("not found") {
                 (StatusCode::NOT_FOUND, Json(json!({"error": {"code": "not_found", "message": format!("Download {} not found", id)}}))).into_response()

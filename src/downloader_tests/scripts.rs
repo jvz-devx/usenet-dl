@@ -141,7 +141,6 @@ async fn test_category_scripts_execution_order() {
         CategoryConfig {
             destination: temp_dir.path().join("movies"),
             post_process: None,
-            watch_folder: None,
             scripts: vec![ScriptConfig {
                 path: script_path.clone(),
                 events: vec![crate::config::ScriptEvent::OnComplete],
