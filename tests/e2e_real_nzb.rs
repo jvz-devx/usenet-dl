@@ -230,11 +230,11 @@ async fn test_real_nzb_download() {
             );
 
             // Show current status
-            if let Ok(downloads) = downloader.db.list_downloads().await {
-                if let Some(d) = downloads.iter().find(|d| d.id == id) {
-                    println!("  Progress: {:.1}%", d.progress);
-                    println!("  Status: {:?}", Status::from_i32(d.status));
-                }
+            if let Ok(downloads) = downloader.db.list_downloads().await
+                && let Some(d) = downloads.iter().find(|d| d.id == id)
+            {
+                println!("  Progress: {:.1}%", d.progress);
+                println!("  Status: {:?}", Status::from_i32(d.status));
             }
         }
         WaitResult::ChannelClosed => {
@@ -298,14 +298,14 @@ async fn test_real_nzb_pause_resume() {
     }
 
     // Check status
-    if let Ok(downloads) = downloader.db.list_downloads().await {
-        if let Some(d) = downloads.iter().find(|d| d.id == id) {
-            println!(
-                "Status after pause: {:?}, Progress: {:.1}%",
-                Status::from_i32(d.status),
-                d.progress
-            );
-        }
+    if let Ok(downloads) = downloader.db.list_downloads().await
+        && let Some(d) = downloads.iter().find(|d| d.id == id)
+    {
+        println!(
+            "Status after pause: {:?}, Progress: {:.1}%",
+            Status::from_i32(d.status),
+            d.progress
+        );
     }
 
     // Wait a bit
@@ -322,14 +322,14 @@ async fn test_real_nzb_pause_resume() {
     // Wait a bit more to see progress
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    if let Ok(downloads) = downloader.db.list_downloads().await {
-        if let Some(d) = downloads.iter().find(|d| d.id == id) {
-            println!(
-                "Status after resume: {:?}, Progress: {:.1}%",
-                Status::from_i32(d.status),
-                d.progress
-            );
-        }
+    if let Ok(downloads) = downloader.db.list_downloads().await
+        && let Some(d) = downloads.iter().find(|d| d.id == id)
+    {
+        println!(
+            "Status after resume: {:?}, Progress: {:.1}%",
+            Status::from_i32(d.status),
+            d.progress
+        );
     }
 
     println!("Pause/resume test complete");
@@ -365,10 +365,10 @@ async fn test_real_nzb_info() {
     // Estimate size from segment bytes
     let mut total_bytes: u64 = 0;
     for cap in content.split("bytes=\"").skip(1) {
-        if let Some(end) = cap.find('"') {
-            if let Ok(bytes) = cap[..end].parse::<u64>() {
-                total_bytes += bytes;
-            }
+        if let Some(end) = cap.find('"')
+            && let Ok(bytes) = cap[..end].parse::<u64>()
+        {
+            total_bytes += bytes;
         }
     }
 

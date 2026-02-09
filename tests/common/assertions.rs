@@ -131,16 +131,11 @@ where
     let mut collected = Vec::new();
 
     let _ = tokio::time::timeout(timeout, async {
-        loop {
-            match events.recv().await {
-                Ok(event) => {
-                    let should_stop = stop_predicate(&event);
-                    collected.push(event);
-                    if should_stop {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(event) = events.recv().await {
+            let should_stop = stop_predicate(&event);
+            collected.push(event);
+            if should_stop {
+                break;
             }
         }
     })
