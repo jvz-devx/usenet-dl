@@ -10,7 +10,7 @@ keywords = ["usenet", "nntp", "nzb", "download", "newsgroup"]
 categories = ["network-programming", "web-programming"]
 rust-version = "1.93"
 readme = "README.md"
-homepage = "https://github.com/jvz-devx/usenet-dl"
+homepage = "https://crates.io/crates/usenet-dl"
 documentation = "https://docs.rs/usenet-dl"
 exclude = [
     ".github/",
@@ -24,7 +24,7 @@ exclude = [
 
 [dependencies]
 # Core NNTP functionality
-nntp-rs = "0.2.1"
+nntp-rs = "0.3.0"
 
 # Async runtime
 tokio = { version = "1", features = ["full", "signal"] }
