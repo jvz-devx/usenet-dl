@@ -65,8 +65,8 @@ A high-performance, highly configurable backend library for building SABnzbd/NZB
 
 ```
 ┌─────────────────────────────────────────┐
-│  Spotnet App    │  SABnzbd Alternative  │
-├─────────────────┴───────────────────────┤
+│            Your Application              │
+├─────────────────────────────────────────┤
 │              usenet-dl                  │
 │   (Queue, Post-processing, API, DB)     │
 ├─────────────────────────────────────────┤
