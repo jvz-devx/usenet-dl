@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn test_server_health_check_invalid_server() {
     // Test: test_server should return error for non-existent server
-    println!("🧪 Testing server health check with invalid server...");
+    println!("Testing server health check with invalid server...");
 
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
@@ -43,14 +43,14 @@ async fn test_server_health_check_invalid_server() {
         "Expected no capabilities for failed connection"
     );
 
-    println!("✓ test_server correctly reports failure for invalid server");
+    println!("test_server correctly reports failure for invalid server");
     println!("  Error: {:?}", result.error.unwrap());
 }
 
 #[tokio::test]
 async fn test_server_health_check_result_structure() {
     // Test: ServerTestResult has correct structure
-    println!("🧪 Testing ServerTestResult structure...");
+    println!("Testing ServerTestResult structure...");
 
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
@@ -79,14 +79,14 @@ async fn test_server_health_check_result_structure() {
     assert_eq!(parsed.latency, result.latency);
     assert_eq!(parsed.error, result.error);
 
-    println!("✓ ServerTestResult correctly serializes/deserializes");
+    println!("ServerTestResult correctly serializes/deserializes");
     println!("  JSON: {}", json);
 }
 
 #[tokio::test]
 async fn test_all_servers_empty_config() {
     // Test: test_all_servers with no configured servers
-    println!("🧪 Testing test_all_servers with empty configuration...");
+    println!("Testing test_all_servers with empty configuration...");
 
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
@@ -102,13 +102,13 @@ async fn test_all_servers_empty_config() {
         "Expected empty results for empty server list"
     );
 
-    println!("✓ test_all_servers correctly handles empty server list");
+    println!("test_all_servers correctly handles empty server list");
 }
 
 #[tokio::test]
 async fn test_all_servers_multiple_servers() {
     // Test: test_all_servers returns results for all servers
-    println!("🧪 Testing test_all_servers with multiple servers...");
+    println!("Testing test_all_servers with multiple servers...");
 
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
@@ -167,14 +167,14 @@ async fn test_all_servers_multiple_servers() {
         assert!(result.error.is_some(), "Expected error for {}", host);
     }
 
-    println!("✓ test_all_servers correctly tests all configured servers");
+    println!("test_all_servers correctly tests all configured servers");
     println!("  Tested {} servers", results.len());
 }
 
 #[tokio::test]
 async fn test_server_capabilities_structure() {
     // Test: ServerCapabilities structure is correct
-    println!("🧪 Testing ServerCapabilities structure...");
+    println!("Testing ServerCapabilities structure...");
 
     let caps = crate::types::ServerCapabilities {
         posting_allowed: true,
@@ -190,6 +190,6 @@ async fn test_server_capabilities_structure() {
     assert_eq!(parsed.max_connections, caps.max_connections);
     assert_eq!(parsed.compression, caps.compression);
 
-    println!("✓ ServerCapabilities correctly serializes/deserializes");
+    println!("ServerCapabilities correctly serializes/deserializes");
     println!("  JSON: {}", json);
 }

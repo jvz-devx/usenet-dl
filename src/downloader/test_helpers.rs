@@ -1,10 +1,15 @@
-use super::*;
-use std::time::{Duration, Instant};
+//! Shared test helpers for creating UsenetDownloader instances in tests.
+
+use crate::config::Config;
+use crate::db::Database;
+use crate::downloader::{ProcessingPipeline, QueueState, RuntimeConfig, UsenetDownloader};
+use crate::{post_processing, speed_limiter};
+use std::sync::Arc;
 use tempfile::tempdir;
 
-/// Helper to create a test UsenetDownloader instance with a persistent database
-/// Returns the downloader and the tempdir (which must be kept alive)
-async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
+/// Helper to create a test UsenetDownloader instance with a persistent database.
+/// Returns the downloader and the tempdir (which must be kept alive).
+pub(crate) async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
 
@@ -25,41 +30,39 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     let nntp_pools = Vec::new();
 
     // Create priority queue
-    let queue = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BinaryHeap::new()));
+    let queue = Arc::new(tokio::sync::Mutex::new(std::collections::BinaryHeap::new()));
 
     // Create semaphore
-    let concurrent_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(
+    let concurrent_limit = Arc::new(tokio::sync::Semaphore::new(
         config.download.max_concurrent_downloads,
     ));
 
     // Create active downloads tracking map
-    let active_downloads =
-        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let active_downloads = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
     // Create speed limiter with configured limit
     let speed_limiter = speed_limiter::SpeedLimiter::new(config.download.speed_limit_bps);
 
     // Create config Arc early so we can share it
-    let config_arc = std::sync::Arc::new(config.clone());
+    let config_arc = Arc::new(config.clone());
 
     // Initialize runtime-mutable categories from config
-    let categories = std::sync::Arc::new(tokio::sync::RwLock::new(
+    let categories = Arc::new(tokio::sync::RwLock::new(
         config.persistence.categories.clone(),
     ));
 
     // Initialize runtime-mutable schedule rules (empty for tests)
-    let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(vec![]));
-    let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let schedule_rules = Arc::new(tokio::sync::RwLock::new(vec![]));
+    let next_schedule_rule_id = Arc::new(std::sync::atomic::AtomicI64::new(0));
 
     // Use NoOp parity handler for tests (no external binary required)
-    let parity_handler: std::sync::Arc<dyn crate::ParityHandler> =
-        std::sync::Arc::new(crate::NoOpParityHandler);
+    let parity_handler: Arc<dyn crate::ParityHandler> = Arc::new(crate::NoOpParityHandler);
 
     // Wrap database in Arc for sharing
-    let db_arc = std::sync::Arc::new(db);
+    let db_arc = Arc::new(db);
 
     // Create post-processing pipeline executor
-    let post_processor = std::sync::Arc::new(post_processing::PostProcessor::new(
+    let post_processor = Arc::new(post_processing::PostProcessor::new(
         event_tx.clone(),
         config_arc.clone(),
         parity_handler.clone(),
@@ -67,22 +70,22 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
     ));
 
     // Group queue and download state
-    let queue_state = crate::downloader::QueueState {
+    let queue_state = QueueState {
         queue,
         concurrent_limit,
         active_downloads,
-        accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        accepting_new: Arc::new(std::sync::atomic::AtomicBool::new(true)),
     };
 
     // Group runtime configuration
-    let runtime_config = crate::downloader::RuntimeConfig {
+    let runtime_config = RuntimeConfig {
         categories,
         schedule_rules,
         next_schedule_rule_id,
     };
 
     // Group post-processing pipeline
-    let processing = crate::downloader::ProcessingPipeline {
+    let processing = ProcessingPipeline {
         post_processor,
         parity_handler,
     };
@@ -91,7 +94,7 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
         db: db_arc,
         event_tx,
         config: config_arc,
-        nntp_pools: std::sync::Arc::new(nntp_pools),
+        nntp_pools: Arc::new(nntp_pools),
         speed_limiter,
         queue_state,
         runtime_config,
@@ -102,7 +105,7 @@ async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
 }
 
 /// Sample NZB content for testing
-const SAMPLE_NZB: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+pub(crate) const SAMPLE_NZB: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
 <nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
   <head>
@@ -120,17 +123,3 @@ const SAMPLE_NZB: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </segments>
   </file>
 </nzb>"#;
-
-mod control;
-mod disk_space;
-mod duplicates;
-mod lifecycle;
-mod nzb;
-mod post_process;
-mod queue;
-mod rss;
-mod scheduler;
-mod scripts;
-mod server;
-mod speed;
-mod webhooks;

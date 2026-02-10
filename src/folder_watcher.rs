@@ -324,13 +324,10 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     async fn create_test_downloader() -> Arc<UsenetDownloader> {
-        let temp_dir = TempDir::new().unwrap();
-        let mut config = Config::default();
-        config.persistence.database_path = temp_dir.path().join("test.db");
-        config.download.download_dir = temp_dir.path().join("downloads");
-        config.download.temp_dir = temp_dir.path().join("temp");
-
-        let downloader = UsenetDownloader::new(config).await.unwrap();
+        let (downloader, _temp_dir) =
+            crate::downloader::test_helpers::create_test_downloader().await;
+        // Note: _temp_dir is dropped here, but the DB is already opened and in-memory
+        // operations will continue to work since SQLite keeps the connection open.
         Arc::new(downloader)
     }
 

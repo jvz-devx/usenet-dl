@@ -53,7 +53,7 @@ Add as a dependency in your `Cargo.toml`:
 [dependencies]
 usenet-dl = { path = "../usenet-dl" }
 # or
-usenet-dl = { git = "https://github.com/yourusername/usenet-dl" }
+usenet-dl = { git = "https://github.com/jvz-devx/usenet-dl" }
 ```
 
 ## Basic Usage

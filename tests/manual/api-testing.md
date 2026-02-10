@@ -340,7 +340,7 @@ curl -N -H "Accept: text/event-stream" \
 
 ```bash
 # In development mode with test database
-cd /home/jens/Documents/source/usenet-dl
+cd /path/to/usenet-dl
 cargo run --example api_server
 ```
 

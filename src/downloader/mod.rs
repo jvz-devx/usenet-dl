@@ -31,6 +31,14 @@ mod services;
 mod tasks;
 mod webhooks;
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+pub(crate) mod test_helpers;
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests;
+
 // Re-export parameter structs for testing
 pub use webhooks::{TriggerScriptsParams, TriggerWebhooksParams};
 

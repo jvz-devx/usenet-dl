@@ -18,16 +18,9 @@ mod queue;
 mod servers;
 mod system;
 
-/// Helper to create a test UsenetDownloader instance
+/// Helper to create a test UsenetDownloader instance wrapped in Arc
 async fn create_test_downloader() -> (Arc<UsenetDownloader>, tempfile::TempDir) {
-    let temp_dir = tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-
-    let mut config = Config::default();
-    config.persistence.database_path = db_path;
-    config.servers = vec![]; // No servers for testing
-
-    let downloader = UsenetDownloader::new(config).await.unwrap();
+    let (downloader, temp_dir) = crate::downloader::test_helpers::create_test_downloader().await;
     (Arc::new(downloader), temp_dir)
 }
 

@@ -21,7 +21,7 @@ use utoipa::OpenApi;
         description = "OpenAPI 3.1 compliant REST API for managing Usenet downloads, post-processing, and configuration",
         contact(
             name = "usenet-dl",
-            url = "https://github.com/yourusername/usenet-dl"
+            url = "https://github.com/jvz-devx/usenet-dl"
         ),
         license(
             name = "MIT OR Apache-2.0"

@@ -3,7 +3,7 @@
 A high-performance, highly configurable backend library for building SABnzbd/NZBGet-like Usenet download applications in Rust.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust Version: 1.70+](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust Version: 1.93+](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://www.rust-lang.org)
 
 ## Features
 
@@ -111,7 +111,7 @@ usenet-dl = { git = "https://github.com/jvz-devx/usenet-dl" }
 
 ### Requirements
 
-- Rust 1.70 or later
+- Rust 1.93 or later
 - SQLite (embedded via sqlx)
 - Optional: unrar command-line tool for RAR extraction
 - Optional: 7z command-line tool for 7z extraction

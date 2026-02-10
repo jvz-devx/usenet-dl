@@ -14,9 +14,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     // Get NZB path
-    let nzb_path = std::env::var("TEST_NZB_PATH").unwrap_or_else(|_| {
-        "/home/jens/Documents/source/usenet-dl/Killers.of.the.Flower.Moon.2023.2160p.ATVP.WEB-DL.DUAL.DDP5.1.Atmos.DoVi.HDR.H.265-TURG.nzb".to_string()
-    });
+    let nzb_path = std::env::var("TEST_NZB_PATH")
+        .expect("Set TEST_NZB_PATH to an NZB file path");
 
     // Load config from env
     let host = std::env::var("NNTP_HOST").expect("NNTP_HOST not set");

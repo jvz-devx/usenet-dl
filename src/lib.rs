@@ -171,8 +171,3 @@ pub async fn run_with_shutdown(downloader: UsenetDownloader) -> Result<()> {
     // Perform graceful shutdown
     downloader.shutdown().await
 }
-
-// unwrap/expect are acceptable in tests for concise failure-on-error assertions
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-#[cfg(test)]
-mod downloader_tests;

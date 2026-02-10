@@ -171,23 +171,11 @@ impl SchedulerTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        config::Config,
-        scheduler::{ScheduleRule, Weekday},
-    };
+    use crate::scheduler::{ScheduleRule, Weekday};
     use chrono::{Datelike, NaiveTime, Timelike};
-    use tempfile::tempdir;
 
     async fn create_test_downloader() -> (UsenetDownloader, tempfile::TempDir) {
-        let temp_dir = tempdir().unwrap();
-        let mut config = Config::default();
-        config.persistence.database_path = temp_dir.path().join("test.db");
-
-        let downloader = UsenetDownloader::new(config)
-            .await
-            .expect("Failed to create downloader");
-
-        (downloader, temp_dir)
+        crate::downloader::test_helpers::create_test_downloader().await
     }
 
     #[tokio::test]
