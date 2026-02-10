@@ -29,6 +29,10 @@ Thumbs.db
 *_PROGRESS.md
 *-scan.md
 
+# Internal development files
+docs/sabnzbd-comparison.md
+benchmarks/
+
 # Claude
 .claude/
 CLAUDE.md

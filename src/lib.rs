@@ -1,6 +1,6 @@
 //! # usenet-dl
 //!
-//! Backend library for SABnzbd/NZBGet-like applications.
+//! Highly configurable backend library for Usenet download applications.
 //!
 //! ## Design Philosophy
 //!

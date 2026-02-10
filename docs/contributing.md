@@ -113,27 +113,68 @@ chmod +x .git/hooks/pre-commit
 ```
 usenet-dl/
 ├── src/
-│   ├── lib.rs              # Main library, UsenetDownloader struct, tests
+│   ├── lib.rs              # Library root, re-exports, tests
 │   ├── config.rs           # Configuration types and defaults
-│   ├── types.rs            # Core types (DownloadId, Status, Priority, etc.)
+│   ├── types.rs            # Core types (DownloadId, Status, Priority, Event, etc.)
 │   ├── error.rs            # Error types and conversions
-│   ├── db.rs               # SQLite persistence layer
+│   ├── deobfuscation.rs    # Filename deobfuscation
+│   ├── folder_watcher.rs   # NZB folder watching
+│   ├── rss_scheduler.rs    # RSS feed scheduling
+│   ├── scheduler_task.rs   # Scheduler background task
 │   ├── speed_limiter.rs    # Token bucket speed limiting
 │   ├── retry.rs            # Exponential backoff retry logic
-│   ├── extraction.rs       # Archive extraction (RAR/7z/ZIP)
-│   ├── deobfuscation.rs    # Filename deobfuscation
-│   ├── post_processing.rs  # Post-processing pipeline
-│   ├── folder_watcher.rs   # NZB folder watching
-│   ├── rss_manager.rs      # RSS feed monitoring
-│   ├── rss_scheduler.rs    # RSS feed scheduling
-│   ├── scheduler.rs        # Time-based scheduler
-│   ├── scheduler_task.rs   # Scheduler background task
 │   ├── utils.rs            # Utility functions (disk space, etc.)
-│   └── api/
-│       ├── mod.rs          # API router and middleware
-│       ├── routes.rs       # HTTP endpoint handlers
-│       ├── openapi.rs      # OpenAPI documentation
-│       └── sse.rs          # Server-Sent Events
+│   ├── downloader/         # Main orchestration
+│   │   ├── mod.rs          # UsenetDownloader struct, core coordination
+│   │   ├── nzb.rs          # NZB add/import methods
+│   │   ├── control.rs      # Pause/resume/cancel/reprocess
+│   │   ├── queue.rs         # Priority queue management
+│   │   ├── queue_processor.rs # Queue dispatch loop
+│   │   ├── download_task/   # Per-download task execution
+│   │   ├── background_tasks.rs # Folder watcher, RSS, scheduler spawning
+│   │   ├── webhooks.rs     # Webhook dispatch
+│   │   └── tests/          # Downloader tests
+│   ├── db/                 # SQLite persistence layer
+│   │   ├── mod.rs          # Database struct, connection management
+│   │   ├── downloads.rs    # Download CRUD operations
+│   │   ├── articles.rs     # Article-level tracking
+│   │   ├── history.rs      # Completed download history
+│   │   ├── rss.rs          # RSS feed persistence
+│   │   ├── migrations.rs   # Schema migrations
+│   │   └── tests/          # Database tests
+│   ├── api/                # REST API layer
+│   │   ├── mod.rs          # Router and middleware
+│   │   ├── openapi.rs      # OpenAPI documentation
+│   │   ├── auth.rs         # API key authentication
+│   │   ├── rate_limit.rs   # Per-IP rate limiting
+│   │   ├── state.rs        # Shared application state
+│   │   ├── routes/         # HTTP endpoint handlers (per resource)
+│   │   └── tests/          # API tests
+│   ├── extraction/         # Archive extraction
+│   │   ├── mod.rs          # Dispatcher and common logic
+│   │   ├── rar.rs          # RAR extraction
+│   │   ├── sevenz.rs       # 7z extraction
+│   │   ├── zip.rs          # ZIP extraction
+│   │   ├── password_list.rs # Password source collection
+│   │   └── tests/          # Extraction tests
+│   ├── post_processing/    # Post-processing pipeline
+│   │   ├── mod.rs          # Pipeline orchestration
+│   │   ├── verify.rs       # PAR2 verification stage
+│   │   ├── repair.rs       # PAR2 repair stage
+│   │   ├── cleanup.rs      # Cleanup stage
+│   │   └── tests/          # Post-processing tests
+│   ├── parity/             # PAR2 verification and repair
+│   │   ├── mod.rs          # Module root
+│   │   ├── traits.rs       # ParityHandler trait
+│   │   ├── cli.rs          # CLI par2 implementation
+│   │   ├── noop.rs         # No-op fallback
+│   │   └── parser.rs       # PAR2 output parser
+│   ├── rss_manager/        # RSS feed monitoring
+│   │   ├── mod.rs          # Feed polling, filtering, auto-download
+│   │   └── tests/          # RSS tests
+│   └── scheduler/          # Time-based scheduler
+│       ├── mod.rs          # Schedule rule evaluation
+│       └── tests/          # Scheduler tests
 ├── examples/
 │   ├── basic_download.rs       # Simple usage example
 │   ├── rest_api_server.rs      # REST API example
@@ -160,13 +201,15 @@ usenet-dl/
 
 ### Module Responsibilities
 
-- **`lib.rs`**: Core `UsenetDownloader` struct, queue management, main event loop, extensive tests
-- **`db.rs`**: All SQLite operations, schema migrations, article tracking
-- **`api/`**: REST API layer (Axum), OpenAPI spec generation (utoipa), SSE
-- **`extraction.rs`**: Archive format handling, password trials, nested extraction
-- **`post_processing.rs`**: Pipeline orchestration (verify → repair → extract → move → cleanup)
-- **`scheduler.rs`**: Time-based rules for speed limits and pause/resume
-- **`rss_manager.rs`**: RSS feed polling, filtering, auto-download
+- **`lib.rs`**: Library root, public re-exports
+- **`downloader/`**: Core `UsenetDownloader` struct, queue management, download orchestration, webhooks
+- **`db/`**: All SQLite operations, schema migrations, article tracking, history
+- **`api/`**: REST API layer (Axum), OpenAPI spec generation (utoipa), SSE, auth, rate limiting
+- **`extraction/`**: Archive format handling (RAR/7z/ZIP), password trials, nested extraction
+- **`post_processing/`**: Pipeline orchestration (verify → repair → extract → move → cleanup)
+- **`parity/`**: PAR2 verification and repair (trait-based: CLI handler + no-op fallback)
+- **`scheduler/`**: Time-based rules for speed limits and pause/resume
+- **`rss_manager/`**: RSS feed polling, filtering, auto-download
 - **`folder_watcher.rs`**: File system monitoring with `notify` crate
 
 ## Development Workflow
@@ -190,31 +233,33 @@ Follow these principles:
 
 ### 3. Test Your Changes
 
+> **Note**: All cargo commands should be run inside `nix-shell` to ensure correct toolchain and system dependencies.
+
 ```bash
 # Run all tests
-cargo test
+nix-shell --run "cargo test"
 
 # Run specific test module
-cargo test db::tests
+nix-shell --run "cargo test db::tests"
 
 # Run specific test
-cargo test test_queue_priority
+nix-shell --run "cargo test test_queue_priority"
 
 # Run with logging output
-RUST_LOG=debug cargo test -- --nocapture
+nix-shell --run "RUST_LOG=debug cargo test -- --nocapture"
 
 # Run tests in release mode (faster)
-cargo test --release
+nix-shell --run "cargo test --release"
 ```
 
 ### 4. Check Code Quality
 
 ```bash
 # Format code
-cargo fmt
+nix-shell --run "cargo fmt --all"
 
 # Check for common mistakes
-cargo clippy --all-targets
+nix-shell --run "cargo clippy --all-targets"
 
 # Check for unused dependencies
 cargo udeps  # requires: cargo install cargo-udeps
@@ -227,10 +272,10 @@ cargo audit  # requires: cargo install cargo-audit
 
 ```bash
 # Build and view docs
-cargo doc --no-deps --open
+nix-shell --run "cargo doc --no-deps --open"
 
 # Check for broken links in docs
-cargo doc --no-deps 2>&1 | grep warning
+nix-shell --run "cargo doc --no-deps 2>&1 | grep warning"
 ```
 
 ## Testing Guidelines
@@ -489,10 +534,10 @@ Add runnable examples to `examples/` for:
 
 2. **Ensure all checks pass**:
    ```bash
-   cargo fmt --check
-   cargo clippy --all-targets
-   cargo test
-   cargo doc --no-deps
+   nix-shell --run "cargo fmt --all -- --check"
+   nix-shell --run "cargo clippy --all-targets"
+   nix-shell --run "cargo test"
+   nix-shell --run "cargo doc --no-deps"
    ```
 
 3. **Write a clear commit message**:
@@ -636,38 +681,38 @@ Reviewers should verify:
 
 ```bash
 # Watch for changes and rebuild
-cargo watch -x build
+nix-shell --run "cargo watch -x build"
 
 # Watch and run tests
-cargo watch -x test
+nix-shell --run "cargo watch -x test"
 
 # Run a specific example
-cargo run --example basic_usage
+nix-shell --run "cargo run --example basic_download"
 
 # Generate and view API docs
-cargo doc --no-deps --open
+nix-shell --run "cargo doc --no-deps --open"
 
 # Check what features are enabled
-cargo tree --features
+nix-shell --run "cargo tree --features"
 
 # Clean build artifacts
-cargo clean
+nix-shell --run "cargo clean"
 
 # Update dependencies
-cargo update
+nix-shell --run "cargo update"
 ```
 
 ### Debugging
 
 ```bash
 # Run with debug logging
-RUST_LOG=debug cargo test test_name -- --nocapture
+nix-shell --run "RUST_LOG=debug cargo test test_name -- --nocapture"
 
 # Run with trace logging (very verbose)
-RUST_LOG=trace cargo test test_name -- --nocapture
+nix-shell --run "RUST_LOG=trace cargo test test_name -- --nocapture"
 
 # Run specific module tests with logging
-RUST_LOG=usenet_dl::db=debug cargo test db::tests -- --nocapture
+nix-shell --run "RUST_LOG=usenet_dl::db=debug cargo test db::tests -- --nocapture"
 ```
 
 ### Working with SQLite

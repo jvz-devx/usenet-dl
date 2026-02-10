@@ -166,7 +166,7 @@ fn has_no_vowels(s: &str) -> bool {
 
 /// Determine the final name for a download using priority-based sources
 ///
-/// Priority order (SABnzbd-style):
+/// Priority order:
 /// 1. Job name (NZB filename without extension)
 /// 2. NZB meta title (<meta type="name"> from NZB)
 /// 3. Largest non-obfuscated file in extracted files

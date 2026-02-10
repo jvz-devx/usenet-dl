@@ -31,10 +31,14 @@ pub enum PostProcess {
 Example configuration:
 
 ```rust
-use usenet_dl::{UsenetDownloader, Config, PostProcess};
+use usenet_dl::{UsenetDownloader, Config};
+use usenet_dl::config::{DownloadConfig, PostProcess};
 
 let config = Config {
-    post_process: PostProcess::UnpackAndCleanup,
+    download: DownloadConfig {
+        default_post_process: PostProcess::UnpackAndCleanup,
+        ..Default::default()
+    },
     ..Default::default()
 };
 
@@ -62,11 +66,15 @@ The extraction system tries passwords in priority order:
 Example with passwords:
 
 ```rust
-use usenet_dl::{UsenetDownloader, Config};
+use usenet_dl::{UsenetDownloader, Config, DownloadOptions, Priority};
+use usenet_dl::config::ToolsConfig;
 
 let config = Config {
-    password_file: Some("/path/to/passwords.txt".into()),
-    try_empty_password: true,
+    tools: ToolsConfig {
+        password_file: Some("/path/to/passwords.txt".into()),
+        try_empty_password: true,
+        ..Default::default()
+    },
     ..Default::default()
 };
 
@@ -74,8 +82,11 @@ let downloader = UsenetDownloader::new(config).await?;
 
 // Add download with specific password
 let id = downloader.add_nzb(
-    nzb_data,
-    Some("secret_password".to_string())
+    "file.nzb".as_ref(),
+    DownloadOptions {
+        password: Some("secret_password".to_string()),
+        ..Default::default()
+    },
 ).await?;
 ```
 
@@ -93,9 +104,16 @@ The extraction system automatically handles nested archives (archives within arc
 
 ```rust
 use usenet_dl::Config;
+use usenet_dl::config::{ProcessingConfig, ExtractionConfig};
 
 let config = Config {
-    max_recursion_depth: 2,  // Default: 2 levels
+    processing: ProcessingConfig {
+        extraction: ExtractionConfig {
+            max_recursion_depth: 2,  // Default: 2 levels
+            ..Default::default()
+        },
+        ..Default::default()
+    },
     ..Default::default()
 };
 ```
@@ -133,10 +151,14 @@ pub enum FileCollisionAction {
 Example:
 
 ```rust
-use usenet_dl::{Config, FileCollisionAction};
+use usenet_dl::Config;
+use usenet_dl::config::{DownloadConfig, FileCollisionAction};
 
 let config = Config {
-    file_collision_action: FileCollisionAction::Rename,
+    download: DownloadConfig {
+        file_collision: FileCollisionAction::Rename,
+        ..Default::default()
+    },
     ..Default::default()
 };
 ```
@@ -178,17 +200,21 @@ pub struct CleanupConfig {
 Example:
 
 ```rust
-use usenet_dl::{Config, CleanupConfig};
+use usenet_dl::Config;
+use usenet_dl::config::{ProcessingConfig, CleanupConfig};
 
 let config = Config {
-    cleanup: CleanupConfig {
-        enabled: true,
-        target_extensions: vec![
-            "par2".to_string(),
-            "nzb".to_string(),
-            "sfv".to_string(),
-        ],
-        delete_samples: true,
+    processing: ProcessingConfig {
+        cleanup: CleanupConfig {
+            enabled: true,
+            target_extensions: vec![
+                "par2".to_string(),
+                "nzb".to_string(),
+                "sfv".to_string(),
+            ],
+            delete_samples: true,
+            ..Default::default()
+        },
         ..Default::default()
     },
     ..Default::default()
@@ -234,7 +260,7 @@ The system chooses the final filename in priority order:
 3. **Largest non-obfuscated file** from extracted files
 4. **Job name** as fallback (even if obfuscated)
 
-This approach follows SABnzbd's naming strategy to provide sensible filenames.
+This approach follows a proven naming strategy to provide sensible filenames.
 
 ### Configuration
 
@@ -248,12 +274,16 @@ pub struct DeobfuscationConfig {
 Example:
 
 ```rust
-use usenet_dl::{Config, DeobfuscationConfig};
+use usenet_dl::Config;
+use usenet_dl::config::{AutomationConfig, DeobfuscationConfig};
 
 let config = Config {
-    deobfuscation: DeobfuscationConfig {
-        enabled: true,
-        min_length: 12,
+    automation: AutomationConfig {
+        deobfuscation: DeobfuscationConfig {
+            enabled: true,
+            min_length: 12,
+        },
+        ..Default::default()
     },
     ..Default::default()
 };
@@ -272,34 +302,34 @@ let mut rx = downloader.subscribe();
 tokio::spawn(async move {
     while let Ok(event) = rx.recv().await {
         match event {
-            Event::Verifying { download_id } => {
-                println!("Verifying files for {}", download_id);
+            Event::Verifying { id } => {
+                println!("Verifying files for {}", id);
             }
-            Event::VerifyComplete { download_id, damaged } => {
+            Event::VerifyComplete { id, damaged } => {
                 println!("Verification complete, damaged: {}", damaged);
             }
-            Event::Repairing { download_id } => {
-                println!("Repairing files for {}", download_id);
+            Event::Repairing { id, blocks_needed, blocks_available } => {
+                println!("Repairing files for {}", id);
             }
-            Event::RepairComplete { download_id, success } => {
+            Event::RepairComplete { id, success } => {
                 println!("Repair complete, success: {}", success);
             }
-            Event::Extracting { download_id, archive, percent } => {
+            Event::Extracting { id, archive, percent } => {
                 println!("Extracting {}: {}%", archive, percent);
             }
-            Event::ExtractComplete { download_id } => {
+            Event::ExtractComplete { id } => {
                 println!("Extraction complete");
             }
-            Event::Moving { download_id, destination } => {
+            Event::Moving { id, destination } => {
                 println!("Moving files to {:?}", destination);
             }
-            Event::Cleaning { download_id } => {
+            Event::Cleaning { id } => {
                 println!("Cleaning up intermediate files");
             }
-            Event::Complete { download_id, final_path } => {
-                println!("Download complete: {:?}", final_path);
+            Event::Complete { id, path } => {
+                println!("Download complete: {:?}", path);
             }
-            Event::Failed { download_id, stage, error, files_kept } => {
+            Event::Failed { id, stage, error, files_kept } => {
                 eprintln!("Failed at {:?}: {}", stage, error);
             }
             _ => {}
@@ -328,54 +358,59 @@ When an error occurs:
 If extraction fails due to a wrong password, you can retry with a new password:
 
 ```rust
-// Add new password and retry extraction
-downloader.reextract(download_id, Some("new_password".to_string())).await?;
+// Retry extraction (uses passwords from config and password file)
+downloader.reextract(id).await?;
 ```
 
-This skips the verify and repair stages and goes directly to extraction with the new password.
+This skips the verify and repair stages and goes directly to extraction.
 
 ## Complete Example
 
 ```rust
-use usenet_dl::{
-    UsenetDownloader, Config, PostProcess, FileCollisionAction,
-    CleanupConfig, DeobfuscationConfig,
+use usenet_dl::{UsenetDownloader, Config, DownloadOptions, Priority};
+use usenet_dl::config::{
+    DownloadConfig, ToolsConfig, ProcessingConfig, AutomationConfig,
+    ExtractionConfig, CleanupConfig, DeobfuscationConfig,
+    PostProcess, FileCollisionAction,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config {
-        // Post-processing mode
-        post_process: PostProcess::UnpackAndCleanup,
-
-        // Password handling
-        password_file: Some("passwords.txt".into()),
-        try_empty_password: true,
-
-        // Archive extraction
-        max_recursion_depth: 2,
-
-        // File collision handling
-        file_collision_action: FileCollisionAction::Rename,
-
-        // Cleanup configuration
-        cleanup: CleanupConfig {
-            enabled: true,
-            target_extensions: vec![
-                "par2".to_string(),
-                "nzb".to_string(),
-                "sfv".to_string(),
-            ],
-            delete_samples: true,
+        download: DownloadConfig {
+            default_post_process: PostProcess::UnpackAndCleanup,
+            file_collision: FileCollisionAction::Rename,
             ..Default::default()
         },
-
-        // Deobfuscation
-        deobfuscation: DeobfuscationConfig {
-            enabled: true,
-            min_length: 12,
+        tools: ToolsConfig {
+            password_file: Some("passwords.txt".into()),
+            try_empty_password: true,
+            ..Default::default()
         },
-
+        processing: ProcessingConfig {
+            extraction: ExtractionConfig {
+                max_recursion_depth: 2,
+                ..Default::default()
+            },
+            cleanup: CleanupConfig {
+                enabled: true,
+                target_extensions: vec![
+                    "par2".to_string(),
+                    "nzb".to_string(),
+                    "sfv".to_string(),
+                ],
+                delete_samples: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        automation: AutomationConfig {
+            deobfuscation: DeobfuscationConfig {
+                enabled: true,
+                min_length: 12,
+            },
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -390,10 +425,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Add download
-    let nzb_data = std::fs::read("file.nzb")?;
-    let download_id = downloader.add_nzb(nzb_data, None).await?;
+    let id = downloader.add_nzb(
+        "file.nzb".as_ref(),
+        DownloadOptions::default(),
+    ).await?;
 
-    println!("Started download: {}", download_id);
+    println!("Started download: {}", id);
 
     Ok(())
 }

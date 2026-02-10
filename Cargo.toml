@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 authors = ["usenet-dl contributors"]
 license = "MIT OR Apache-2.0"
-description = "Backend library for SABnzbd/NZBGet-like applications - highly configurable Usenet download manager"
+description = "Highly configurable Usenet download manager library"
 repository = "https://github.com/jvz-devx/usenet-dl"
-keywords = ["usenet", "nntp", "nzb", "download", "sabnzbd"]
+keywords = ["usenet", "nntp", "nzb", "download", "newsgroup"]
 categories = ["network-programming", "web-programming"]
 rust-version = "1.93"
 

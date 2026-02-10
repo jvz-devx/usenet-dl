@@ -66,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Notifications
 - HTTP webhook support with event-based triggers
-- External script execution with SABnzbd-compatible environment variables
+- External script execution with standard environment variables
 - Category-specific notification handlers
 - JSON payload delivery with authentication headers
 

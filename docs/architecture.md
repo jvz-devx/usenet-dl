@@ -4,7 +4,7 @@ This document describes the internal architecture, design patterns, and componen
 
 ## Overview
 
-usenet-dl is a Rust backend library for building SABnzbd/NZBGet-like Usenet download applications. It provides a library-first design with no CLI or UI, intended for embedding into larger applications or building custom frontends.
+usenet-dl is a Rust backend library for building Usenet download applications. It provides a library-first design with no CLI or UI, intended for embedding into larger applications or building custom frontends.
 
 The library is built on top of `nntp-rs` (a sibling crate) which handles the NNTP protocol implementation, NZB parsing, yEnc decoding, and PAR2 operations.
 
@@ -21,17 +21,17 @@ The library is built on top of `nntp-rs` (a sibling crate) which handles the NNT
 
 ### Core Modules
 
-**downloader/mod.rs** - Main orchestration
-Contains the `UsenetDownloader` struct and queue management logic. Handles download orchestration, priority queue management, and concurrent download coordination.
+**downloader/** - Main orchestration
+Contains the `UsenetDownloader` struct and all download coordination: queue management (`queue.rs`, `queue_processor.rs`), NZB import (`nzb.rs`), download control (`control.rs`), background tasks (`background_tasks.rs`), and webhook dispatch (`webhooks.rs`).
 
 **config.rs** - Configuration types
-Defines all configuration structures with sensible defaults for NNTP servers, post-processing, categories, rate limiting, and API settings.
+Defines all configuration structures with sensible defaults for NNTP servers, post-processing, categories, rate limiting, and API settings. Uses `#[serde(flatten)]` for sub-configs so TOML/JSON fields appear at top level.
 
 **types.rs** - Core data types
 Defines `Event`, `Status`, `Priority`, `DownloadInfo`, `Stage`, and other fundamental types used throughout the library.
 
-**db.rs** - Database persistence
-SQLite persistence layer using sqlx. Manages download state, article tracking, history, RSS feeds, and scheduler rules.
+**db/** - Database persistence
+SQLite persistence layer using sqlx. Split into sub-modules: `downloads.rs`, `articles.rs`, `history.rs`, `rss.rs`, `migrations.rs`.
 
 **error.rs** - Error handling
 Comprehensive error types with context information and HTTP status mapping for API responses.
@@ -39,21 +39,21 @@ Comprehensive error types with context information and HTTP status mapping for A
 ### Post-Processing
 
 **post_processing/** - Processing pipeline
-Implements the five-stage pipeline: Verify → Repair → Extract → Move → Cleanup. Handles PAR2 verification/repair coordination and archive extraction orchestration.
+Implements the five-stage pipeline: Verify (`verify.rs`) → Repair (`repair.rs`) → Extract → Move → Cleanup (`cleanup.rs`). Orchestrated by `mod.rs`.
 
 **extraction/** - Archive extraction
-RAR, 7z, and ZIP extraction with password support. Delegates to command-line tools (`unrar`, `7z`).
+RAR (`rar.rs`), 7z (`sevenz.rs`), and ZIP (`zip.rs`) extraction with multi-source password support (`password_list.rs`).
 
 **parity/** - PAR2 verification and repair
-`ParityHandler` trait with pluggable implementations (`CliParityHandler` for systems with `par2` binary, `NoOpParityHandler` as fallback).
+`ParityHandler` trait (`traits.rs`) with pluggable implementations: `CliParityHandler` (`cli.rs`) for systems with `par2` binary, `NoOpParityHandler` (`noop.rs`) as fallback. Includes PAR2 output parser (`parser.rs`).
 
 **deobfuscation.rs** - Filename cleanup
 Cleans up obfuscated filenames common in Usenet releases.
 
 ### API Layer
 
-**api/routes.rs** - REST endpoints
-37 HTTP endpoints for queue management, configuration, RSS feeds, scheduler, and system operations.
+**api/routes/** - REST endpoints
+37 HTTP endpoints split by resource: `downloads.rs`, `queue.rs`, `history.rs`, `config.rs`, `categories.rs`, `rss.rs`, `scheduler.rs`, `servers.rs`, `system.rs`.
 
 **api/openapi.rs** - OpenAPI schema
 Generates OpenAPI 3.1 specification and serves Swagger UI at `/swagger-ui`.
@@ -69,13 +69,13 @@ Per-IP rate limiting middleware using token bucket algorithm.
 **folder_watcher.rs** - Automatic NZB import
 Watches directories for new NZB files and automatically queues them with configurable post-import actions.
 
-**rss_manager.rs** - RSS feed monitoring
+**rss_manager/** - RSS feed monitoring
 Periodic checking of RSS/Atom feeds with regex-based filtering and duplicate prevention.
 
 **rss_scheduler.rs** - RSS scheduling
 Coordinates periodic RSS feed checks.
 
-**scheduler.rs** / **scheduler_task.rs** - Time-based scheduling
+**scheduler/** - Time-based scheduling
 Implements schedule rules for speed limiting, queue pausing, and other time-based actions.
 
 ### Utilities

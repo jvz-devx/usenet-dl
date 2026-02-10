@@ -971,8 +971,9 @@ echo "Created download: $DOWNLOAD_ID"
 
 # 3. Monitor progress
 while true; do
-  STATUS=$(curl -s "http://localhost:6789/api/v1/downloads/$DOWNLOAD_ID" | jq -r '.status')
-  PROGRESS=$(curl -s "http://localhost:6789/api/v1/downloads/$DOWNLOAD_ID" | jq -r '.progress')
+  DATA=$(curl -s "http://localhost:6789/api/v1/downloads/$DOWNLOAD_ID")
+  STATUS=$(echo "$DATA" | jq -r '.status')
+  PROGRESS=$(echo "$DATA" | jq -r '.progress')
   echo "Status: $STATUS, Progress: $PROGRESS%"
 
   if [ "$STATUS" = "complete" ] || [ "$STATUS" = "failed" ]; then
@@ -1142,5 +1143,5 @@ Wait for the specified time before retrying.
 ## Support
 
 For issues, questions, or contributions:
-- GitHub Issues: https://github.com/your-repo/usenet-dl/issues
+- GitHub Issues: https://github.com/jvz-devx/usenet-dl/issues
 - Documentation: See README.md for getting started guide
