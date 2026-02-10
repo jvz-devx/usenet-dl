@@ -1,0 +1,30 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build
+/target/
+Cargo.lock
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# NZB files
+*.nzb
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal development files
+docs/sabnzbd-comparison.md
+benchmarks/
+downloads/
