@@ -8,9 +8,10 @@ use super::super::UsenetDownloader;
 
 /// Manages output file handles for DirectWrite -- one file per NZB file entry.
 ///
-/// Uses `std::os::unix::fs::FileExt::write_all_at()` which takes `&self` (not `&mut self`),
-/// enabling lock-free concurrent writes from different batches to the same file.
-/// Each segment writes to non-overlapping byte ranges via yEnc part offsets.
+/// Uses positional writes (`pwrite` on Unix, `seek_write` on Windows) which take
+/// `&self` (not `&mut self`), enabling lock-free concurrent writes from different
+/// batches to the same file. Each segment writes to non-overlapping byte ranges
+/// via yEnc part offsets.
 pub(crate) struct OutputFiles {
     /// file_index -> (File handle, filename)
     pub(super) files: HashMap<i32, (std::fs::File, String)>,

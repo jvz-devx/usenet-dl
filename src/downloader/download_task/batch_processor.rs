@@ -3,6 +3,46 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Cross-platform positional file write.
+///
+/// Writes `buf` to `file` at the given byte `offset`, equivalent to Unix `pwrite`.
+#[cfg(unix)]
+fn write_all_at(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.write_all_at(buf, offset)
+}
+
+/// Cross-platform positional file write.
+///
+/// Writes `buf` to `file` at the given byte `offset`, equivalent to Unix `pwrite`.
+#[cfg(windows)]
+fn write_all_at(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut written = 0;
+    while written < buf.len() {
+        let n = file.seek_write(&buf[written..], offset + written as u64)?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "failed to write whole buffer",
+            ));
+        }
+        written += n;
+    }
+    Ok(())
+}
+
+/// Cross-platform positional file write.
+///
+/// Writes `buf` to `file` at the given byte `offset`, equivalent to Unix `pwrite`.
+#[cfg(not(any(unix, windows)))]
+fn write_all_at(_file: &std::fs::File, _buf: &[u8], _offset: u64) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "positional writes not supported on this platform",
+    ))
+}
+
 use crate::types::DownloadId;
 
 use super::context::{ArticleProvider, BatchResultVec, OutputFiles, is_missing_article_error};
@@ -196,8 +236,6 @@ pub(super) fn decode_and_write(
     output_files: &OutputFiles,
     download_temp_dir: &std::path::Path,
 ) -> std::result::Result<u64, String> {
-    use std::os::unix::fs::FileExt;
-
     // Try yEnc decode
     match nntp_rs::yenc_decode(data) {
         Ok(decoded) => {
@@ -221,9 +259,8 @@ pub(super) fn decode_and_write(
                     }
                 }
 
-                // Write decoded data at correct offset (lock-free via pwrite)
-                file_handle
-                    .write_all_at(&decoded.data, offset)
+                // Write decoded data at correct offset (lock-free via pwrite/seek_write)
+                write_all_at(file_handle, &decoded.data, offset)
                     .map_err(|e| format!("Failed to write at offset {}: {}", offset, e))?;
             } else {
                 // Fallback: no output file mapping -- write raw decoded data as article file

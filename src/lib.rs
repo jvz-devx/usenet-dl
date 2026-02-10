@@ -109,8 +109,10 @@ pub use types::{
 
 /// Helper function to run the downloader with graceful signal handling.
 ///
-/// This function sets up signal handlers for SIGTERM and SIGINT (Ctrl+C),
-/// and calls the downloader's shutdown() method when a signal is received.
+/// Waits for a termination signal and then calls the downloader's `shutdown()` method.
+///
+/// - **Unix:** listens for SIGTERM and SIGINT, with fallbacks if signal registration fails.
+/// - **Windows/other:** listens for Ctrl+C via `tokio::signal::ctrl_c()`.
 ///
 /// # Example
 ///
@@ -129,6 +131,12 @@ pub use types::{
 /// }
 /// ```
 pub async fn run_with_shutdown(downloader: UsenetDownloader) -> Result<()> {
+    wait_for_signal().await;
+    downloader.shutdown().await
+}
+
+#[cfg(unix)]
+async fn wait_for_signal() {
     use tokio::signal::unix::{SignalKind, signal};
 
     // Set up signal handlers - these may fail in restricted environments (containers, tests)
@@ -167,7 +175,16 @@ pub async fn run_with_shutdown(downloader: UsenetDownloader) -> Result<()> {
             }
         }
     }
+}
 
-    // Perform graceful shutdown
-    downloader.shutdown().await
+#[cfg(not(unix))]
+async fn wait_for_signal() {
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            tracing::info!("Received Ctrl+C signal");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to listen for Ctrl+C signal");
+        }
+    }
 }
