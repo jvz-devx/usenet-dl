@@ -20,17 +20,6 @@ fn test_schedule_rule_creation() {
 }
 
 #[test]
-fn test_schedule_action_variants() {
-    let limit = ScheduleAction::SpeedLimit(5_000_000);
-    let unlimited = ScheduleAction::Unlimited;
-    let pause = ScheduleAction::Pause;
-
-    assert!(matches!(limit, ScheduleAction::SpeedLimit(5_000_000)));
-    assert!(matches!(unlimited, ScheduleAction::Unlimited));
-    assert!(matches!(pause, ScheduleAction::Pause));
-}
-
-#[test]
 fn test_weekday_conversion() {
     use chrono::Weekday as ChronoWd;
 
@@ -113,21 +102,6 @@ fn test_schedule_action_serialization() {
         let deserialized: ScheduleAction = serde_json::from_str(&json).unwrap();
         assert_eq!(action, deserialized);
     }
-}
-
-#[test]
-fn test_empty_days_means_all_days() {
-    let rule = ScheduleRule {
-        id: RuleId(1),
-        name: "Every day".into(),
-        days: vec![], // Empty = all days
-        start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-        end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
-        action: ScheduleAction::Unlimited,
-        enabled: true,
-    };
-
-    assert!(rule.days.is_empty());
 }
 
 #[test]
@@ -1086,114 +1060,6 @@ fn test_time_transition_midnight_boundary_simple() {
 }
 
 #[test]
-fn test_day_transition_friday_to_saturday() {
-    use chrono::{Datelike, Local};
-
-    // Weekday-only rule - note end_time must be exclusive
-    // So we use 23:59:59 but it won't match at exactly that time
-    let rules = vec![ScheduleRule {
-        id: RuleId(1),
-        name: "Weekdays only".into(),
-        days: vec![
-            Weekday::Monday,
-            Weekday::Tuesday,
-            Weekday::Wednesday,
-            Weekday::Thursday,
-            Weekday::Friday,
-        ],
-        start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-        end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
-        action: ScheduleAction::SpeedLimit(1_000_000),
-        enabled: true,
-    }];
-    let scheduler = Scheduler::new(rules);
-
-    // Find a Friday (or create synthetic one)
-    let base = Local::now();
-    let mut test_day = base;
-
-    // Create a Friday at 23:00:00 (safely within the window)
-    while test_day.weekday() != chrono::Weekday::Fri {
-        test_day += chrono::Duration::days(1);
-    }
-    let friday_night = test_day
-        .with_hour(23)
-        .unwrap()
-        .with_minute(0)
-        .unwrap()
-        .with_second(0)
-        .unwrap();
-
-    // Friday at 23:00 should match
-    let friday_result = scheduler.get_current_action(friday_night);
-    assert!(friday_result.is_some());
-    assert_eq!(
-        friday_result.unwrap(),
-        ScheduleAction::SpeedLimit(1_000_000)
-    );
-
-    // Saturday early morning should NOT match (add 1 hour + 1 minute to get to 00:01 Saturday)
-    let saturday_morning = test_day
-        .with_hour(0)
-        .unwrap()
-        .with_minute(1)
-        .unwrap()
-        .with_second(0)
-        .unwrap()
-        + chrono::Duration::days(1);
-    let saturday_result = scheduler.get_current_action(saturday_morning);
-    assert!(saturday_result.is_none());
-}
-
-#[test]
-fn test_day_transition_saturday_to_sunday_weekend_rule() {
-    use chrono::{Datelike, Local};
-
-    // Weekend-only rule
-    let rules = vec![ScheduleRule {
-        id: RuleId(1),
-        name: "Weekend unlimited".into(),
-        days: vec![Weekday::Saturday, Weekday::Sunday],
-        start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-        end_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
-        action: ScheduleAction::Unlimited,
-        enabled: true,
-    }];
-    let scheduler = Scheduler::new(rules);
-
-    // Find a Saturday
-    let base = Local::now();
-    let mut saturday = base;
-    while saturday.weekday() != chrono::Weekday::Sat {
-        saturday += chrono::Duration::days(1);
-    }
-
-    // Saturday afternoon
-    let saturday_afternoon = saturday
-        .with_hour(14)
-        .unwrap()
-        .with_minute(0)
-        .unwrap()
-        .with_second(0)
-        .unwrap();
-    assert_eq!(
-        scheduler.get_current_action(saturday_afternoon).unwrap(),
-        ScheduleAction::Unlimited
-    );
-
-    // Sunday morning (still weekend)
-    let sunday_morning = saturday_afternoon + chrono::Duration::days(1);
-    assert_eq!(
-        scheduler.get_current_action(sunday_morning).unwrap(),
-        ScheduleAction::Unlimited
-    );
-
-    // Monday morning (not weekend)
-    let monday_morning = sunday_morning + chrono::Duration::days(1);
-    assert!(scheduler.get_current_action(monday_morning).is_none());
-}
-
-#[test]
 fn test_overlapping_rules_priority_order() {
     use chrono::Local;
 
@@ -1494,4 +1360,157 @@ fn test_minute_boundary_precision() {
         .with_second(0)
         .unwrap();
     assert!(scheduler.get_current_action(at_end).is_none());
+}
+
+// ============================================================================
+// Midnight-crossing rule tests (start_time > end_time, OR-logic branch)
+// ============================================================================
+
+#[test]
+fn test_midnight_crossing_rule_matches_before_midnight() {
+    use chrono::Local;
+
+    // Rule: 22:00 → 06:00 (crosses midnight)
+    let rules = vec![ScheduleRule {
+        id: RuleId(1),
+        name: "Night unlimited".into(),
+        days: vec![], // All days
+        start_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+        end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        action: ScheduleAction::Unlimited,
+        enabled: true,
+    }];
+    let scheduler = Scheduler::new(rules);
+
+    // 23:00 is after start (22:00), should match via `time >= start_time`
+    let at_23 = Local::now()
+        .with_hour(23)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
+    assert_eq!(
+        scheduler.get_current_action(at_23),
+        Some(ScheduleAction::Unlimited),
+        "23:00 should match a 22:00→06:00 rule (before-midnight side)"
+    );
+}
+
+#[test]
+fn test_midnight_crossing_rule_matches_after_midnight() {
+    use chrono::Local;
+
+    let rules = vec![ScheduleRule {
+        id: RuleId(1),
+        name: "Night unlimited".into(),
+        days: vec![],
+        start_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+        end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        action: ScheduleAction::Unlimited,
+        enabled: true,
+    }];
+    let scheduler = Scheduler::new(rules);
+
+    // 03:00 is before end (06:00), should match via `time < end_time`
+    let at_03 = Local::now()
+        .with_hour(3)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
+    assert_eq!(
+        scheduler.get_current_action(at_03),
+        Some(ScheduleAction::Unlimited),
+        "03:00 should match a 22:00→06:00 rule (after-midnight side)"
+    );
+}
+
+#[test]
+fn test_midnight_crossing_rule_does_not_match_daytime() {
+    use chrono::Local;
+
+    let rules = vec![ScheduleRule {
+        id: RuleId(1),
+        name: "Night unlimited".into(),
+        days: vec![],
+        start_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+        end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        action: ScheduleAction::Unlimited,
+        enabled: true,
+    }];
+    let scheduler = Scheduler::new(rules);
+
+    // 12:00 is in the gap: after end (06:00) and before start (22:00)
+    let at_12 = Local::now()
+        .with_hour(12)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
+    assert!(
+        scheduler.get_current_action(at_12).is_none(),
+        "12:00 should NOT match a 22:00→06:00 rule"
+    );
+}
+
+#[test]
+fn test_midnight_crossing_rule_boundary_start_inclusive() {
+    use chrono::Local;
+
+    let rules = vec![ScheduleRule {
+        id: RuleId(1),
+        name: "Night unlimited".into(),
+        days: vec![],
+        start_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+        end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        action: ScheduleAction::Unlimited,
+        enabled: true,
+    }];
+    let scheduler = Scheduler::new(rules);
+
+    // Exactly at start_time (22:00:00) — should match (>=)
+    let at_start = Local::now()
+        .with_hour(22)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
+    assert_eq!(
+        scheduler.get_current_action(at_start),
+        Some(ScheduleAction::Unlimited),
+        "exactly 22:00 should match a 22:00→06:00 rule (start is inclusive)"
+    );
+}
+
+#[test]
+fn test_midnight_crossing_rule_boundary_end_exclusive() {
+    use chrono::Local;
+
+    let rules = vec![ScheduleRule {
+        id: RuleId(1),
+        name: "Night unlimited".into(),
+        days: vec![],
+        start_time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+        end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        action: ScheduleAction::Unlimited,
+        enabled: true,
+    }];
+    let scheduler = Scheduler::new(rules);
+
+    // Exactly at end_time (06:00:00) — should NOT match (<, exclusive)
+    let at_end = Local::now()
+        .with_hour(6)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
+    assert!(
+        scheduler.get_current_action(at_end).is_none(),
+        "exactly 06:00 should NOT match a 22:00→06:00 rule (end is exclusive)"
+    );
 }

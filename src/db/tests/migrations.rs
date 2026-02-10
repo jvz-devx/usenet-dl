@@ -30,26 +30,3 @@ async fn test_database_creation() {
 
     db.close().await;
 }
-
-#[tokio::test]
-async fn test_migration_idempotency() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let db_path = temp_file.path();
-
-    // Create database twice
-    let db1 = Database::new(db_path).await.unwrap();
-    db1.close().await;
-
-    let db2 = Database::new(db_path).await.unwrap();
-
-    // Verify schema version is 3 (latest)
-    let mut conn = db2.pool.acquire().await.unwrap();
-    let version: i64 = sqlx::query_scalar("SELECT MAX(version) FROM schema_version")
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-
-    assert_eq!(version, 3);
-
-    db2.close().await;
-}

@@ -16,10 +16,10 @@ use usenet_dl::api::start_api_server;
 use usenet_dl::config::{
     ApiConfig, AutomationConfig, CleanupConfig, Config, DeobfuscationConfig, DiskSpaceConfig,
     DownloadConfig, DuplicateAction, DuplicateConfig, DuplicateMethod, ExtractionConfig,
-    FileCollisionAction, NotificationConfig, PersistenceConfig, PostProcess,
-    ProcessingConfig, RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig,
-    ScriptEvent, ServerConfig, ServerIntegrationConfig, ToolsConfig, WatchFolderAction,
-    WatchFolderConfig, WebhookConfig, WebhookEvent, Weekday,
+    FileCollisionAction, NotificationConfig, PersistenceConfig, PostProcess, ProcessingConfig,
+    RetryConfig, RssFeedConfig, ScheduleAction, ScheduleRule, ScriptConfig, ScriptEvent,
+    ServerConfig, ServerIntegrationConfig, ToolsConfig, WatchFolderAction, WatchFolderConfig,
+    WebhookConfig, WebhookEvent, Weekday,
 };
 use usenet_dl::{Priority, UsenetDownloader};
 

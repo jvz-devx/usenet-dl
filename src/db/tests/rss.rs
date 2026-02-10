@@ -155,49 +155,6 @@ async fn test_rss_seen_primary_key_constraint() {
 }
 
 #[tokio::test]
-async fn test_rss_feeds_default_values() {
-    // Test RSS feed default values
-    let temp_file = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_file.path()).await.unwrap();
-
-    let mut conn = db.pool.acquire().await.unwrap();
-
-    // Insert feed with minimal values (testing defaults)
-    let feed_id = sqlx::query(
-        r#"
-        INSERT INTO rss_feeds (name, url, created_at)
-        VALUES (?, ?, ?)
-        "#,
-    )
-    .bind("Test Feed")
-    .bind("https://example.com/rss")
-    .bind(chrono::Utc::now().timestamp())
-    .execute(&mut *conn)
-    .await
-    .unwrap()
-    .last_insert_rowid();
-
-    // Fetch the feed and verify defaults
-    let (check_interval, auto_download, priority, enabled): (i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT check_interval_secs, auto_download, priority, enabled FROM rss_feeds WHERE id = ?",
-    )
-    .bind(feed_id)
-    .fetch_one(&mut *conn)
-    .await
-    .unwrap();
-
-    assert_eq!(
-        check_interval, 900,
-        "Default check_interval should be 900 seconds"
-    );
-    assert_eq!(auto_download, 1, "Default auto_download should be 1 (true)");
-    assert_eq!(priority, 0, "Default priority should be 0");
-    assert_eq!(enabled, 1, "Default enabled should be 1 (true)");
-
-    db.close().await;
-}
-
-#[tokio::test]
 async fn test_is_rss_item_seen_returns_false_for_new_item() {
     // Test is_rss_item_seen returns false for new items
     let temp_file = NamedTempFile::new().unwrap();

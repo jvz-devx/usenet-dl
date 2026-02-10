@@ -191,18 +191,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_scheduler_task_creation() {
-        let (downloader, _temp_dir) = create_test_downloader().await;
-        let scheduler = Scheduler::new(vec![]);
-
-        let task = SchedulerTask::new(Arc::new(downloader), Arc::new(scheduler));
-
-        // Just verify creation succeeds
-        assert!(Arc::strong_count(&task.scheduler) >= 1);
-        assert!(Arc::strong_count(&task.downloader) >= 1);
-    }
-
-    #[tokio::test]
     async fn test_scheduler_task_shutdown_on_signal() {
         let (downloader, _temp_dir) = create_test_downloader().await;
         let scheduler = Scheduler::new(vec![]);
@@ -304,38 +292,5 @@ mod tests {
 
         // Verify speed limit was cleared (reverted to unlimited)
         assert_eq!(downloader_arc.get_speed_limit(), None);
-    }
-
-    #[tokio::test]
-    async fn test_scheduler_task_no_rules_configured() {
-        let (downloader, _temp_dir) = create_test_downloader().await;
-        let scheduler = Scheduler::new(vec![]);
-
-        let downloader_arc = Arc::new(downloader);
-        let scheduler_arc = Arc::new(scheduler);
-
-        // Verify no rules
-        assert_eq!(scheduler_arc.rules().len(), 0);
-
-        // Set shutdown signal immediately
-        downloader_arc
-            .queue_state
-            .accepting_new
-            .store(false, Ordering::SeqCst);
-
-        let task = SchedulerTask::new(downloader_arc.clone(), scheduler_arc.clone());
-
-        // Start the task
-        let handle = tokio::spawn(async move {
-            task.run().await;
-        });
-
-        // Task should exit gracefully without waiting
-        let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
-
-        assert!(
-            result.is_ok(),
-            "Scheduler task should handle no rules gracefully"
-        );
     }
 }

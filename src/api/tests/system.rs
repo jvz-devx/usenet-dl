@@ -831,3 +831,494 @@ async fn test_duplicate_detection_via_api() {
     println!("  - Allow action silently allows duplicate: ✓");
     println!("  - Disabled detection allows all uploads: ✓");
 }
+
+// -----------------------------------------------------------------------
+// System endpoint tests: health, capabilities, shutdown
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_health_check_returns_status_ok_and_version() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+    let config = downloader.config.clone();
+    let app = create_router(downloader, config);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        json["status"], "ok",
+        "health endpoint should report status=ok"
+    );
+    assert_eq!(
+        json["version"],
+        env!("CARGO_PKG_VERSION"),
+        "health endpoint should return the crate version"
+    );
+    // Verify the response has exactly the expected fields (no extras, no missing)
+    let obj = json.as_object().unwrap();
+    assert!(
+        obj.contains_key("status") && obj.contains_key("version"),
+        "response must contain 'status' and 'version' keys"
+    );
+}
+
+#[tokio::test]
+async fn test_get_capabilities_returns_parity_info() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+    let config = downloader.config.clone();
+    let app = create_router(downloader, config);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/capabilities")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify the capabilities object has the parity section
+    let parity = json
+        .get("parity")
+        .expect("capabilities must have 'parity' field");
+    assert!(
+        parity.get("can_verify").is_some(),
+        "parity must have 'can_verify' field"
+    );
+    assert!(
+        parity.get("can_repair").is_some(),
+        "parity must have 'can_repair' field"
+    );
+    assert!(
+        parity.get("handler").is_some(),
+        "parity must have 'handler' field"
+    );
+
+    // The test downloader has no par2 configured and search_path defaults to true,
+    // but may or may not find par2 on the system. The handler field should always
+    // be a non-empty string regardless.
+    let handler = parity["handler"]
+        .as_str()
+        .expect("handler should be a string");
+    assert!(!handler.is_empty(), "handler name should not be empty");
+
+    // can_verify and can_repair must be booleans
+    assert!(
+        parity["can_verify"].is_boolean(),
+        "can_verify should be a boolean"
+    );
+    assert!(
+        parity["can_repair"].is_boolean(),
+        "can_repair should be a boolean"
+    );
+}
+
+#[tokio::test]
+async fn test_shutdown_returns_202_accepted() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    // We need to test the shutdown endpoint without actually exiting the process.
+    // The shutdown handler spawns a background task that calls process::exit(0).
+    // With oneshot(), the background task is spawned but won't complete because
+    // we're in a test context. We just verify the HTTP response.
+    let (downloader, _temp_dir) = create_test_downloader().await;
+    let config = downloader.config.clone();
+    let app = create_router(downloader, config);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/shutdown")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::ACCEPTED,
+        "shutdown should return 202 Accepted"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        json["status"], "shutdown initiated",
+        "shutdown response should confirm initiation"
+    );
+}
+
+#[tokio::test]
+async fn test_capabilities_with_no_servers_reflects_noop_parity() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    // Create a downloader with all tools explicitly disabled
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+
+    let mut config = Config::default();
+    config.persistence.database_path = db_path;
+    config.servers = vec![];
+    config.tools.par2_path = None;
+    config.tools.search_path = false; // Don't search PATH
+
+    let downloader = crate::UsenetDownloader::new(config.clone()).await.unwrap();
+    let downloader = Arc::new(downloader);
+    let config = Arc::new(config);
+    let app = create_router(downloader, config);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/capabilities")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let parity = &json["parity"];
+    // With search_path=false and no par2_path, the NoOpParityHandler should be used
+    assert_eq!(parity["can_verify"], false, "NoOp handler cannot verify");
+    assert_eq!(parity["can_repair"], false, "NoOp handler cannot repair");
+    assert_eq!(
+        parity["handler"], "noop",
+        "should use the NoOp handler when par2 is not configured"
+    );
+}
+
+#[tokio::test]
+async fn test_health_endpoint_not_affected_by_authentication() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    // Enable API key auth
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("secret-test-key-123".to_string());
+    let config = Arc::new(config);
+
+    let app = create_router(downloader, config);
+
+    // Health endpoint WITH valid key should work
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header("X-Api-Key", "secret-test-key-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Health endpoint WITHOUT key should be blocked (auth is global)
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "health should require auth when API key is configured"
+    );
+}
+
+#[tokio::test]
+async fn test_capabilities_endpoint_requires_auth_when_configured() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("my-secret".to_string());
+    let config = Arc::new(config);
+
+    let app = create_router(downloader, config);
+
+    // Without auth header -> 401
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/capabilities")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // With auth header -> 200
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/capabilities")
+                .header("X-Api-Key", "my-secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_shutdown_endpoint_requires_auth_when_configured() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("admin-key".to_string());
+    let config = Arc::new(config);
+
+    let app = create_router(downloader, config);
+
+    // Without auth header -> 401
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/shutdown")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "shutdown must require auth when configured"
+    );
+
+    // With valid auth -> 202
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/shutdown")
+                .header("X-Api-Key", "admin-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+// -----------------------------------------------------------------------
+// Authentication enforcement: verify 401 response body structure
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_missing_api_key_returns_401_with_structured_error_body() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("correct-key-abc".to_string());
+    let config = Arc::new(config);
+
+    let app = create_router(downloader, config);
+
+    // GET /downloads without any API key header
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/downloads")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "data endpoint must reject requests without API key"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        json["error"]["code"], "unauthorized",
+        "error code must be 'unauthorized'"
+    );
+    assert_eq!(
+        json["error"]["message"], "Missing X-Api-Key header",
+        "error message must indicate the missing header"
+    );
+}
+
+#[tokio::test]
+async fn test_wrong_api_key_returns_401_with_invalid_key_message() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("correct-key-abc".to_string());
+    let config = Arc::new(config);
+
+    let app = create_router(downloader, config);
+
+    // GET /downloads with wrong API key
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/downloads")
+                .header("X-Api-Key", "wrong-key-xyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "data endpoint must reject requests with wrong API key"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["error"]["code"], "unauthorized");
+    assert_eq!(
+        json["error"]["message"], "Invalid API key",
+        "error message must distinguish wrong key from missing key"
+    );
+}
+
+#[tokio::test]
+async fn test_correct_api_key_allows_access_to_data_endpoint() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let mut config = (*downloader.config).clone();
+    config.server.api.api_key = Some("correct-key-abc".to_string());
+    let config = Arc::new(config);
+
+    let app = create_router(downloader, config);
+
+    // GET /downloads with correct API key
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/downloads")
+                .header("X-Api-Key", "correct-key-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "data endpoint must allow requests with correct API key"
+    );
+}
+
+#[tokio::test]
+async fn test_shutdown_with_wrong_method_returns_405() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let (downloader, _temp_dir) = create_test_downloader().await;
+    let config = downloader.config.clone();
+    let app = create_router(downloader, config);
+
+    // GET /shutdown should not be a valid route (shutdown is POST only)
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/shutdown")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::METHOD_NOT_ALLOWED,
+        "GET /shutdown should return 405 Method Not Allowed"
+    );
+}

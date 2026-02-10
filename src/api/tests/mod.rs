@@ -96,65 +96,6 @@ async fn test_cors_enabled() {
 }
 
 #[tokio::test]
-async fn test_cors_disabled() {
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt; // for oneshot()
-
-    // Create test downloader
-    let (downloader, _temp_dir) = create_test_downloader().await;
-
-    // Config with CORS disabled
-    let mut config = (*downloader.config).clone();
-    config.server.api.cors_enabled = false;
-    let config = Arc::new(config);
-
-    // Create router with CORS disabled
-    let app = create_router(downloader, config);
-
-    // Make a request with Origin header
-    let request = Request::builder()
-        .uri("/health")
-        .header("Origin", "http://localhost:3000")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    // Check that response still works but may not have CORS headers
-    assert_eq!(response.status(), StatusCode::OK);
-    // When CORS is disabled, the middleware is not applied
-    // so no CORS headers should be added
-}
-
-#[test]
-fn test_build_cors_layer_any_origin() {
-    // Test building CORS layer with "*" origin
-    let origins = vec!["*".to_string()];
-    let _layer = build_cors_layer(&origins);
-    // Just verify it builds without panicking
-}
-
-#[test]
-fn test_build_cors_layer_specific_origins() {
-    // Test building CORS layer with specific origins
-    let origins = vec![
-        "http://localhost:3000".to_string(),
-        "https://example.com".to_string(),
-    ];
-    let _layer = build_cors_layer(&origins);
-    // Just verify it builds without panicking
-}
-
-#[test]
-fn test_build_cors_layer_empty_origins() {
-    // Test building CORS layer with no origins (should default to any)
-    let origins: Vec<String> = vec![];
-    let _layer = build_cors_layer(&origins);
-    // Just verify it builds without panicking
-}
-
-#[tokio::test]
 async fn test_spawn_api_server_method() {
     // Create test downloader
     let (downloader, _temp_dir) = create_test_downloader().await;

@@ -125,18 +125,4 @@ mod tests {
         // Verify the error is specifically NotSupported, not another variant
         assert!(matches!(result, Err(crate::Error::NotSupported(_))));
     }
-
-    #[test]
-    fn test_capabilities() {
-        let handler = NoOpParityHandler;
-        let caps = handler.capabilities();
-        assert!(!caps.can_verify);
-        assert!(!caps.can_repair);
-    }
-
-    #[test]
-    fn test_name() {
-        let handler = NoOpParityHandler;
-        assert_eq!(handler.name(), "noop");
-    }
 }

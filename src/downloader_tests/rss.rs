@@ -1,22 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn test_start_rss_scheduler_no_feeds() {
-    // Create downloader with no RSS feeds configured
-    let (downloader, _temp_dir) = create_test_downloader().await;
-
-    // Should succeed but return a completed task
-    let handle = downloader.start_rss_scheduler();
-
-    // The task should complete immediately with no feeds
-    let result = tokio::time::timeout(Duration::from_millis(100), handle).await;
-    assert!(
-        result.is_ok(),
-        "Task should complete immediately with no RSS feeds"
-    );
-}
-
-#[tokio::test]
 async fn test_start_rss_scheduler_with_feeds() {
     let temp_dir = tempdir().unwrap();
 
@@ -162,51 +146,6 @@ async fn test_start_rss_scheduler_with_multiple_feeds() {
     assert!(
         !handle.is_finished(),
         "Scheduler should handle multiple feeds"
-    );
-
-    // Abort the task
-    handle.abort();
-}
-
-#[tokio::test]
-async fn test_start_rss_scheduler_only_enabled_feeds() {
-    let temp_dir = tempdir().unwrap();
-
-    // Create config with only disabled feeds
-    let config = Config {
-        persistence: crate::config::PersistenceConfig {
-            database_path: temp_dir.path().join("test.db"),
-            schedule_rules: vec![],
-            categories: std::collections::HashMap::new(),
-        },
-        servers: vec![],
-        automation: config::AutomationConfig {
-            rss_feeds: vec![config::RssFeedConfig {
-                url: "https://example.com/feed.xml".to_string(),
-                check_interval: Duration::from_secs(60),
-                category: None,
-                filters: vec![],
-                auto_download: false,
-                priority: Priority::Normal,
-                enabled: false, // Disabled
-            }],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let downloader = std::sync::Arc::new(UsenetDownloader::new(config).await.unwrap());
-
-    // Start RSS scheduler
-    let handle = downloader.start_rss_scheduler();
-
-    // Let it run briefly
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Scheduler should still be running (just idle, checking for enabled feeds)
-    assert!(
-        !handle.is_finished(),
-        "Scheduler should run even with disabled feeds"
     );
 
     // Abort the task

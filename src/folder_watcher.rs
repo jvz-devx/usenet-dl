@@ -335,22 +335,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_folder_watcher_creation() {
-        let downloader = create_test_downloader().await;
-        let temp_dir = TempDir::new().unwrap();
-
-        let config = WatchFolderConfig {
-            path: temp_dir.path().to_path_buf(),
-            after_import: WatchFolderAction::Delete,
-            category: Some("test".to_string()),
-            scan_interval: Duration::from_secs(5),
-        };
-
-        let watcher = FolderWatcher::new(downloader, vec![config]);
-        assert!(watcher.is_ok());
-    }
-
-    #[tokio::test]
     async fn test_is_nzb_file() {
         let downloader = create_test_downloader().await;
         let watcher = FolderWatcher::new(downloader, vec![]).unwrap();
@@ -405,6 +389,161 @@ mod tests {
         assert_eq!(found_config.path, watch_path);
         assert_eq!(found_config.category.as_deref(), Some("test"));
     }
+
+    // =========================================================================
+    // handle_event filtering tests
+    // =========================================================================
+
+    /// Valid NZB content used across handle_event tests.
+    const TEST_NZB: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <file poster="test@example.com" date="1234567890" subject="test file">
+    <groups><group>alt.binaries.test</group></groups>
+    <segments>
+      <segment bytes="1024" number="1">test-msg-id@example.com</segment>
+    </segments>
+  </file>
+</nzb>"#;
+
+    /// Helper: create a FolderWatcher with a single watch path and a paired downloader.
+    /// Returns (watcher, downloader, watch_path, _temp_dir).
+    async fn create_watcher_with_watch_dir() -> (
+        FolderWatcher,
+        Arc<UsenetDownloader>,
+        std::path::PathBuf,
+        TempDir,
+    ) {
+        let temp_dir = TempDir::new().unwrap();
+        let watch_path = temp_dir.path().join("watch");
+        std::fs::create_dir_all(&watch_path).unwrap();
+
+        let mut config = Config::default();
+        config.persistence.database_path = temp_dir.path().join("test.db");
+        config.download.download_dir = temp_dir.path().join("downloads");
+        config.download.temp_dir = temp_dir.path().join("temp");
+
+        let downloader = Arc::new(UsenetDownloader::new(config).await.unwrap());
+
+        let watch_config = WatchFolderConfig {
+            path: watch_path.clone(),
+            after_import: WatchFolderAction::Keep,
+            category: Some("test-cat".to_string()),
+            scan_interval: Duration::from_secs(5),
+        };
+
+        let watcher = FolderWatcher::new(downloader.clone(), vec![watch_config]).unwrap();
+        (watcher, downloader, watch_path, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn handle_event_create_nzb_triggers_processing() {
+        let (watcher, downloader, watch_path, _temp_dir) = create_watcher_with_watch_dir().await;
+
+        // Write a real NZB file so process_nzb_file can parse it
+        let nzb_path = watch_path.join("movie.nzb");
+        std::fs::write(&nzb_path, TEST_NZB).unwrap();
+
+        // Construct a Create event pointing to the NZB file
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![nzb_path],
+            attrs: Default::default(),
+        };
+
+        watcher.handle_event(event).await.unwrap();
+
+        // Verify that the NZB was actually added to the download queue
+        let downloads = downloader.db.list_downloads().await.unwrap();
+        assert_eq!(
+            downloads.len(),
+            1,
+            "Create event for .nzb file should add it to the download queue"
+        );
+        assert_eq!(
+            downloads[0].category.as_deref(),
+            Some("test-cat"),
+            "download should inherit the watch folder category"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_event_create_txt_file_is_ignored() {
+        let (watcher, downloader, watch_path, _temp_dir) = create_watcher_with_watch_dir().await;
+
+        // Write a .txt file (not NZB)
+        let txt_path = watch_path.join("readme.txt");
+        std::fs::write(&txt_path, "hello world").unwrap();
+
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![txt_path],
+            attrs: Default::default(),
+        };
+
+        watcher.handle_event(event).await.unwrap();
+
+        // Queue should remain empty — .txt files are not processed
+        let downloads = downloader.db.list_downloads().await.unwrap();
+        assert_eq!(
+            downloads.len(),
+            0,
+            "Create event for non-.nzb file should be ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_event_modify_nzb_triggers_processing() {
+        let (watcher, downloader, watch_path, _temp_dir) = create_watcher_with_watch_dir().await;
+
+        let nzb_path = watch_path.join("show.nzb");
+        std::fs::write(&nzb_path, TEST_NZB).unwrap();
+
+        // Modify event should also trigger processing (handles apps that write then rename)
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
+            paths: vec![nzb_path],
+            attrs: Default::default(),
+        };
+
+        watcher.handle_event(event).await.unwrap();
+
+        let downloads = downloader.db.list_downloads().await.unwrap();
+        assert_eq!(
+            downloads.len(),
+            1,
+            "Modify event for .nzb file should trigger processing"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_event_remove_nzb_is_ignored() {
+        let (watcher, downloader, watch_path, _temp_dir) = create_watcher_with_watch_dir().await;
+
+        // Remove events should not trigger processing
+        let nzb_path = watch_path.join("deleted.nzb");
+
+        let event = Event {
+            kind: EventKind::Remove(notify::event::RemoveKind::File),
+            paths: vec![nzb_path],
+            attrs: Default::default(),
+        };
+
+        watcher.handle_event(event).await.unwrap();
+
+        let downloads = downloader.db.list_downloads().await.unwrap();
+        assert_eq!(
+            downloads.len(),
+            0,
+            "Remove events should be ignored — only Create and Modify trigger processing"
+        );
+    }
+
+    // =========================================================================
+    // Full integration test with real filesystem watcher
+    // =========================================================================
 
     #[tokio::test]
     async fn test_folder_watching_with_file_creation() {

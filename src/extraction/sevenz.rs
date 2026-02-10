@@ -117,6 +117,18 @@ impl SevenZipExtractor {
         }
     }
 
+    /// Test-only public accessor for `validate_extracted_paths`
+    #[cfg(test)]
+    pub(crate) fn validate_extracted_paths_pub(dest_path: &Path) -> Result<()> {
+        Self::validate_extracted_paths(dest_path)
+    }
+
+    /// Test-only public accessor for `collect_extracted_files`
+    #[cfg(test)]
+    pub(crate) fn collect_extracted_files_pub(dir: &Path) -> Result<Vec<PathBuf>> {
+        Self::collect_extracted_files(dir)
+    }
+
     /// Validate that all extracted files are within the destination directory.
     /// This protects against path traversal attacks in 7z archives.
     fn validate_extracted_paths(dest_path: &Path) -> Result<()> {

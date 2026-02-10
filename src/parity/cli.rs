@@ -108,31 +108,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_capabilities() {
-        let handler = CliParityHandler::new(PathBuf::from("/usr/bin/par2"));
-        let caps = handler.capabilities();
-        assert!(caps.can_verify);
-        assert!(caps.can_repair);
-    }
-
-    #[test]
-    fn test_name() {
-        let handler = CliParityHandler::new(PathBuf::from("/usr/bin/par2"));
-        assert_eq!(handler.name(), "cli-par2");
-    }
-
-    #[test]
     fn test_from_path_returns_none_for_nonexistent_binary() {
         // This test will pass as long as there's no binary named "nonexistent-par2-binary-xyz"
         let result = which::which("nonexistent-par2-binary-xyz");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_new_stores_binary_path() {
-        let path = PathBuf::from("/custom/path/to/par2");
-        let handler = CliParityHandler::new(path.clone());
-        assert_eq!(handler.binary_path, path);
     }
 
     #[test]

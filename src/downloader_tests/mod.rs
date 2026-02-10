@@ -126,6 +126,7 @@ mod disk_space;
 mod duplicates;
 mod lifecycle;
 mod nzb;
+mod post_process;
 mod queue;
 mod rss;
 mod scheduler;

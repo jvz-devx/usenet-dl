@@ -546,6 +546,245 @@ pub struct WebhookPayload {
     pub timestamp: i64,
 }
 
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // --- Status integer encoding ---
+
+    #[test]
+    fn status_round_trips_through_i32_for_all_variants() {
+        let cases = [
+            (Status::Queued, 0),
+            (Status::Downloading, 1),
+            (Status::Paused, 2),
+            (Status::Processing, 3),
+            (Status::Complete, 4),
+            (Status::Failed, 5),
+        ];
+
+        for (variant, expected_int) in cases {
+            assert_eq!(
+                variant.to_i32(),
+                expected_int,
+                "{variant:?} should encode to {expected_int}"
+            );
+            assert_eq!(
+                Status::from_i32(expected_int),
+                variant,
+                "{expected_int} should decode to {variant:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn status_from_unknown_positive_integer_defaults_to_failed() {
+        assert_eq!(
+            Status::from_i32(99),
+            Status::Failed,
+            "unknown status 99 must fall back to Failed so corrupted DB rows surface visibly"
+        );
+    }
+
+    #[test]
+    fn status_from_negative_integer_defaults_to_failed() {
+        assert_eq!(
+            Status::from_i32(-1),
+            Status::Failed,
+            "negative status must fall back to Failed — not silently become Queued"
+        );
+    }
+
+    // --- Priority integer encoding ---
+
+    #[test]
+    fn priority_round_trips_through_i32_for_all_variants() {
+        let cases = [
+            (Priority::Low, -1),
+            (Priority::Normal, 0),
+            (Priority::High, 1),
+            (Priority::Force, 2),
+        ];
+
+        for (variant, expected_int) in cases {
+            // from_i32 → variant
+            assert_eq!(
+                Priority::from_i32(expected_int),
+                variant,
+                "{expected_int} should decode to {variant:?}"
+            );
+            // variant discriminant → expected_int
+            assert_eq!(
+                variant as i32, expected_int,
+                "{variant:?} discriminant should be {expected_int}"
+            );
+        }
+    }
+
+    #[test]
+    fn priority_from_unknown_integer_defaults_to_normal() {
+        assert_eq!(
+            Priority::from_i32(99),
+            Priority::Normal,
+            "unknown priority must default to Normal, not High or Force"
+        );
+        assert_eq!(
+            Priority::from_i32(-100),
+            Priority::Normal,
+            "large negative priority must default to Normal"
+        );
+    }
+
+    // --- DownloadId conversions ---
+
+    #[test]
+    fn download_id_from_i64_and_back() {
+        let id = DownloadId::from(42_i64);
+        let raw: i64 = id.into();
+        assert_eq!(
+            raw, 42,
+            "round-trip through From<i64>/Into<i64> must preserve value"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_parses_valid_integer() {
+        let id = DownloadId::from_str("123").unwrap();
+        assert_eq!(id.get(), 123);
+    }
+
+    #[test]
+    fn download_id_from_str_parses_negative_integer() {
+        let id = DownloadId::from_str("-7").unwrap();
+        assert_eq!(
+            id.get(),
+            -7,
+            "DownloadId wraps i64 and must accept negatives"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_rejects_non_numeric() {
+        let result = DownloadId::from_str("abc");
+        assert!(result.is_err(), "non-numeric string must fail to parse");
+        // Verify the error is actually a ParseIntError (not some other error)
+        let err = result.unwrap_err();
+        // ParseIntError's Display always contains the failing input context
+        let msg = err.to_string();
+        assert!(
+            !msg.is_empty(),
+            "ParseIntError should have a descriptive message, got empty"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_rejects_empty_string() {
+        assert!(
+            DownloadId::from_str("").is_err(),
+            "empty string must not parse to a DownloadId"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_rejects_float() {
+        assert!(
+            DownloadId::from_str("3.14").is_err(),
+            "float string must not parse as DownloadId"
+        );
+    }
+
+    #[test]
+    fn download_id_display_matches_inner_value() {
+        let id = DownloadId::new(999);
+        assert_eq!(
+            id.to_string(),
+            "999",
+            "Display should produce the raw i64 value"
+        );
+    }
+
+    #[test]
+    fn download_id_display_for_negative() {
+        let id = DownloadId::new(-42);
+        assert_eq!(
+            id.to_string(),
+            "-42",
+            "Display must include the minus sign for negatives"
+        );
+    }
+
+    #[test]
+    fn download_id_partial_eq_with_i64() {
+        let id = DownloadId::new(10);
+        assert!(id == 10_i64, "DownloadId should equal matching i64");
+        assert!(
+            10_i64 == id,
+            "i64 should equal matching DownloadId (symmetric)"
+        );
+        assert!(id != 11_i64, "DownloadId should not equal different i64");
+    }
+
+    // --- DownloadId parsing edge cases ---
+
+    #[test]
+    fn download_id_from_str_rejects_whitespace_padded_input() {
+        // i64::from_str is strict and does not trim — verify DownloadId inherits this
+        assert!(
+            DownloadId::from_str(" 123 ").is_err(),
+            "whitespace-padded string must not parse — API callers must trim before parsing"
+        );
+        assert!(
+            DownloadId::from_str(" 123").is_err(),
+            "leading whitespace must be rejected"
+        );
+        assert!(
+            DownloadId::from_str("123 ").is_err(),
+            "trailing whitespace must be rejected"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_parses_leading_zeros_as_decimal() {
+        // i64::from_str treats leading zeros as plain decimal (not octal)
+        let id = DownloadId::from_str("0000123").unwrap();
+        assert_eq!(
+            id.get(),
+            123,
+            "leading zeros should parse as decimal 123, not be rejected or treated as octal"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_rejects_i64_overflow_without_panic() {
+        // i64::MAX = 9223372036854775807, so i64::MAX + 1 must fail gracefully
+        let result = DownloadId::from_str("9223372036854775808");
+        assert!(
+            result.is_err(),
+            "i64::MAX + 1 must produce an error, not wrap or panic"
+        );
+        // Verify the error is a ParseIntError with a meaningful message
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("too large") || msg.contains("overflow") || msg.contains("number"),
+            "error message should indicate overflow, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn download_id_from_str_rejects_negative_overflow_without_panic() {
+        // i64::MIN = -9223372036854775808, so i64::MIN - 1 must fail gracefully
+        let result = DownloadId::from_str("-9223372036854775809");
+        assert!(
+            result.is_err(),
+            "i64::MIN - 1 must produce an error, not wrap or panic"
+        );
+    }
+}
+
 /// Result of a server connectivity test
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServerTestResult {

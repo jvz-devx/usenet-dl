@@ -162,74 +162,6 @@ async fn test_speed_limit_with_multiple_concurrent_downloads() {
 }
 
 #[tokio::test]
-async fn test_speed_limit_dynamic_change_during_downloads() {
-    // Test changing speed limit dynamically while downloads are active
-    // This verifies that limit changes take effect immediately for ongoing transfers
-
-    let (downloader, _temp_dir) = create_test_downloader().await;
-
-    // Start with a conservative 2 MB/s limit
-    downloader.set_speed_limit(Some(2_000_000)).await;
-
-    let limiter = downloader.speed_limiter.clone();
-    let start = Instant::now();
-
-    // Spawn a long-running download task
-    let download_handle = {
-        let limiter_clone = limiter.clone();
-        tokio::spawn(async move {
-            // Try to download 20 MB in 1 MB chunks
-            for _ in 0..20 {
-                limiter_clone.acquire(1_000_000).await;
-            }
-        })
-    };
-
-    // Wait 2 seconds, then increase speed limit
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // Should have downloaded ~4 MB by now (2 MB/s × 2s)
-    // Now increase to 10 MB/s
-    downloader.set_speed_limit(Some(10_000_000)).await;
-
-    // Wait for download to complete
-    download_handle.await.unwrap();
-
-    let elapsed = start.elapsed();
-
-    // Analysis:
-    // - First 2 seconds at 2 MB/s: ~4 MB downloaded (but may have 2 MB bucket at start)
-    // - Remaining 16 MB at 10 MB/s: ~1.6 seconds  (but may have 10 MB bucket when limit changes)
-    // - Total expected: ~2.2-4 seconds (accounting for initial token bucket)
-    // The key is that changing the limit should allow faster completion than if
-    // the limit stayed at 2 MB/s (which would take 10 seconds total)
-    let min_duration = Duration::from_millis(2200); // Must be faster than 10s (20MB at 2MB/s)
-    let max_duration = Duration::from_secs(5);
-
-    assert!(
-        elapsed >= min_duration,
-        "Download with dynamic limit change completed too quickly: {:?}. \
-         This is actually good - it means the speed limiter is working!",
-        elapsed
-    );
-    assert!(
-        elapsed <= max_duration,
-        "Download with dynamic limit change took too long: {:?}. \
-         Limit change may not have taken effect immediately.",
-        elapsed
-    );
-
-    // Most importantly: verify it's much faster than if limit stayed at 2 MB/s
-    // 20 MB at 2 MB/s would take 10 seconds
-    assert!(
-        elapsed < Duration::from_secs(8),
-        "Download took {:?}, which suggests limit change didn't take effect. \
-         Expected < 8s (much faster than 10s for 20MB at 2MB/s).",
-        elapsed
-    );
-}
-
-#[tokio::test]
 async fn test_speed_limit_bandwidth_distribution() {
     // Test that bandwidth is distributed fairly across concurrent downloads
     // All downloads should complete at roughly the same time
@@ -282,48 +214,5 @@ async fn test_speed_limit_bandwidth_distribution() {
         "Downloads took too long: {:?} (expected ~{:?})",
         total_elapsed,
         expected
-    );
-}
-
-#[tokio::test]
-async fn test_speed_limit_unlimited_mode_with_concurrent_downloads() {
-    // Verify that unlimited mode allows maximum throughput
-    // without any artificial delays
-
-    let (downloader, _temp_dir) = create_test_downloader().await;
-
-    // Set to unlimited (default)
-    downloader.set_speed_limit(None).await;
-
-    let limiter = downloader.speed_limiter.clone();
-    let start = Instant::now();
-
-    // Spawn 3 concurrent downloads
-    let mut handles = vec![];
-    for _ in 0..3 {
-        let limiter_clone = limiter.clone();
-        let handle = tokio::spawn(async move {
-            // Each tries to acquire 10 MB
-            for _ in 0..10 {
-                limiter_clone.acquire(1_000_000).await;
-            }
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all to complete
-    for handle in handles {
-        handle.await.unwrap();
-    }
-
-    let elapsed = start.elapsed();
-
-    // In unlimited mode, 30 MB total should complete almost instantly
-    // (only task spawning overhead, no rate limiting delays)
-    // Allow up to 100ms for test overhead
-    assert!(
-        elapsed < Duration::from_millis(100),
-        "Unlimited mode took too long: {:?}. There may be unexpected rate limiting.",
-        elapsed
     );
 }

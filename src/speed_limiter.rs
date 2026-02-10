@@ -132,15 +132,26 @@ impl SpeedLimiter {
     /// # }
     /// ```
     pub async fn acquire(&self, bytes: u64) {
+        // Fast path: nothing to acquire
+        if bytes == 0 {
+            return;
+        }
+
         // Fast path: unlimited speed
-        let limit = self.limit_bps.load(Ordering::Relaxed);
-        if limit == 0 {
+        if self.limit_bps.load(Ordering::Relaxed) == 0 {
             return;
         }
 
         let mut remaining = bytes;
 
         loop {
+            // Re-read the limit each iteration so dynamic changes take effect
+            let limit = self.limit_bps.load(Ordering::Relaxed);
+            if limit == 0 {
+                // Limit was removed while we were waiting — no throttle needed
+                return;
+            }
+
             // Refill tokens based on elapsed time
             self.refill_tokens();
 
@@ -168,9 +179,11 @@ impl SpeedLimiter {
                 continue;
             }
 
-            // No tokens available — wait for refill
+            // No tokens available — wait for refill.
+            // Cap sleep at 100ms so we re-check the limit frequently,
+            // allowing dynamic limit changes to take effect promptly.
             let wait_ms = (remaining as f64 / limit as f64 * 1000.0) as u64;
-            tokio::time::sleep(Duration::from_millis(wait_ms.max(10))).await;
+            tokio::time::sleep(Duration::from_millis(wait_ms.clamp(10, 100))).await;
         }
     }
 
@@ -228,23 +241,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_speed_limiter_new_unlimited() {
-        let limiter = SpeedLimiter::new(None);
-        assert_eq!(limiter.get_limit(), None);
-        assert_eq!(limiter.limit_bps.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn test_speed_limiter_new_with_limit() {
-        let limit = 10_000_000; // 10 MB/s
-        let limiter = SpeedLimiter::new(Some(limit));
-        assert_eq!(limiter.get_limit(), Some(limit));
-        assert_eq!(limiter.limit_bps.load(Ordering::Relaxed), limit);
-        // Initial tokens should equal limit
-        assert_eq!(limiter.tokens.load(Ordering::Relaxed), limit);
-    }
-
-    #[test]
     fn test_set_limit_increase() {
         let limiter = SpeedLimiter::new(Some(5_000_000)); // 5 MB/s
         let old_tokens = limiter.tokens.load(Ordering::Relaxed);
@@ -270,14 +266,6 @@ mod tests {
         assert_eq!(new_tokens, old_tokens);
     }
 
-    #[test]
-    fn test_set_limit_to_unlimited() {
-        let limiter = SpeedLimiter::new(Some(10_000_000));
-        limiter.set_limit(None);
-        assert_eq!(limiter.get_limit(), None);
-        assert_eq!(limiter.limit_bps.load(Ordering::Relaxed), 0);
-    }
-
     #[tokio::test]
     async fn test_acquire_unlimited() {
         let limiter = SpeedLimiter::new(None);
@@ -289,23 +277,6 @@ mod tests {
 
         // Should complete in under 10ms
         assert!(elapsed < Duration::from_millis(10));
-    }
-
-    #[tokio::test]
-    async fn test_acquire_with_sufficient_tokens() {
-        let limiter = SpeedLimiter::new(Some(10_000_000)); // 10 MB/s
-
-        // Acquire less than available tokens
-        let start = Instant::now();
-        limiter.acquire(1_000_000).await; // 1 MB
-        let elapsed = start.elapsed();
-
-        // Should complete immediately (tokens available)
-        assert!(elapsed < Duration::from_millis(50));
-
-        // Check tokens were consumed
-        let remaining = limiter.tokens.load(Ordering::Relaxed);
-        assert_eq!(remaining, 9_000_000);
     }
 
     #[tokio::test]
@@ -325,84 +296,297 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_token_refill() {
+    #[test]
+    fn test_set_limit_none_returns_unlimited() {
+        let limiter = SpeedLimiter::new(Some(5_000_000));
+        assert_eq!(limiter.get_limit(), Some(5_000_000), "should start limited");
+
+        limiter.set_limit(None);
+
+        assert_eq!(
+            limiter.get_limit(),
+            None,
+            "set_limit(None) should make get_limit() return None (unlimited)"
+        );
+        // Internal representation: 0 means unlimited
+        assert_eq!(
+            limiter.limit_bps.load(Ordering::Relaxed),
+            0,
+            "internal limit_bps should be 0 for unlimited"
+        );
+    }
+
+    #[test]
+    fn test_new_none_is_unlimited() {
+        let limiter = SpeedLimiter::new(None);
+
+        assert_eq!(
+            limiter.get_limit(),
+            None,
+            "new(None) should create an unlimited limiter"
+        );
+        assert_eq!(
+            limiter.limit_bps.load(Ordering::Relaxed),
+            0,
+            "internal limit_bps should be 0 for unlimited"
+        );
+        // Tokens should also be 0 (no bucket needed for unlimited)
+        assert_eq!(
+            limiter.tokens.load(Ordering::Relaxed),
+            0,
+            "tokens should be 0 for unlimited limiter (no bucket needed)"
+        );
+    }
+
+    #[test]
+    fn test_new_with_limit_returns_that_limit() {
+        let limiter = SpeedLimiter::new(Some(42_000));
+
+        assert_eq!(
+            limiter.get_limit(),
+            Some(42_000),
+            "new(Some(42_000)) should return Some(42_000) from get_limit()"
+        );
+        // Tokens should be initialized to the limit (full bucket)
+        assert_eq!(
+            limiter.tokens.load(Ordering::Relaxed),
+            42_000,
+            "initial tokens should equal the limit (full bucket)"
+        );
+    }
+
+    #[test]
+    fn test_transition_limited_unlimited_limited() {
         let limiter = SpeedLimiter::new(Some(1_000_000)); // 1 MB/s
+        assert_eq!(limiter.get_limit(), Some(1_000_000));
 
-        // Consume all tokens
-        limiter.acquire(1_000_000).await;
-        let tokens_after_acquire = limiter.tokens.load(Ordering::Relaxed);
-        assert_eq!(tokens_after_acquire, 0);
+        // Transition to unlimited
+        limiter.set_limit(None);
+        assert_eq!(
+            limiter.get_limit(),
+            None,
+            "should be unlimited after set_limit(None)"
+        );
 
-        // Wait for refill (1 second should refill all tokens)
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Transition back to limited with a different value
+        limiter.set_limit(Some(2_000_000));
+        assert_eq!(
+            limiter.get_limit(),
+            Some(2_000_000),
+            "should reflect new limit after transitioning back from unlimited"
+        );
 
-        // Force refill by attempting to acquire
-        limiter.refill_tokens();
-        let tokens_after_refill = limiter.tokens.load(Ordering::Relaxed);
+        // Verify the limiter is functional: internal limit_bps must match
+        assert_eq!(limiter.limit_bps.load(Ordering::Relaxed), 2_000_000);
+    }
 
-        // Should have refilled close to full capacity (within 10% tolerance)
+    #[tokio::test]
+    async fn test_acquire_zero_bytes_returns_immediately() {
+        let limiter = SpeedLimiter::new(Some(100)); // Very low limit: 100 bytes/s
+
+        // Drain all tokens first to ensure the limiter would block on any real acquire
+        limiter.tokens.store(0, Ordering::SeqCst);
+
+        let start = Instant::now();
+        limiter.acquire(0).await;
+        let elapsed = start.elapsed();
+
+        // 0 bytes should return immediately even with an empty bucket
+        // The loop condition: remaining starts at 0, so the loop body
+        // checks `remaining == 0` and returns immediately.
         assert!(
-            tokens_after_refill >= 900_000,
-            "tokens_after_refill = {}",
-            tokens_after_refill
+            elapsed < Duration::from_millis(50),
+            "acquire(0) should return immediately, took {:?}",
+            elapsed
         );
     }
 
     #[tokio::test]
-    async fn test_concurrent_acquires() {
-        let limiter = Arc::new(SpeedLimiter::new(Some(10_000_000))); // 10 MB/s
+    async fn test_acquire_blocks_when_tokens_exhausted() {
+        // Use a very low rate so we can measure the wait time
+        let rate_bps = 1_000; // 1000 bytes/sec
+        let limiter = SpeedLimiter::new(Some(rate_bps));
 
-        // Spawn 5 concurrent downloads, each trying to acquire 3 MB
+        // Drain the bucket completely
+        limiter.tokens.store(0, Ordering::SeqCst);
+        // Reset the refill timestamp to now so refill calculation is clean
+        limiter
+            .last_refill
+            .store(SpeedLimiter::now_nanos(), Ordering::SeqCst);
+
+        let bytes_to_acquire = 500_u64; // 500 bytes at 1000 B/s = ~500ms
+
+        let start = Instant::now();
+        limiter.acquire(bytes_to_acquire).await;
+        let elapsed = start.elapsed();
+
+        // Expected time: 500 bytes / 1000 bytes/sec = 500ms
+        // Use generous tolerance: 250ms - 1500ms (50%-300% of expected)
+        let expected_ms = 500;
+        let min_ms = expected_ms / 2; // 250ms
+        let max_ms = expected_ms * 3; // 1500ms
+
+        assert!(
+            elapsed >= Duration::from_millis(min_ms),
+            "acquire should have waited at least ~{expected_ms}ms for tokens, but only took {:?}",
+            elapsed
+        );
+        assert!(
+            elapsed <= Duration::from_millis(max_ms),
+            "acquire took too long: {:?} (expected ~{expected_ms}ms, max {max_ms}ms)",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_acquire_distributes_bandwidth() {
+        // 4 tasks each acquiring 500 bytes at 2000 bytes/sec total
+        // Total: 2000 bytes / 2000 B/s = ~1 second
+        let rate_bps = 2_000;
+        let limiter = SpeedLimiter::new(Some(rate_bps));
+
+        // Drain bucket so all tasks must wait for refills
+        limiter.tokens.store(0, Ordering::SeqCst);
+        limiter
+            .last_refill
+            .store(SpeedLimiter::now_nanos(), Ordering::SeqCst);
+
+        let num_tasks = 4;
+        let bytes_per_task = 500_u64;
+        let total_bytes = num_tasks * bytes_per_task; // 2000 bytes
+
+        let start = Instant::now();
         let mut handles = vec![];
-        for _ in 0..5 {
-            let limiter_clone = Arc::clone(&limiter);
-            let handle = tokio::spawn(async move {
-                limiter_clone.acquire(3_000_000).await;
-            });
-            handles.push(handle);
+
+        for _ in 0..num_tasks {
+            let limiter_clone = limiter.clone();
+            handles.push(tokio::spawn(async move {
+                limiter_clone.acquire(bytes_per_task).await;
+            }));
         }
 
-        // Wait for all to complete
         for handle in handles {
             handle.await.unwrap();
         }
 
-        // Total acquired: 15 MB, but capacity is 10 MB
-        // Some downloads should have waited for token refill
-        // This test mainly verifies no deadlocks/panics occur
+        let elapsed = start.elapsed();
+
+        // Expected: 2000 bytes / 2000 B/s = 1 second
+        // Generous tolerance: 500ms - 3000ms (50% - 300%)
+        let expected_ms = (total_bytes as f64 / rate_bps as f64 * 1000.0) as u64;
+        let min_ms = expected_ms / 2;
+        let max_ms = expected_ms * 3;
+
+        assert!(
+            elapsed >= Duration::from_millis(min_ms),
+            "concurrent acquire completed too fast: {:?} (expected ~{expected_ms}ms, \
+             total {total_bytes} bytes at {rate_bps} B/s)",
+            elapsed
+        );
+        assert!(
+            elapsed <= Duration::from_millis(max_ms),
+            "concurrent acquire took too long: {:?} (expected ~{expected_ms}ms, max {max_ms}ms)",
+            elapsed
+        );
     }
 
-    #[test]
-    fn test_now_nanos_monotonic() {
-        let t1 = SpeedLimiter::now_nanos();
-        std::thread::sleep(Duration::from_millis(10));
-        let t2 = SpeedLimiter::now_nanos();
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_set_limit_while_acquire_waiting_picks_up_new_limit() {
+        // Start with a very slow limit so acquire will block for a long time
+        let limiter = SpeedLimiter::new(Some(100)); // 100 B/s
+        limiter.tokens.store(0, Ordering::SeqCst);
+        limiter
+            .last_refill
+            .store(SpeedLimiter::now_nanos(), Ordering::SeqCst);
 
-        // Time should always increase
-        assert!(t2 > t1);
-        // Difference should be roughly 10ms (10_000_000 nanoseconds)
-        let diff = t2 - t1;
-        assert!(diff >= 10_000_000, "diff = {}", diff);
-    }
-
-    #[tokio::test]
-    async fn test_speed_limiting_enforced() {
-        let limiter = SpeedLimiter::new(Some(1_000_000)); // 1 MB/s
+        let limiter_for_task = limiter.clone();
 
         let start = Instant::now();
 
-        // Try to acquire 2 MB (should take ~2 seconds)
-        limiter.acquire(2_000_000).await;
+        // Spawn a task that acquires 1000 bytes at 100 B/s (would take ~10 seconds)
+        let acquire_handle = tokio::spawn(async move {
+            limiter_for_task.acquire(1_000).await;
+        });
 
+        // Wait a bit, then increase the limit dramatically
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        limiter.set_limit(Some(100_000)); // 100 KB/s — should speed things up enormously
+
+        // The acquire should complete much faster than the original 10 seconds
+        let result = tokio::time::timeout(Duration::from_secs(5), acquire_handle).await;
         let elapsed = start.elapsed();
 
-        // Should take at least 1 second (tokens refill at 1 MB/s)
-        // Allow some tolerance for test timing
         assert!(
-            elapsed >= Duration::from_millis(800),
-            "elapsed = {:?} (expected >= 800ms)",
+            result.is_ok(),
+            "acquire should have completed within 5s after limit increase, but timed out"
+        );
+        result.unwrap().unwrap(); // propagate any panic from the spawned task
+
+        // Should complete well under the original 10 seconds
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "acquire took {:?}, expected much less than 10s after limit increase",
             elapsed
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_set_limit_to_unlimited_unblocks_waiting_acquire() {
+        // Start with 1 byte/s — acquiring 1 MB would take ~1 million seconds
+        let limiter = SpeedLimiter::new(Some(1));
+        limiter.tokens.store(0, Ordering::SeqCst);
+        limiter
+            .last_refill
+            .store(SpeedLimiter::now_nanos(), Ordering::SeqCst);
+
+        let limiter_for_task = limiter.clone();
+
+        let acquire_handle = tokio::spawn(async move {
+            limiter_for_task.acquire(1_000_000).await;
+        });
+
+        // Let the acquire loop start spinning
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Switch to unlimited — this should cause the loop to see limit==0 and return
+        limiter.set_limit(None);
+
+        // The acquire should complete promptly (well under the original ~1M seconds)
+        let result = tokio::time::timeout(Duration::from_secs(3), acquire_handle).await;
+
+        assert!(
+            result.is_ok(),
+            "acquire(1_000_000) should complete quickly after limit set to unlimited, but timed out"
+        );
+        result.unwrap().unwrap(); // propagate any panic from the spawned task
+    }
+
+    #[test]
+    fn test_clone_shares_state() {
+        let original = SpeedLimiter::new(Some(1_000_000));
+        let clone = original.clone();
+
+        // Verify they start with the same limit
+        assert_eq!(original.get_limit(), clone.get_limit());
+
+        // Modify through the clone
+        clone.set_limit(Some(5_000_000));
+
+        // Original should see the change because they share Arc state
+        assert_eq!(
+            original.get_limit(),
+            Some(5_000_000),
+            "original should reflect limit change made via clone"
+        );
+
+        // Modify through the original
+        original.set_limit(None);
+
+        // Clone should see the change
+        assert_eq!(
+            clone.get_limit(),
+            None,
+            "clone should reflect limit change made via original"
         );
     }
 }

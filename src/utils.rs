@@ -328,6 +328,9 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use wiremock::MockServer;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
 
     #[test]
     fn test_get_unique_path_nonexistent_file() {
@@ -526,6 +529,243 @@ mod tests {
         assert!(
             available > 0,
             "Current directory should have available space"
+        );
+    }
+
+    // =========================================================================
+    // extract_filename_from_response
+    // =========================================================================
+
+    /// Helper: start a mock server, register a response, make a GET request, return the response.
+    async fn mock_response(
+        path_str: &str,
+        template: ResponseTemplate,
+    ) -> (reqwest::Response, String) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(path_str))
+            .respond_with(template)
+            .mount(&server)
+            .await;
+
+        let url = format!("{}{}", server.uri(), path_str);
+        let resp = reqwest::get(&url).await.unwrap();
+        (resp, url)
+    }
+
+    #[tokio::test]
+    async fn extract_filename_from_content_disposition_quoted() {
+        let (resp, url) = mock_response(
+            "/download/123",
+            ResponseTemplate::new(200).insert_header(
+                "Content-Disposition",
+                r#"attachment; filename="Movie.2024.1080p.nzb""#,
+            ),
+        )
+        .await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "Movie.2024.1080p",
+            "should strip .nzb extension and return stem"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_from_content_disposition_unquoted() {
+        let (resp, url) = mock_response(
+            "/download/456",
+            ResponseTemplate::new(200)
+                .insert_header("Content-Disposition", "attachment; filename=report.pdf"),
+        )
+        .await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "report",
+            "should strip .pdf extension from unquoted filename"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_from_rfc5987_encoded_header() {
+        let (resp, url) = mock_response(
+            "/download/789",
+            ResponseTemplate::new(200).insert_header(
+                "Content-Disposition",
+                "attachment; filename*=UTF-8''file%20name%20with%20spaces.nzb",
+            ),
+        )
+        .await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "file name with spaces",
+            "should URL-decode RFC 5987 filename and strip extension"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_falls_back_to_url_path_without_header() {
+        let (resp, url) = mock_response("/files/Movie.2024.nzb", ResponseTemplate::new(200)).await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "Movie.2024",
+            "without Content-Disposition, should use URL path stem"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_falls_back_to_download_when_no_useful_url() {
+        // Use a root path "/" so path_segments().next_back() is empty
+        let (resp, _url) = mock_response("/", ResponseTemplate::new(200)).await;
+
+        // Pass a URL with no meaningful path segment
+        let name = extract_filename_from_response(&resp, "http://example.com/");
+
+        assert_eq!(
+            name, "download",
+            "should return 'download' when URL has no useful filename"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_with_multiple_dots_keeps_all_but_last_extension() {
+        let (resp, url) = mock_response("/Movie.2024.720p.nzb", ResponseTemplate::new(200)).await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "Movie.2024.720p",
+            "file_stem strips only the last extension"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_content_disposition_takes_priority_over_url() {
+        // URL has one name, Content-Disposition has another
+        let (resp, url) = mock_response(
+            "/api/v1/nzb/download/generic-id",
+            ResponseTemplate::new(200).insert_header(
+                "Content-Disposition",
+                r#"attachment; filename="Real.Movie.Name.nzb""#,
+            ),
+        )
+        .await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "Real.Movie.Name",
+            "Content-Disposition filename should take priority over URL path"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_no_extension_returns_full_filename() {
+        let (resp, url) = mock_response(
+            "/download/123",
+            ResponseTemplate::new(200)
+                .insert_header("Content-Disposition", r#"attachment; filename="README""#),
+        )
+        .await;
+
+        let name = extract_filename_from_response(&resp, &url);
+
+        assert_eq!(
+            name, "README",
+            "filename without extension should return the full name"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_filename_from_invalid_url_falls_back_to_download() {
+        let (resp, _url) = mock_response("/test", ResponseTemplate::new(200)).await;
+
+        // Pass a totally unparseable URL
+        let name = extract_filename_from_response(&resp, "not a url at all");
+
+        assert_eq!(
+            name, "download",
+            "unparseable URL should fall back to 'download'"
+        );
+    }
+
+    // --- get_unique_path permission edge cases (Linux only) ---
+
+    #[cfg(unix)]
+    #[test]
+    fn get_unique_path_rename_on_untraversable_directory_returns_original_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let restricted_dir = temp_dir.path().join("noperm");
+        fs::create_dir(&restricted_dir).unwrap();
+
+        // Create a file inside the directory BEFORE removing permissions
+        let file_path = restricted_dir.join("existing.txt");
+        fs::write(&file_path, "data").unwrap();
+
+        // Remove execute permission on directory — prevents stat() on files inside
+        fs::set_permissions(&restricted_dir, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Ensure cleanup happens even if assertions panic
+        struct RestorePerms<'a>(&'a std::path::Path);
+        impl Drop for RestorePerms<'_> {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o755));
+            }
+        }
+        let _guard = RestorePerms(&restricted_dir);
+
+        // path.exists() returns false when parent directory lacks execute permission,
+        // so get_unique_path with Rename thinks the file doesn't exist and returns
+        // the original path — this documents the current behavior at this boundary
+        let result = get_unique_path(&file_path, FileCollisionAction::Rename).unwrap();
+        assert_eq!(
+            result, file_path,
+            "with no directory traverse permission, exists() returns false, \
+             so Rename returns the original path as if the file doesn't exist"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn get_unique_path_skip_on_untraversable_directory_succeeds_because_file_appears_absent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let restricted_dir = temp_dir.path().join("noperm_skip");
+        fs::create_dir(&restricted_dir).unwrap();
+
+        // Create a file inside BEFORE removing permissions
+        let file_path = restricted_dir.join("existing.txt");
+        fs::write(&file_path, "data").unwrap();
+
+        // Remove execute permission
+        fs::set_permissions(&restricted_dir, fs::Permissions::from_mode(0o000)).unwrap();
+
+        struct RestorePerms<'a>(&'a std::path::Path);
+        impl Drop for RestorePerms<'_> {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o755));
+            }
+        }
+        let _guard = RestorePerms(&restricted_dir);
+
+        // Skip action checks exists() — which returns false on permission error,
+        // so it does NOT return FileCollision. This documents a subtle edge case:
+        // the file actually exists but the function can't see it.
+        let result = get_unique_path(&file_path, FileCollisionAction::Skip).unwrap();
+        assert_eq!(
+            result, file_path,
+            "Skip returns Ok(path) because exists() is false — the permission error \
+             is invisible to get_unique_path"
         );
     }
 }

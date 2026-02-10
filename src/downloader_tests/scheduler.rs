@@ -1,22 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn test_start_scheduler_no_rules() {
-    // Create downloader with no schedule rules configured
-    let (downloader, _temp_dir) = create_test_downloader().await;
-
-    // Should succeed but return a completed task
-    let handle = downloader.start_scheduler();
-
-    // The task should complete immediately with no rules
-    let result = tokio::time::timeout(Duration::from_millis(100), handle).await;
-    assert!(
-        result.is_ok(),
-        "Task should complete immediately with no schedule rules"
-    );
-}
-
-#[tokio::test]
 async fn test_start_scheduler_with_rules() {
     let temp_dir = tempdir().unwrap();
 

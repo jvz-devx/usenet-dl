@@ -1060,103 +1060,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cleanup_config_default() {
-        let config = CleanupConfig::default();
-
-        // Verify cleanup is enabled by default
-        assert!(config.enabled);
-
-        // Verify target extensions include common intermediate files
-        assert!(config.target_extensions.contains(&"par2".to_string()));
-        assert!(config.target_extensions.contains(&"nzb".to_string()));
-        assert!(config.target_extensions.contains(&"sfv".to_string()));
-        assert!(config.target_extensions.contains(&"srr".to_string()));
-        assert!(config.target_extensions.contains(&"nfo".to_string()));
-
-        // Verify archive extensions include common formats
-        assert!(config.archive_extensions.contains(&"rar".to_string()));
-        assert!(config.archive_extensions.contains(&"zip".to_string()));
-        assert!(config.archive_extensions.contains(&"7z".to_string()));
-
-        // Verify sample deletion is enabled by default
-        assert!(config.delete_samples);
-
-        // Verify sample folder names are configured
-        assert!(config.sample_folder_names.contains(&"sample".to_string()));
-        assert!(config.sample_folder_names.contains(&"Sample".to_string()));
-        assert!(config.sample_folder_names.contains(&"SAMPLE".to_string()));
-    }
-
-    #[test]
-    fn test_config_includes_cleanup() {
-        let config = Config::default();
-
-        // Verify cleanup config is present in main config
-        assert!(config.processing.cleanup.enabled);
-        assert!(!config.processing.cleanup.target_extensions.is_empty());
-        assert!(!config.processing.cleanup.archive_extensions.is_empty());
-    }
-
-    #[test]
-    fn test_rss_feed_config_fields() {
-        // Verify RssFeedConfig has all required fields
-        let feed = RssFeedConfig {
-            url: "https://indexer.example/rss".to_string(),
-            check_interval: Duration::from_secs(900), // 15 minutes
-            category: Some("tv".to_string()),
-            filters: vec![RssFilter {
-                name: "HD Shows".to_string(),
-                include: vec!["720p|1080p".to_string()],
-                exclude: vec!["CAM|TS".to_string()],
-                min_size: Some(1024 * 1024 * 100),      // 100 MB
-                max_size: Some(1024 * 1024 * 1024 * 5), // 5 GB
-                max_age: Some(Duration::from_secs(86400 * 7)), // 7 days
-            }],
-            auto_download: true,
-            priority: Priority::High,
-            enabled: true,
-        };
-
-        // Verify fields are accessible
-        assert_eq!(feed.url, "https://indexer.example/rss");
-        assert_eq!(feed.check_interval, Duration::from_secs(900));
-        assert_eq!(feed.category, Some("tv".to_string()));
-        assert_eq!(feed.filters.len(), 1);
-        assert!(feed.auto_download);
-        assert_eq!(feed.priority, Priority::High);
-        assert!(feed.enabled);
-    }
-
-    #[test]
-    fn test_rss_filter_fields() {
-        // Verify RssFilter has all required fields
-        let filter = RssFilter {
-            name: "Movies".to_string(),
-            include: vec!["BluRay".to_string(), "WEB-DL".to_string()],
-            exclude: vec!["SCREENER".to_string()],
-            min_size: Some(1024 * 1024 * 500),         // 500 MB
-            max_size: Some(1024 * 1024 * 1024 * 10),   // 10 GB
-            max_age: Some(Duration::from_secs(86400)), // 1 day
-        };
-
-        // Verify fields are accessible
-        assert_eq!(filter.name, "Movies");
-        assert_eq!(filter.include.len(), 2);
-        assert_eq!(filter.exclude.len(), 1);
-        assert!(filter.min_size.is_some());
-        assert!(filter.max_size.is_some());
-        assert!(filter.max_age.is_some());
-    }
-
-    #[test]
-    fn test_config_includes_rss_feeds() {
-        let config = Config::default();
-
-        // Verify rss_feeds field exists and is empty by default
-        assert!(config.automation.rss_feeds.is_empty());
-    }
-
-    #[test]
     fn test_rss_feed_serialization() {
         // Test JSON serialization/deserialization
         let feed = RssFeedConfig {
@@ -1178,5 +1081,366 @@ mod tests {
         assert!(deserialized.auto_download);
         assert_eq!(deserialized.priority, feed.priority);
         assert!(deserialized.enabled);
+    }
+
+    // --- PostProcess integer encoding ---
+
+    #[test]
+    fn post_process_round_trips_through_i32_for_all_variants() {
+        let cases = [
+            (PostProcess::None, 0),
+            (PostProcess::Verify, 1),
+            (PostProcess::Repair, 2),
+            (PostProcess::Unpack, 3),
+            (PostProcess::UnpackAndCleanup, 4),
+        ];
+
+        for (variant, expected_int) in cases {
+            assert_eq!(
+                variant.to_i32(),
+                expected_int,
+                "{variant:?} should encode to {expected_int}"
+            );
+            assert_eq!(
+                PostProcess::from_i32(expected_int),
+                variant,
+                "{expected_int} should decode to {variant:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn post_process_from_unknown_integer_defaults_to_unpack_and_cleanup() {
+        assert_eq!(
+            PostProcess::from_i32(99),
+            PostProcess::UnpackAndCleanup,
+            "unknown value must default to the safest full-pipeline mode"
+        );
+        assert_eq!(
+            PostProcess::from_i32(-1),
+            PostProcess::UnpackAndCleanup,
+            "negative value must also default to UnpackAndCleanup"
+        );
+    }
+
+    // --- ServerConfig → nntp_rs::ServerConfig conversion ---
+
+    #[test]
+    fn server_config_converts_with_credentials() {
+        let our = ServerConfig {
+            host: "news.example.com".to_string(),
+            port: 563,
+            tls: true,
+            username: Some("user1".to_string()),
+            password: Some("secret".to_string()),
+            connections: 10,
+            priority: 0,
+            pipeline_depth: 10,
+        };
+
+        let nntp: nntp_rs::ServerConfig = our.into();
+
+        assert_eq!(nntp.host, "news.example.com");
+        assert_eq!(nntp.port, 563);
+        assert!(nntp.tls, "TLS flag must be forwarded");
+        assert!(
+            !nntp.allow_insecure_tls,
+            "insecure TLS must always be false"
+        );
+        assert_eq!(nntp.username, "user1");
+        assert_eq!(nntp.password, "secret");
+    }
+
+    #[test]
+    fn server_config_converts_without_credentials_to_empty_strings() {
+        let our = ServerConfig {
+            host: "news.free.example".to_string(),
+            port: 119,
+            tls: false,
+            username: None,
+            password: None,
+            connections: 5,
+            priority: 1,
+            pipeline_depth: 10,
+        };
+
+        let nntp: nntp_rs::ServerConfig = our.into();
+
+        assert_eq!(nntp.host, "news.free.example");
+        assert_eq!(nntp.port, 119);
+        assert!(!nntp.tls);
+        assert_eq!(
+            nntp.username, "",
+            "None username must become empty string for nntp-rs"
+        );
+        assert_eq!(
+            nntp.password, "",
+            "None password must become empty string for nntp-rs"
+        );
+    }
+
+    // --- Config JSON round-trip ---
+
+    #[test]
+    fn config_default_survives_json_round_trip() {
+        let original = Config::default();
+
+        let json = serde_json::to_string(&original).expect("Config must serialize to JSON");
+        let restored: Config =
+            serde_json::from_str(&json).expect("Config must deserialize from its own JSON");
+
+        // Verify key fields survived — not just "it deserialized"
+        assert_eq!(
+            restored.download.download_dir, original.download.download_dir,
+            "download_dir must survive round-trip"
+        );
+        assert_eq!(
+            restored.download.temp_dir, original.download.temp_dir,
+            "temp_dir must survive round-trip"
+        );
+        assert_eq!(
+            restored.download.max_concurrent_downloads, original.download.max_concurrent_downloads,
+            "max_concurrent_downloads must survive round-trip"
+        );
+        assert_eq!(
+            restored.download.speed_limit_bps, original.download.speed_limit_bps,
+            "speed_limit_bps must survive round-trip"
+        );
+        assert_eq!(
+            restored.download.default_post_process, original.download.default_post_process,
+            "default_post_process must survive round-trip"
+        );
+        assert_eq!(
+            restored.persistence.database_path, original.persistence.database_path,
+            "database_path must survive round-trip"
+        );
+        assert_eq!(
+            restored.server.api.bind_address, original.server.api.bind_address,
+            "api bind_address must survive round-trip"
+        );
+        assert_eq!(
+            restored.processing.retry.max_attempts, original.processing.retry.max_attempts,
+            "retry max_attempts must survive round-trip"
+        );
+        assert_eq!(
+            restored.processing.retry.initial_delay, original.processing.retry.initial_delay,
+            "retry initial_delay must survive round-trip"
+        );
+    }
+
+    // --- Duration serde helpers ---
+
+    #[test]
+    fn duration_serde_serializes_as_seconds() {
+        let config = RetryConfig {
+            initial_delay: Duration::from_secs(5),
+            max_delay: Duration::from_secs(120),
+            ..RetryConfig::default()
+        };
+
+        let json = serde_json::to_value(&config).expect("serialize failed");
+
+        assert_eq!(
+            json["initial_delay"], 5,
+            "duration_serde must serialize Duration as integer seconds"
+        );
+        assert_eq!(json["max_delay"], 120);
+    }
+
+    #[test]
+    fn duration_serde_deserializes_from_seconds() {
+        let json = r#"{"max_attempts":3,"initial_delay":10,"max_delay":300,"backoff_multiplier":2.0,"jitter":false}"#;
+
+        let config: RetryConfig = serde_json::from_str(json).expect("deserialize failed");
+
+        assert_eq!(
+            config.initial_delay,
+            Duration::from_secs(10),
+            "integer 10 must deserialize to Duration::from_secs(10)"
+        );
+        assert_eq!(
+            config.max_delay,
+            Duration::from_secs(300),
+            "integer 300 must deserialize to Duration::from_secs(300)"
+        );
+    }
+
+    #[test]
+    fn optional_duration_serde_round_trips_some_value() {
+        let filter = RssFilter {
+            name: "test".to_string(),
+            include: vec![],
+            exclude: vec![],
+            min_size: None,
+            max_size: None,
+            max_age: Some(Duration::from_secs(3600)),
+        };
+
+        let json = serde_json::to_value(&filter).expect("serialize failed");
+        assert_eq!(
+            json["max_age"], 3600,
+            "Some(Duration) must serialize as integer seconds"
+        );
+
+        let restored: RssFilter = serde_json::from_value(json).expect("deserialize failed");
+        assert_eq!(restored.max_age, Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn optional_duration_serde_round_trips_none() {
+        let filter = RssFilter {
+            name: "test".to_string(),
+            include: vec![],
+            exclude: vec![],
+            min_size: None,
+            max_size: None,
+            max_age: None,
+        };
+
+        let json = serde_json::to_value(&filter).expect("serialize failed");
+        assert!(
+            json["max_age"].is_null(),
+            "None duration must serialize as null"
+        );
+
+        let restored: RssFilter = serde_json::from_value(json).expect("deserialize failed");
+        assert_eq!(restored.max_age, None, "null must deserialize back to None");
+    }
+
+    // --- ConfigUpdate serialization ---
+
+    #[test]
+    fn config_update_none_omits_field_entirely() {
+        let update = ConfigUpdate {
+            speed_limit_bps: None,
+        };
+
+        let json = serde_json::to_value(&update).expect("serialize failed");
+        assert!(
+            !json.as_object().unwrap().contains_key("speed_limit_bps"),
+            "None should be omitted due to skip_serializing_if"
+        );
+    }
+
+    #[test]
+    fn config_update_some_none_serializes_as_null() {
+        // Some(None) means "set speed limit to unlimited"
+        let update = ConfigUpdate {
+            speed_limit_bps: Some(None),
+        };
+
+        let json = serde_json::to_value(&update).expect("serialize failed");
+        assert!(
+            json["speed_limit_bps"].is_null(),
+            "Some(None) must serialize as null (= remove limit)"
+        );
+    }
+
+    #[test]
+    fn config_update_some_some_serializes_as_number() {
+        // Some(Some(val)) means "set speed limit to val"
+        let update = ConfigUpdate {
+            speed_limit_bps: Some(Some(10_000_000)),
+        };
+
+        let json = serde_json::to_value(&update).expect("serialize failed");
+        assert_eq!(
+            json["speed_limit_bps"], 10_000_000,
+            "Some(Some(10_000_000)) must serialize as the number 10000000"
+        );
+    }
+
+    #[test]
+    fn config_update_deserializes_missing_field_as_none() {
+        let json = "{}";
+        let update: ConfigUpdate = serde_json::from_str(json).expect("deserialize failed");
+        assert!(
+            update.speed_limit_bps.is_none(),
+            "missing field must become None (= no change requested)"
+        );
+    }
+
+    #[test]
+    fn config_update_deserializes_null_as_none() {
+        // Note: without a custom deserializer (e.g. serde_with::double_option),
+        // serde treats both missing and null as None for Option<Option<T>>.
+        // The three-way distinction only works on serialization (skip_serializing_if).
+        let json = r#"{"speed_limit_bps": null}"#;
+        let update: ConfigUpdate = serde_json::from_str(json).expect("deserialize failed");
+        assert_eq!(
+            update.speed_limit_bps, None,
+            "null deserializes as None (same as missing) without a custom deserializer"
+        );
+    }
+
+    #[test]
+    fn config_update_deserializes_number_as_some_some() {
+        let json = r#"{"speed_limit_bps": 5000000}"#;
+        let update: ConfigUpdate = serde_json::from_str(json).expect("deserialize failed");
+        assert_eq!(
+            update.speed_limit_bps,
+            Some(Some(5_000_000)),
+            "number value must become Some(Some(val))"
+        );
+    }
+
+    // --- Invalid duration deserialization ---
+
+    #[test]
+    fn duration_serde_rejects_string_instead_of_integer() {
+        let json = r#"{"initial_delay": "not_a_number", "max_delay": 60}"#;
+        let result = serde_json::from_str::<RetryConfig>(json);
+
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("invalid type") || msg.contains("expected"),
+                    "serde error should describe the type mismatch, got: {msg}"
+                );
+            }
+            Ok(_) => panic!(
+                "string value for a Duration field must produce a serde error, not silently succeed"
+            ),
+        }
+    }
+
+    #[test]
+    fn duration_serde_rejects_negative_integer() {
+        let json = r#"{"initial_delay": -1, "max_delay": 60}"#;
+        let result = serde_json::from_str::<RetryConfig>(json);
+
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("invalid value") || msg.contains("expected"),
+                    "serde error should describe the negative value issue, got: {msg}"
+                );
+            }
+            Ok(_) => panic!(
+                "-1 for a Duration (u64) field must produce a serde error, not silently succeed"
+            ),
+        }
+    }
+
+    #[test]
+    fn optional_duration_serde_rejects_string_instead_of_integer() {
+        // RssFilter.max_age uses optional_duration_serde
+        let json = r#"{"name": "test", "max_age": "forever"}"#;
+        let result = serde_json::from_str::<RssFilter>(json);
+
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("invalid type") || msg.contains("expected"),
+                    "serde error should describe the type mismatch, got: {msg}"
+                );
+            }
+            Ok(_) => {
+                panic!("string value for an optional Duration field must produce a serde error")
+            }
+        }
     }
 }

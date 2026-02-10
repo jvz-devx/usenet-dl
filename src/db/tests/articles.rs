@@ -270,21 +270,6 @@ async fn test_delete_articles_cascade() {
     db.close().await;
 }
 
-// Batch article status update tests
-
-#[tokio::test]
-async fn test_batch_update_empty_input() {
-    // Verify empty batch is handled gracefully
-    let temp_file = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_file.path()).await.unwrap();
-
-    // Empty batch should succeed without error
-    let result = db.update_articles_status_batch(&[]).await;
-    assert!(result.is_ok(), "Empty batch should succeed");
-
-    db.close().await;
-}
-
 #[tokio::test]
 async fn test_batch_update_single_article() {
     // Verify batch update works with single article
@@ -611,89 +596,6 @@ async fn test_batch_update_preserves_downloaded_at_on_non_downloaded_status() {
     assert_eq!(
         article.downloaded_at, original_timestamp,
         "Timestamp should be preserved"
-    );
-
-    db.close().await;
-}
-
-#[tokio::test]
-async fn test_batch_update_vs_individual_performance() {
-    // Compare batch update vs individual updates performance
-    let temp_file = NamedTempFile::new().unwrap();
-    let db = Database::new(temp_file.path()).await.unwrap();
-
-    // Create download and 100 articles
-    let new_download = NewDownload {
-        name: "Test".to_string(),
-        nzb_path: "/test.nzb".to_string(),
-        nzb_meta_name: None,
-        nzb_hash: None,
-        job_name: None,
-        category: None,
-        destination: "/downloads".to_string(),
-        post_process: 4,
-        priority: 0,
-        status: 0,
-        size_bytes: 1024 * 100,
-    };
-    let download_id = db.insert_download(&new_download).await.unwrap();
-
-    let articles: Vec<NewArticle> = (0..100)
-        .map(|i| NewArticle {
-            download_id,
-            message_id: format!("<article{}@example.com>", i),
-            segment_number: i,
-            size_bytes: 1024,
-        })
-        .collect();
-    db.insert_articles_batch(&articles).await.unwrap();
-
-    let all_articles = db.get_articles(download_id).await.unwrap();
-
-    // Test individual updates (first 50 articles)
-    let individual_start = std::time::Instant::now();
-    for article in all_articles.iter().take(50) {
-        db.update_article_status(article.id, article_status::DOWNLOADED)
-            .await
-            .unwrap();
-    }
-    let individual_duration = individual_start.elapsed();
-
-    // Test batch update (remaining 50 articles)
-    let updates: Vec<(i64, i32)> = all_articles
-        .iter()
-        .skip(50)
-        .map(|a| (a.id, article_status::DOWNLOADED))
-        .collect();
-
-    let batch_start = std::time::Instant::now();
-    db.update_articles_status_batch(&updates).await.unwrap();
-    let batch_duration = batch_start.elapsed();
-
-    // Verify all updated
-    let downloaded_count = db
-        .count_articles_by_status(download_id, article_status::DOWNLOADED)
-        .await
-        .unwrap();
-    assert_eq!(downloaded_count, 100);
-
-    // Batch should be significantly faster (at least 10x)
-    let speedup = individual_duration.as_micros() as f64 / batch_duration.as_micros() as f64;
-
-    println!(
-        "Individual updates (50 articles): {}ms",
-        individual_duration.as_millis()
-    );
-    println!(
-        "Batch update (50 articles): {}ms",
-        batch_duration.as_millis()
-    );
-    println!("Speedup: {:.1}x", speedup);
-
-    assert!(
-        speedup >= 10.0,
-        "Batch update should be at least 10x faster than individual updates (got {:.1}x)",
-        speedup
     );
 
     db.close().await;

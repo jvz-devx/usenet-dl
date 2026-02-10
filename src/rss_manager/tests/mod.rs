@@ -1,8 +1,11 @@
 use super::*;
 use crate::config::{Config, RssFeedConfig, RssFilter};
 use crate::types::Priority;
+use std::net::TcpListener;
 use std::time::Duration;
 use tempfile::tempdir;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener as TokioTcpListener;
 
 async fn create_test_setup() -> (Arc<Database>, Arc<UsenetDownloader>) {
     // Create temporary database
@@ -27,37 +30,6 @@ async fn create_test_setup() -> (Arc<Database>, Arc<UsenetDownloader>) {
     std::mem::forget(temp_dir);
 
     (db, downloader)
-}
-
-#[tokio::test]
-async fn test_rss_manager_new() {
-    let (db, downloader) = create_test_setup().await;
-
-    let feeds = vec![RssFeedConfig {
-        url: "https://example.com/rss".to_string(),
-        check_interval: Duration::from_secs(900),
-        category: Some("movies".to_string()),
-        filters: vec![],
-        auto_download: true,
-        priority: Priority::Normal,
-        enabled: true,
-    }];
-
-    let manager = RssManager::new(db, downloader, feeds);
-
-    assert!(manager.is_ok(), "RssManager creation should succeed");
-    let manager = manager.unwrap();
-    assert_eq!(manager.feeds.len(), 1, "Should have 1 feed configured");
-}
-
-#[tokio::test]
-async fn test_rss_manager_start_stop() {
-    let (db, downloader) = create_test_setup().await;
-
-    let manager = RssManager::new(db, downloader, vec![]).expect("Failed to create manager");
-
-    assert!(manager.start().is_ok(), "Start should succeed");
-    manager.stop().await;
 }
 
 #[tokio::test]
@@ -1312,4 +1284,153 @@ async fn test_rss_end_to_end_with_mock_server() {
             .unwrap(),
         "Sample item should NOT be marked seen (excluded)"
     );
+}
+
+// =========================================================================
+// HTTP error handling tests for check_feed
+// =========================================================================
+
+/// Helper: start a mock TCP server that returns a single HTTP response, then return its base URL.
+async fn start_mock_http_server(status_code: u16, body: &str) -> String {
+    let std_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = std_listener.local_addr().unwrap();
+    drop(std_listener);
+
+    let listener = TokioTcpListener::bind(addr).await.unwrap();
+    let response_body = body.to_string();
+
+    tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = vec![0; 4096];
+            let _ = socket.read(&mut buf).await;
+
+            let response = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                status_code,
+                match status_code {
+                    404 => "Not Found",
+                    500 => "Internal Server Error",
+                    _ => "OK",
+                },
+                response_body.len(),
+                response_body
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+
+    // Give server time to bind
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    format!("http://{}", addr)
+}
+
+#[tokio::test]
+async fn check_feed_returns_error_on_http_500() {
+    let (db, downloader) = create_test_setup().await;
+    let server_url = start_mock_http_server(500, "Internal Server Error").await;
+
+    let feed_config = RssFeedConfig {
+        url: server_url.clone(),
+        check_interval: Duration::from_secs(900),
+        category: None,
+        filters: vec![],
+        auto_download: false,
+        priority: Priority::Normal,
+        enabled: true,
+    };
+
+    let manager = RssManager::new(db, downloader, vec![]).unwrap();
+    let result = manager.check_feed(&feed_config).await;
+
+    match result {
+        Err(crate::error::Error::Other(msg)) => {
+            assert!(
+                msg.contains("HTTP 500"),
+                "error should contain HTTP status code 500, got: {msg}"
+            );
+            assert!(
+                msg.contains(&server_url),
+                "error should contain the feed URL for diagnostics, got: {msg}"
+            );
+        }
+        Ok(items) => panic!(
+            "expected error for HTTP 500, got Ok with {} items",
+            items.len()
+        ),
+        Err(other) => panic!("expected Error::Other for HTTP 500, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn check_feed_returns_error_on_http_404() {
+    let (db, downloader) = create_test_setup().await;
+    let server_url = start_mock_http_server(404, "Not Found").await;
+
+    let feed_config = RssFeedConfig {
+        url: server_url.clone(),
+        check_interval: Duration::from_secs(900),
+        category: None,
+        filters: vec![],
+        auto_download: false,
+        priority: Priority::Normal,
+        enabled: true,
+    };
+
+    let manager = RssManager::new(db, downloader, vec![]).unwrap();
+    let result = manager.check_feed(&feed_config).await;
+
+    match result {
+        Err(crate::error::Error::Other(msg)) => {
+            assert!(
+                msg.contains("HTTP 404"),
+                "error should contain HTTP status code 404, got: {msg}"
+            );
+            assert!(
+                msg.contains(&server_url),
+                "error should contain the feed URL, got: {msg}"
+            );
+        }
+        Ok(items) => panic!(
+            "expected error for HTTP 404, got Ok with {} items",
+            items.len()
+        ),
+        Err(other) => panic!("expected Error::Other for HTTP 404, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn check_feed_returns_error_on_connection_refused() {
+    let (db, downloader) = create_test_setup().await;
+
+    // Bind a port and immediately drop it — nothing is listening
+    let std_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = std_listener.local_addr().unwrap();
+    drop(std_listener);
+
+    let feed_config = RssFeedConfig {
+        url: format!("http://{}", addr),
+        check_interval: Duration::from_secs(900),
+        category: None,
+        filters: vec![],
+        auto_download: false,
+        priority: Priority::Normal,
+        enabled: true,
+    };
+
+    let manager = RssManager::new(db, downloader, vec![]).unwrap();
+    let result = manager.check_feed(&feed_config).await;
+
+    match result {
+        Err(crate::error::Error::Other(msg)) => {
+            assert!(
+                msg.contains("Failed to fetch RSS feed"),
+                "connection refused error should mention fetch failure, got: {msg}"
+            );
+        }
+        Ok(items) => panic!(
+            "expected error for connection refused, got Ok with {} items",
+            items.len()
+        ),
+        Err(other) => panic!("expected Error::Other for connection refused, got: {other:?}"),
+    }
 }

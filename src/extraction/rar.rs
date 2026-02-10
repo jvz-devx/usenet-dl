@@ -57,6 +57,12 @@ impl RarExtractor {
         Ok(archives)
     }
 
+    /// Test-only public accessor for `is_password_error`
+    #[cfg(test)]
+    pub(crate) fn is_password_error_pub(error_msg: &str) -> bool {
+        Self::is_password_error(error_msg)
+    }
+
     /// Check if an unrar error indicates a password problem
     fn is_password_error(error_msg: &str) -> bool {
         error_msg.contains("password")
