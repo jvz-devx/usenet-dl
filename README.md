@@ -121,7 +121,8 @@ usenet-dl = { git = "https://github.com/jvz-devx/usenet-dl" }
 ### Basic Usage
 
 ```rust
-use usenet_dl::{UsenetDownloader, Config, ServerConfig, DownloadOptions};
+use usenet_dl::config::{Config, DownloadConfig, ServerConfig};
+use usenet_dl::{UsenetDownloader, DownloadOptions, Event, Priority};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -136,10 +137,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 password: Some("pass".to_string()),
                 connections: 10,
                 priority: 0,
+                pipeline_depth: 10,
             }
         ],
-        download_dir: "downloads".into(),
-        temp_dir: "temp".into(),
+        download: DownloadConfig {
+            download_dir: "downloads".into(),
+            temp_dir: "temp".into(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -151,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         while let Ok(event) = events.recv().await {
             match event {
-                Event::Downloading { id, percent, speed_bps } => {
+                Event::Downloading { id, percent, speed_bps, .. } => {
                     println!("Download {}: {:.1}% @ {} MB/s",
                         id, percent, speed_bps / 1_000_000);
                 }
@@ -168,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add NZB download
     let id = downloader.add_nzb(
-        "file.nzb",
+        "file.nzb".as_ref(),
         DownloadOptions {
             category: Some("movies".into()),
             priority: Priority::Normal,
@@ -183,9 +188,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     downloader.resume(id).await?;
     downloader.set_speed_limit(Some(10_000_000)).await; // 10 MB/s
 
-    // Start REST API
-    downloader.start_api().await?;
-
     Ok(())
 }
 ```
@@ -195,8 +197,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Start the API server:
 
 ```rust
-let downloader = UsenetDownloader::new(config).await?;
-downloader.start_api().await?;
+use std::sync::Arc;
+use usenet_dl::api::start_api_server;
+use usenet_dl::config::{Config, DownloadConfig, ServerConfig};
+
+let config = Config { /* ... */ };
+let downloader = Arc::new(UsenetDownloader::new(config.clone()).await?);
+let config = Arc::new(config);
+start_api_server(downloader, config).await?;
 ```
 
 The API will be available at `http://localhost:6789` with Swagger UI at `http://localhost:6789/swagger-ui`.
@@ -291,7 +299,7 @@ All settings have sensible defaults. Only NNTP server configuration is required.
 ### Configuration Example
 
 ```rust
-use usenet_dl::*;
+use usenet_dl::config::*;
 use std::time::Duration;
 
 let config = Config {
@@ -309,148 +317,147 @@ let config = Config {
         }
     ],
 
-    // Optional: Directories
-    download_dir: "/mnt/media/downloads".into(),
-    temp_dir: "/mnt/temp".into(),
-
     // Optional: Download settings
-    max_concurrent_downloads: 3,
-    speed_limit_bps: Some(10_000_000), // 10 MB/s
-
-    // Optional: Retry configuration
-    retry: RetryConfig {
-        max_attempts: 5,
-        initial_delay: Duration::from_secs(1),
-        max_delay: Duration::from_secs(60),
-        backoff_multiplier: 2.0,
-        jitter: true,
+    download: DownloadConfig {
+        download_dir: "/mnt/media/downloads".into(),
+        temp_dir: "/mnt/temp".into(),
+        max_concurrent_downloads: 3,
+        speed_limit_bps: Some(10_000_000), // 10 MB/s
+        default_post_process: PostProcess::UnpackAndCleanup,
+        delete_samples: true,
+        file_collision: FileCollisionAction::Rename,
+        ..Default::default()
     },
 
-    // Optional: Post-processing
-    default_post_process: PostProcess::UnpackAndCleanup,
-    failed_action: FailedDownloadAction::Keep,
-    delete_samples: true,
-
-    // Optional: Extraction
-    extraction: ExtractionConfig {
-        max_recursion_depth: 2,
-        archive_extensions: vec!["rar".into(), "7z".into(), "zip".into()],
+    // Optional: Tools configuration
+    tools: ToolsConfig {
+        password_file: Some("passwords.txt".into()),
+        try_empty_password: true,
+        ..Default::default()
     },
 
-    // Optional: File handling
-    file_collision: FileCollisionAction::Rename,
-    deobfuscation: DeobfuscationConfig {
-        enabled: true,
-        min_length: 12,
-    },
-
-    // Optional: Disk space
-    disk_space: DiskSpaceConfig {
-        enabled: true,
-        min_free_space: 1024 * 1024 * 1024, // 1 GB
-        size_multiplier: 2.5,
-    },
-
-    // Optional: Passwords
-    password_file: Some("passwords.txt".into()),
-    try_empty_password: true,
-
-    // Optional: Database
-    database_path: "usenet-dl.db".into(),
-
-    // Optional: API
-    api: ApiConfig {
-        bind_address: "127.0.0.1:6789".parse().unwrap(),
-        api_key: Some("secret".to_string()),
-        cors_enabled: true,
-        cors_origins: vec!["http://localhost:3000".into()],
-        swagger_ui: true,
-        rate_limit: RateLimitConfig {
-            enabled: false,
-            requests_per_second: 100,
-            burst_size: 200,
-            exempt_paths: vec!["/api/v1/events".into()],
-            exempt_ips: vec!["127.0.0.1".parse().unwrap()],
+    // Optional: Processing settings
+    processing: ProcessingConfig {
+        extraction: ExtractionConfig {
+            max_recursion_depth: 2,
+            archive_extensions: vec!["rar".into(), "7z".into(), "zip".into()],
         },
+        disk_space: DiskSpaceConfig {
+            enabled: true,
+            min_free_space: 1024 * 1024 * 1024, // 1 GB
+            size_multiplier: 2.5,
+        },
+        retry: RetryConfig {
+            max_attempts: 5,
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(60),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        },
+        ..Default::default()
+    },
+
+    // Optional: Notifications
+    notifications: NotificationConfig {
+        webhooks: vec![
+            WebhookConfig {
+                url: "https://api.example.com/webhook".to_string(),
+                events: vec![WebhookEvent::OnComplete, WebhookEvent::OnFailed],
+                auth_header: Some("Bearer token123".into()),
+                timeout: Duration::from_secs(30),
+            }
+        ],
+        scripts: vec![
+            ScriptConfig {
+                path: "/usr/local/bin/notify.sh".into(),
+                events: vec![ScriptEvent::OnComplete],
+                timeout: Duration::from_secs(300),
+            }
+        ],
+    },
+
+    // Optional: Persistence (database, scheduler, categories)
+    persistence: PersistenceConfig {
+        database_path: "usenet-dl.db".into(),
+        schedule_rules: vec![
+            ScheduleRule {
+                name: "Night owl".into(),
+                days: vec![], // All days
+                start_time: "00:00".to_string(),
+                end_time: "06:00".to_string(),
+                action: ScheduleAction::Unlimited,
+                enabled: true,
+            }
+        ],
+        categories: [
+            ("movies".to_string(), CategoryConfig {
+                destination: "/mnt/media/movies".into(),
+                post_process: None, // Use default
+                scripts: vec![],
+            }),
+            ("tv".to_string(), CategoryConfig {
+                destination: "/mnt/media/tv".into(),
+                post_process: Some(PostProcess::UnpackAndCleanup),
+                scripts: vec![],
+            }),
+        ].into_iter().collect(),
+        ..Default::default()
     },
 
     // Optional: Automation
-    watch_folders: vec![
-        WatchFolderConfig {
-            path: "/mnt/nzb-drop".into(),
-            after_import: WatchFolderAction::MoveToProcessed,
-            category: Some("movies".into()),
-            scan_interval: Duration::from_secs(5),
-        }
-    ],
-
-    rss_feeds: vec![
-        RssFeedConfig {
-            url: "https://indexer.example/rss".to_string(),
-            check_interval: Duration::from_secs(900), // 15 minutes
-            category: Some("tv".into()),
-            filters: vec![
-                RssFilter {
-                    name: "TV Shows".into(),
-                    include: vec![r"S\d{2}E\d{2}".into()],
-                    exclude: vec![r"(?i)cam|ts|screener".into()],
-                    min_size: Some(100_000_000), // 100 MB
-                    max_size: Some(5_000_000_000), // 5 GB
-                    max_age: None,
-                }
-            ],
-            auto_download: true,
-            priority: Priority::Normal,
+    automation: AutomationConfig {
+        deobfuscation: DeobfuscationConfig {
             enabled: true,
-        }
-    ],
+            min_length: 12,
+        },
+        watch_folders: vec![
+            WatchFolderConfig {
+                path: "/mnt/nzb-drop".into(),
+                after_import: WatchFolderAction::MoveToProcessed,
+                category: Some("movies".into()),
+                scan_interval: Duration::from_secs(5),
+            }
+        ],
+        rss_feeds: vec![
+            RssFeedConfig {
+                url: "https://indexer.example/rss".to_string(),
+                check_interval: Duration::from_secs(900), // 15 minutes
+                category: Some("tv".into()),
+                filters: vec![
+                    RssFilter {
+                        name: "TV Shows".into(),
+                        include: vec![r"S\d{2}E\d{2}".into()],
+                        exclude: vec![r"(?i)cam|ts|screener".into()],
+                        min_size: Some(100_000_000), // 100 MB
+                        max_size: Some(5_000_000_000), // 5 GB
+                        max_age: None,
+                    }
+                ],
+                auto_download: true,
+                priority: Priority::Normal,
+                enabled: true,
+            }
+        ],
+        ..Default::default()
+    },
 
-    schedule_rules: vec![
-        ScheduleRule {
-            name: "Night owl".into(),
-            days: vec![], // All days
-            start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-            end_time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
-            action: ScheduleAction::Unlimited,
-            enabled: true,
-        }
-    ],
-
-    // Optional: Notifications
-    webhooks: vec![
-        WebhookConfig {
-            url: "https://api.example.com/webhook".to_string(),
-            events: vec![WebhookEvent::OnComplete, WebhookEvent::OnFailed],
-            auth_header: Some("Bearer token123".into()),
-            timeout: Duration::from_secs(30),
-        }
-    ],
-
-    scripts: vec![
-        ScriptConfig {
-            path: "/usr/local/bin/notify.sh".into(),
-            events: vec![ScriptEvent::OnComplete],
-            timeout: Duration::from_secs(300),
-        }
-    ],
-
-    // Optional: Categories
-    categories: [
-        ("movies".to_string(), CategoryConfig {
-            destination: "/mnt/media/movies".into(),
-            post_process: None, // Use default
-            watch_folder: None,
-            scripts: vec![],
-        }),
-        ("tv".to_string(), CategoryConfig {
-            destination: "/mnt/media/tv".into(),
-            post_process: Some(PostProcess::UnpackAndCleanup),
-            watch_folder: None,
-            scripts: vec![],
-        }),
-    ].into_iter().collect(),
-
-    ..Default::default()
+    // Optional: API server
+    server: ServerIntegrationConfig {
+        api: ApiConfig {
+            bind_address: "127.0.0.1:6789".parse().unwrap(),
+            api_key: Some("secret".to_string()),
+            cors_enabled: true,
+            cors_origins: vec!["http://localhost:3000".into()],
+            swagger_ui: true,
+            rate_limit: RateLimitConfig {
+                enabled: false,
+                requests_per_second: 100,
+                burst_size: 200,
+                exempt_paths: vec!["/api/v1/events".into()],
+                exempt_ips: vec!["127.0.0.1".parse().unwrap()],
+            },
+        },
+    },
 };
 ```
 
@@ -538,15 +545,30 @@ pub enum Event {
     Removed { id: DownloadId },
 
     // Download progress
-    Downloading { id: DownloadId, percent: f32, speed_bps: u64 },
-    DownloadComplete { id: DownloadId },
-    DownloadFailed { id: DownloadId, error: String },
+    Downloading {
+        id: DownloadId, percent: f32, speed_bps: u64,
+        failed_articles: Option<u64>, total_articles: Option<u64>,
+        health_percent: Option<f32>,
+    },
+    DownloadComplete {
+        id: DownloadId,
+        articles_failed: Option<u64>, articles_total: Option<u64>,
+    },
+    DownloadFailed {
+        id: DownloadId, error: String,
+        articles_succeeded: Option<u64>, articles_failed: Option<u64>,
+        articles_total: Option<u64>,
+    },
+
+    // Duplicate detection
+    DuplicateDetected { id: DownloadId, name: String, method: String, existing_name: String },
 
     // Post-processing stages
     Verifying { id: DownloadId },
     VerifyComplete { id: DownloadId, damaged: bool },
     Repairing { id: DownloadId, blocks_needed: u32, blocks_available: u32 },
     RepairComplete { id: DownloadId, success: bool },
+    RepairSkipped { id: DownloadId, reason: String },
     Extracting { id: DownloadId, archive: String, percent: f32 },
     ExtractComplete { id: DownloadId },
     Moving { id: DownloadId, destination: PathBuf },
@@ -560,6 +582,7 @@ pub enum Event {
     SpeedLimitChanged { limit_bps: Option<u64> },
     QueuePaused,
     QueueResumed,
+    Shutdown,
 
     // Notifications
     WebhookFailed { url: String, error: String },
@@ -572,9 +595,8 @@ pub enum Event {
 ### Setup with Nix
 
 ```bash
-nix-shell
-cargo build
-cargo test
+nix-shell --run "cargo build"
+nix-shell --run "cargo test"
 ```
 
 ### Setup without Nix
@@ -597,13 +619,13 @@ cargo test
 ### Useful Commands
 
 ```bash
-cargo check              # Fast syntax/type checking
-cargo build              # Build the library
-cargo test               # Run all tests (300+ tests)
-cargo test -- --nocapture # Run tests with output
-cargo clippy             # Lint checks
-cargo fmt                # Format code
-cargo doc --open         # Build and view documentation
+nix-shell --run "cargo check"              # Fast syntax/type checking
+nix-shell --run "cargo build"              # Build the library
+nix-shell --run "cargo test"               # Run all tests
+nix-shell --run "cargo test -- --nocapture" # Run tests with output
+nix-shell --run "cargo clippy --all-targets" # Lint checks
+nix-shell --run "cargo fmt --all"           # Format code
+nix-shell --run "cargo doc --open"          # Build and view documentation
 ```
 
 ### Running the REST API in Development
@@ -614,10 +636,10 @@ cp .env.example .env
 # Edit .env with your NNTP credentials
 
 # Run with logging
-RUST_LOG=debug cargo run --example api_server
+nix-shell --run "RUST_LOG=debug cargo run --example rest_api_server"
 
 # Or use the test script
-./test_api.sh
+docs/test_api.sh
 ```
 
 ### Manual Testing Guides
@@ -627,34 +649,34 @@ The project includes comprehensive manual testing documentation in `tests/manual
 - [API Testing](tests/manual/api-testing.md) - REST API testing with curl and Postman
 - [Server Testing](tests/manual/server-testing.md) - NNTP server health check testing
 - [RSS Testing](tests/manual/rss-testing.md) - RSS feed integration testing
-- `test_api.sh` - Automated API testing script
-- `postman_collection.json` - Postman collection for API testing
+- `docs/test_api.sh` - Automated API testing script
+- `docs/postman_collection.json` - Postman collection for API testing
 
 ## Testing
 
 The project has comprehensive test coverage:
 
-- **137 core library tests** - Queue, persistence, events, retry, shutdown
-- **240 post-processing tests** - Extraction, deobfuscation, cleanup
-- **61 REST API tests** - All endpoints with integration tests
-- **50+ automation tests** - RSS, scheduler, folder watching, duplicates
-- **20+ notification tests** - Webhooks, scripts, disk space, health checks
+- **Core library tests** - Queue, persistence, events, retry, shutdown
+- **Post-processing tests** - Extraction, deobfuscation, cleanup
+- **REST API tests** - All endpoints with integration tests
+- **Automation tests** - RSS, scheduler, folder watching, duplicates
+- **Notification tests** - Webhooks, scripts, disk space, health checks
 
 Run tests:
 
 ```bash
 # All tests
-cargo test
+nix-shell --run "cargo test"
 
 # Specific module
-cargo test db::tests
-cargo test api::tests
+nix-shell --run "cargo test db::tests"
+nix-shell --run "cargo test api::tests"
 
 # Integration tests
-cargo test --test integration
+nix-shell --run "cargo test --test integration"
 
 # With output
-cargo test -- --nocapture --test-threads=1
+nix-shell --run "cargo test -- --nocapture --test-threads=1"
 ```
 
 ## Dependencies
@@ -735,8 +757,8 @@ Contributions are welcome! Please see [docs/contributing.md](docs/contributing.m
 git checkout -b feature/my-feature
 
 # Make changes and test
-cargo test
-cargo clippy
+nix-shell --run "cargo test"
+nix-shell --run "cargo clippy --all-targets"
 
 # Commit with descriptive message
 git commit -m "feat: Add my feature"

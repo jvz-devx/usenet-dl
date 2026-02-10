@@ -6,7 +6,7 @@ This guide walks you through installing usenet-dl and creating your first Usenet
 
 ### System Requirements
 
-- **Rust**: Version 1.70 or later
+- **Rust**: Version 1.93 or later
 - **SQLite**: Embedded via sqlx (no manual installation needed)
 - **Archive extraction tools** (optional):
   - `unrar` for RAR extraction
@@ -63,11 +63,11 @@ usenet-dl = { git = "https://github.com/jvz-devx/usenet-dl" }
 Here's the simplest way to get started:
 
 ```rust
-use usenet_dl::{UsenetDownloader, Config, ServerConfig, DownloadOptions, Event, Priority};
+use usenet_dl::config::{Config, DownloadConfig, ServerConfig};
+use usenet_dl::{UsenetDownloader, DownloadOptions, Event, Priority};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure NNTP server
     let config = Config {
         servers: vec![
             ServerConfig {
@@ -78,19 +78,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 password: Some("pass".to_string()),
                 connections: 10,
                 priority: 0,
+                pipeline_depth: 10,
             }
         ],
-        download_dir: "downloads".into(),
-        temp_dir: "temp".into(),
+        download: DownloadConfig {
+            download_dir: "downloads".into(),
+            temp_dir: "temp".into(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
-    // Create downloader
     let downloader = UsenetDownloader::new(config).await?;
 
-    // Add NZB download
     let id = downloader.add_nzb(
-        "file.nzb",
+        "file.nzb".as_ref(),
         DownloadOptions {
             category: Some("movies".into()),
             priority: Priority::Normal,
@@ -99,7 +101,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ).await?;
 
     println!("Queued download: {}", id);
-
     Ok(())
 }
 ```
@@ -120,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         while let Ok(event) = events.recv().await {
             match event {
-                Event::Downloading { id, percent, speed_bps } => {
+                Event::Downloading { id, percent, speed_bps, .. } => {
                     println!("Download {}: {:.1}% @ {} MB/s",
                         id, percent, speed_bps / 1_000_000);
                 }
@@ -196,8 +197,12 @@ tokio::spawn(async move {
 Enable the REST API for remote control:
 
 ```rust
-let downloader = UsenetDownloader::new(config).await?;
-downloader.start_api().await?;
+use std::sync::Arc;
+use usenet_dl::api::start_api_server;
+
+let downloader = Arc::new(UsenetDownloader::new(config.clone()).await?);
+let config = Arc::new(config);
+start_api_server(downloader, config).await?;
 ```
 
 The API will be available at:
@@ -247,6 +252,7 @@ let config = Config {
             password: Some("pass".to_string()),
             connections: 10,
             priority: 0,  // Tried first
+            pipeline_depth: 10,
         },
         ServerConfig {
             host: "backup.news.com".to_string(),
@@ -256,6 +262,7 @@ let config = Config {
             password: Some("pass2".to_string()),
             connections: 5,
             priority: 1,  // Tried if primary fails
+            pipeline_depth: 10,
         }
     ],
     ..Default::default()
@@ -267,21 +274,24 @@ let config = Config {
 Organize downloads by category with custom destinations:
 
 ```rust
+use usenet_dl::config::{Config, PersistenceConfig, CategoryConfig, PostProcess};
+
 let config = Config {
-    categories: [
-        ("movies".to_string(), CategoryConfig {
-            destination: "/mnt/media/movies".into(),
-            post_process: Some(PostProcess::UnpackAndCleanup),
-            watch_folder: None,
-            scripts: vec![],
-        }),
-        ("tv".to_string(), CategoryConfig {
-            destination: "/mnt/media/tv".into(),
-            post_process: Some(PostProcess::UnpackAndCleanup),
-            watch_folder: None,
-            scripts: vec![],
-        }),
-    ].into_iter().collect(),
+    persistence: PersistenceConfig {
+        categories: [
+            ("movies".to_string(), CategoryConfig {
+                destination: "/mnt/media/movies".into(),
+                post_process: Some(PostProcess::UnpackAndCleanup),
+                scripts: vec![],
+            }),
+            ("tv".to_string(), CategoryConfig {
+                destination: "/mnt/media/tv".into(),
+                post_process: Some(PostProcess::UnpackAndCleanup),
+                scripts: vec![],
+            }),
+        ].into_iter().collect(),
+        ..Default::default()
+    },
     ..Default::default()
 };
 ```
@@ -291,18 +301,14 @@ let config = Config {
 Control what happens after download completion:
 
 ```rust
-use usenet_dl::{PostProcess, FailedDownloadAction};
+use usenet_dl::config::{Config, DownloadConfig, PostProcess};
 
 let config = Config {
-    // Automatically extract and clean up archives
-    default_post_process: PostProcess::UnpackAndCleanup,
-
-    // Keep files even if download fails
-    failed_action: FailedDownloadAction::Keep,
-
-    // Delete sample folders
-    delete_samples: true,
-
+    download: DownloadConfig {
+        default_post_process: PostProcess::UnpackAndCleanup,
+        delete_samples: true,
+        ..Default::default()
+    },
     ..Default::default()
 };
 ```
@@ -388,11 +394,16 @@ Only one `UsenetDownloader` instance can access the database at a time. Ensure y
 
 Enable disk space checking to prevent extraction failures:
 ```rust
+use usenet_dl::config::{Config, ProcessingConfig, DiskSpaceConfig};
+
 let config = Config {
-    disk_space: DiskSpaceConfig {
-        enabled: true,
-        min_free_space: 1024 * 1024 * 1024, // 1 GB
-        size_multiplier: 2.5,
+    processing: ProcessingConfig {
+        disk_space: DiskSpaceConfig {
+            enabled: true,
+            min_free_space: 1024 * 1024 * 1024, // 1 GB
+            size_multiplier: 2.5,
+        },
+        ..Default::default()
     },
     ..Default::default()
 };

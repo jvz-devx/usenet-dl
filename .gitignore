@@ -23,6 +23,12 @@
 .DS_Store
 Thumbs.db
 
+# Temporary plan/progress/scan files
+*-plan.md
+*_PLAN.md
+*_PROGRESS.md
+*-scan.md
+
 # Claude
 .claude/
 CLAUDE.md

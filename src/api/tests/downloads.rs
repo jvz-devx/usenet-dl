@@ -1339,15 +1339,28 @@ async fn test_reextract_download_endpoint() {
 
     println!("    ✓ Returns 204 NO_CONTENT for successful re-extraction");
 
-    // Test 2: Re-extract download with missing files
+    // Test 2: Re-extract download with missing files (use separate download with no temp dir)
     println!("  🔍 Test 2: Re-extract download with missing files");
 
-    // Remove the download directory (ignore error if already removed)
-    let _ = std::fs::remove_dir_all(&download_path);
+    let download_id_2 = downloader
+        .add_nzb_content(
+            nzb_content.as_bytes(),
+            "test2.nzb",
+            crate::types::DownloadOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    // Mark as complete but DON'T create temp directory
+    downloader
+        .db
+        .update_status(download_id_2, crate::types::Status::Complete.to_i32())
+        .await
+        .unwrap();
 
     let request = Request::builder()
         .method("POST")
-        .uri(format!("/downloads/{}/reextract", download_id))
+        .uri(format!("/downloads/{}/reextract", download_id_2))
         .body(Body::empty())
         .unwrap();
 

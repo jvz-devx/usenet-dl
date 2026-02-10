@@ -21,8 +21,8 @@ The library is built on top of `nntp-rs` (a sibling crate) which handles the NNT
 
 ### Core Modules
 
-**lib.rs** - Main orchestration
-Contains the `UsenetDownloader` struct and queue management logic (~8K lines). Handles download orchestration, priority queue management, and concurrent download coordination.
+**downloader/mod.rs** - Main orchestration
+Contains the `UsenetDownloader` struct and queue management logic. Handles download orchestration, priority queue management, and concurrent download coordination.
 
 **config.rs** - Configuration types
 Defines all configuration structures with sensible defaults for NNTP servers, post-processing, categories, rate limiting, and API settings.
@@ -38,11 +38,14 @@ Comprehensive error types with context information and HTTP status mapping for A
 
 ### Post-Processing
 
-**post_processing.rs** - Processing pipeline
+**post_processing/** - Processing pipeline
 Implements the five-stage pipeline: Verify → Repair → Extract → Move → Cleanup. Handles PAR2 verification/repair coordination and archive extraction orchestration.
 
-**extraction.rs** - Archive extraction
+**extraction/** - Archive extraction
 RAR, 7z, and ZIP extraction with password support. Delegates to command-line tools (`unrar`, `7z`).
+
+**parity/** - PAR2 verification and repair
+`ParityHandler` trait with pluggable implementations (`CliParityHandler` for systems with `par2` binary, `NoOpParityHandler` as fallback).
 
 **deobfuscation.rs** - Filename cleanup
 Cleans up obfuscated filenames common in Usenet releases.
@@ -83,6 +86,9 @@ Token bucket algorithm for global download speed limiting.
 **retry.rs** - Retry logic
 Exponential backoff with jitter for failed operations.
 
+**utils.rs** - Utility functions
+Disk space checking and other shared utility functions.
+
 ## Key Design Patterns
 
 ### Event-Driven Architecture
@@ -93,7 +99,7 @@ The library uses `tokio::broadcast` channels to emit events. Consumers subscribe
 let mut receiver = downloader.subscribe();
 while let Ok(event) = receiver.recv().await {
     match event {
-        Event::Downloading { id, stage, .. } => { /* handle progress */ }
+        Event::Downloading { id, percent, speed_bps, .. } => { /* handle progress */ }
         Event::Complete { id, .. } => { /* handle completion */ }
         _ => {}
     }
@@ -325,13 +331,16 @@ The library follows a "sensible defaults" philosophy:
 
 ```rust
 Config {
-    download_dir: "./downloads",
-    temp_dir: "./temp",
-    max_concurrent_downloads: 3,
-    speed_limit: None, // Unlimited
-    post_processing_mode: PostProcessingMode::UnpackAndCleanup,
-    retry_attempts: 5,
-    // ... many more defaults
+    servers: vec![],
+    download: DownloadConfig {
+        download_dir: "./downloads".into(),
+        temp_dir: "./temp".into(),
+        max_concurrent_downloads: 3,
+        speed_limit_bps: None, // Unlimited
+        default_post_process: PostProcess::UnpackAndCleanup,
+        ..Default::default()
+    },
+    ..Default::default()
 }
 ```
 
@@ -355,9 +364,10 @@ The event system emits typed events for all significant state changes:
 
 **Queue events**: `Queued`, `Removed`
 **Download lifecycle**: `Downloading`, `DownloadComplete`, `DownloadFailed`
-**Post-processing**: `Verifying`, `VerifyComplete`, `Repairing`, `RepairComplete`, `Extracting`, `ExtractComplete`, `Moving`, `Cleaning`
+**Post-processing**: `Verifying`, `VerifyComplete`, `Repairing`, `RepairComplete`, `RepairSkipped`, `Extracting`, `ExtractComplete`, `Moving`, `Cleaning`
 **Final states**: `Complete`, `Failed`
-**Global events**: `SpeedLimitChanged`, `QueuePaused`, `QueueResumed`
+**Global events**: `SpeedLimitChanged`, `QueuePaused`, `QueueResumed`, `Shutdown`
 **Notifications**: `WebhookFailed`, `ScriptFailed`
+**Detection**: `DuplicateDetected`
 
 Events include rich metadata (download ID, progress, stage, file paths, error messages) for building responsive UIs.

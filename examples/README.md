@@ -130,6 +130,7 @@ let server = ServerConfig {
     password: Some("your_password".to_string()),
     connections: 10,                        // Connection pool size
     priority: 0,                            // Lower = tried first
+    pipeline_depth: 10,                     // Pipelined NNTP commands
 };
 ```
 
@@ -173,16 +174,20 @@ Common events you'll encounter:
 | Event | When | Fields |
 |-------|------|--------|
 | `Queued` | Download added to queue | `id`, `name` |
-| `Downloading` | Download in progress | `id`, `percent`, `speed_bps` |
-| `DownloadComplete` | All articles downloaded | `id` |
+| `Downloading` | Download in progress | `id`, `percent`, `speed_bps`, `failed_articles`?, `total_articles`?, `health_percent`? |
+| `DownloadComplete` | All articles downloaded | `id`, `articles_failed`?, `articles_total`? |
+| `DownloadFailed` | Download failed | `id`, `error`, `articles_succeeded`?, `articles_failed`?, `articles_total`? |
 | `Verifying` | PAR2 verification started | `id` |
 | `VerifyComplete` | PAR2 verification done | `id`, `damaged` |
 | `Repairing` | PAR2 repair in progress | `id`, `blocks_needed`, `blocks_available` |
 | `RepairComplete` | PAR2 repair done | `id`, `success` |
+| `RepairSkipped` | PAR2 repair skipped | `id`, `reason` |
 | `Extracting` | Archive extraction in progress | `id`, `archive`, `percent` |
 | `ExtractComplete` | Archive extraction done | `id` |
 | `Complete` | Everything finished successfully | `id`, `path` |
-| `Failed` | Download or post-processing failed | `id`, `stage`, `error`, `files_kept` |
+| `Failed` | Post-processing failed | `id`, `stage`, `error`, `files_kept` |
+| `DuplicateDetected` | Duplicate download detected | `id`, `name`, `method`, `existing_name` |
+| `Shutdown` | System shutting down | (none) |
 
 ## Further Reading
 
@@ -195,6 +200,6 @@ Common events you'll encounter:
 
 For more examples and use cases, see:
 1. The test suite in `src/` directories
-2. The `test_api.sh` script for API usage examples
+2. The `docs/test_api.sh` script for API usage examples
 3. The README.md for additional code snippets
 4. The Swagger UI at http://localhost:6789/swagger-ui when running the API server

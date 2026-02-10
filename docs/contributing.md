@@ -25,7 +25,7 @@ By participating in this project, you agree to maintain a respectful, inclusive 
 
 ### Prerequisites
 
-- **Rust 1.70+** - Install from [rustup.rs](https://rustup.rs/)
+- **Rust 1.93+** - Install from [rustup.rs](https://rustup.rs/)
 - **SQLite 3** - Usually pre-installed on most systems
 - **External archive tools** (for extraction features):
   - `unrar` - For RAR archive extraction
@@ -34,22 +34,24 @@ By participating in this project, you agree to maintain a respectful, inclusive 
 
 ### Quick Start
 
+> **Note**: All cargo commands should be run inside `nix-shell` to ensure correct toolchain and system dependencies are available.
+
 ```bash
 # Clone the repository
 git clone https://github.com/jvz-devx/usenet-dl.git
 cd usenet-dl
 
 # Build the project
-cargo build
+nix-shell --run "cargo build"
 
 # Run tests
-cargo test
+nix-shell --run "cargo test"
 
 # Run tests with output
-cargo test -- --nocapture
+nix-shell --run "cargo test -- --nocapture"
 
 # Build documentation
-cargo doc --no-deps --open
+nix-shell --run "cargo doc --no-deps --open"
 ```
 
 ## Development Setup
@@ -95,7 +97,7 @@ set -e
 cargo fmt -- --check
 
 # Clippy check
-cargo clippy -- -D warnings
+cargo clippy --all-targets
 
 # Run tests
 cargo test --quiet
@@ -212,7 +214,7 @@ cargo test --release
 cargo fmt
 
 # Check for common mistakes
-cargo clippy -- -D warnings
+cargo clippy --all-targets
 
 # Check for unused dependencies
 cargo udeps  # requires: cargo install cargo-udeps
@@ -280,8 +282,10 @@ Test interactions between components.
 async fn test_download_with_post_processing() {
     let temp_dir = tempfile::tempdir().unwrap();
     let config = Config {
-        download_dir: temp_dir.path().to_path_buf(),
-        default_post_process: PostProcess::UnpackAndCleanup,
+        download: DownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let downloader = UsenetDownloader::new(config).await.unwrap();
@@ -486,7 +490,7 @@ Add runnable examples to `examples/` for:
 2. **Ensure all checks pass**:
    ```bash
    cargo fmt --check
-   cargo clippy -- -D warnings
+   cargo clippy --all-targets
    cargo test
    cargo doc --no-deps
    ```

@@ -16,6 +16,7 @@ username = "myuser"
 password = "mypass"
 connections = 10
 priority = 0
+pipeline_depth = 10
 ```
 
 ### JSON (config.json)
@@ -29,7 +30,8 @@ priority = 0
       "username": "myuser",
       "password": "mypass",
       "connections": 10,
-      "priority": 0
+      "priority": 0,
+      "pipeline_depth": 10
     }
   ]
 }
@@ -52,8 +54,6 @@ All other settings use sensible defaults and are optional.
 | `speed_limit_bps` | Integer (optional) | `null` | Global speed limit in bytes per second (null = unlimited) |
 | `retry` | `RetryConfig` | See below | Retry configuration for transient failures |
 | `default_post_process` | String | `"unpack_and_cleanup"` | Default post-processing mode |
-| `failed_action` | String | `"keep"` | Action when post-processing fails |
-| `failed_directory` | String (path, optional) | `null` | Directory for failed downloads (when `failed_action` is `"move_to_failed"`) |
 | `delete_samples` | Boolean | `true` | Delete sample files/folders during cleanup |
 | `extraction` | `ExtractionConfig` | See below | Archive extraction settings |
 | `file_collision` | String | `"rename"` | How to handle filename collisions |
@@ -67,14 +67,14 @@ All other settings use sensible defaults and are optional.
 | `sevenzip_path` | String (path, optional) | `null` | Path to 7z executable (auto-detected if null) |
 | `par2_path` | String (path, optional) | `null` | Path to par2 binary for repair operations (auto-detected if null) |
 | `search_path` | Boolean | `true` | Search system PATH for external binaries if explicit paths not set |
-| `database_path` | String (path) | `"usenet-dl.db"` | SQLite database path |
+| `persistence.database_path` | String (path) | `"usenet-dl.db"` | SQLite database path (nested under `persistence`) |
 | `api` | `ApiConfig` | See below | REST API configuration |
-| `schedule_rules` | Array of `ScheduleRule` | `[]` | Time-based speed limit rules |
+| `persistence.schedule_rules` | Array of `ScheduleRule` | `[]` | Time-based speed limit rules (nested under `persistence`) |
 | `watch_folders` | Array of `WatchFolderConfig` | `[]` | Folders to watch for NZB imports |
 | `rss_feeds` | Array of `RssFeedConfig` | `[]` | RSS feed configurations |
 | `webhooks` | Array of `WebhookConfig` | `[]` | Webhook configurations |
 | `scripts` | Array of `ScriptConfig` | `[]` | Script execution configurations |
-| `categories` | Object (string → `CategoryConfig`) | `{}` | Category-specific configurations |
+| `persistence.categories` | Object (string → `CategoryConfig`) | `{}` | Category-specific configurations (nested under `persistence`) |
 
 ---
 
@@ -92,6 +92,7 @@ username = "myuser"
 password = "mypass"
 connections = 10
 priority = 0  # Lower = tried first
+pipeline_depth = 10
 
 [[servers]]
 host = "news.backup.com"
@@ -99,6 +100,7 @@ port = 119
 tls = false
 connections = 5
 priority = 10  # Higher = backup server
+pipeline_depth = 10
 ```
 
 ### JSON
@@ -112,14 +114,16 @@ priority = 10  # Higher = backup server
       "username": "myuser",
       "password": "mypass",
       "connections": 10,
-      "priority": 0
+      "priority": 0,
+      "pipeline_depth": 10
     },
     {
       "host": "news.backup.com",
       "port": 119,
       "tls": false,
       "connections": 5,
-      "priority": 10
+      "priority": 10,
+      "pipeline_depth": 10
     }
   ]
 }
@@ -136,6 +140,7 @@ priority = 10  # Higher = backup server
 | `password` | String | No | `null` | Authentication password |
 | `connections` | Integer | No | `10` | Number of concurrent connections to maintain |
 | `priority` | Integer | No | `0` | Server priority (lower values tried first, use for backups) |
+| `pipeline_depth` | Integer | No | `10` | Number of pipelined NNTP commands per connection |
 
 ---
 
@@ -201,34 +206,6 @@ default_post_process = "unpack_and_cleanup"
 ```json
 {
   "default_post_process": "unpack_and_cleanup"
-}
-```
-
----
-
-## FailedDownloadAction
-
-Action to take when post-processing fails. Default: `"keep"`
-
-### Values
-
-| Value | Description |
-|-------|-------------|
-| `"keep"` | Keep files in download directory (default - don't lose data) |
-| `"delete"` | Delete all downloaded files |
-| `"move_to_failed"` | Move to dedicated failed downloads directory |
-
-### Example
-
-```toml
-failed_action = "keep"
-# failed_directory = "/path/to/failed"  # Only used if action is "move_to_failed"
-```
-
-```json
-{
-  "failed_action": "keep",
-  "failed_directory": null
 }
 ```
 
@@ -891,49 +868,40 @@ Category-specific settings override global defaults.
 
 ### TOML
 ```toml
-[categories.movies]
+[persistence.categories.movies]
 destination = "/media/movies"
 post_process = "unpack_and_cleanup"
 
-[[categories.movies.scripts]]
+[[persistence.categories.movies.scripts]]
 path = "/usr/local/bin/movie-indexer.sh"
 events = ["on_complete"]
 timeout = 60
 
-[categories.tv]
+[persistence.categories.tv]
 destination = "/media/tv"
-
-[categories.tv.watch_folder]
-path = "/nzb/tv"
-after_import = "delete"
-scan_interval = 5
 ```
 
 ### JSON
 ```json
 {
-  "categories": {
-    "movies": {
-      "destination": "/media/movies",
-      "post_process": "unpack_and_cleanup",
-      "watch_folder": null,
-      "scripts": [
-        {
-          "path": "/usr/local/bin/movie-indexer.sh",
-          "events": ["on_complete"],
-          "timeout": 60
-        }
-      ]
-    },
-    "tv": {
-      "destination": "/media/tv",
-      "post_process": null,
-      "watch_folder": {
-        "path": "/nzb/tv",
-        "after_import": "delete",
-        "scan_interval": 5
+  "persistence": {
+    "categories": {
+      "movies": {
+        "destination": "/media/movies",
+        "post_process": "unpack_and_cleanup",
+        "scripts": [
+          {
+            "path": "/usr/local/bin/movie-indexer.sh",
+            "events": ["on_complete"],
+            "timeout": 60
+          }
+        ]
       },
-      "scripts": []
+      "tv": {
+        "destination": "/media/tv",
+        "post_process": null,
+        "scripts": []
+      }
     }
   }
 }
@@ -945,7 +913,6 @@ scan_interval = 5
 |-------|------|---------|-------------|
 | `destination` | String (path) | Required | Destination directory for this category |
 | `post_process` | String (optional) | `null` | Override default post-processing mode (null = use global default) |
-| `watch_folder` | `WatchFolderConfig` (optional) | `null` | Category-specific watch folder |
 | `scripts` | Array of `ScriptConfig` | `[]` | Category-specific scripts (run before global scripts) |
 
 ---
@@ -964,6 +931,7 @@ username = "user"
 password = "pass"
 connections = 10
 priority = 0
+pipeline_depth = 10
 
 [[servers]]
 host = "news.backup.com"
@@ -971,11 +939,11 @@ port = 119
 tls = false
 connections = 5
 priority = 10
+pipeline_depth = 10
 
 # Directories
 download_dir = "/downloads"
 temp_dir = "/temp"
-database_path = "/config/usenet-dl.db"
 
 # Download Settings
 max_concurrent_downloads = 3
@@ -991,7 +959,6 @@ jitter = true
 
 # Post-Processing
 default_post_process = "unpack_and_cleanup"
-failed_action = "keep"
 delete_samples = true
 
 # Extraction
@@ -1028,6 +995,17 @@ delete_samples = true
 # Passwords
 password_file = "/config/passwords.txt"
 try_empty_password = true
+
+# Persistence (not flattened — fields are nested)
+[persistence]
+database_path = "/config/usenet-dl.db"
+
+[persistence.categories.movies]
+destination = "/media/movies"
+post_process = "unpack_and_cleanup"
+
+[persistence.categories.tv]
+destination = "/media/tv"
 
 # REST API
 [api]
@@ -1095,14 +1073,6 @@ timeout = 30
 path = "/scripts/notify.sh"
 events = ["on_complete", "on_failed"]
 timeout = 300
-
-# Categories
-[categories.movies]
-destination = "/media/movies"
-post_process = "unpack_and_cleanup"
-
-[categories.tv]
-destination = "/media/tv"
 ```
 
 ### JSON (config.json)
@@ -1117,7 +1087,8 @@ destination = "/media/tv"
       "username": "user",
       "password": "pass",
       "connections": 10,
-      "priority": 0
+      "priority": 0,
+      "pipeline_depth": 10
     }
   ],
   "download_dir": "/downloads",
@@ -1132,7 +1103,6 @@ destination = "/media/tv"
     "jitter": true
   },
   "default_post_process": "unpack_and_cleanup",
-  "failed_action": "keep",
   "delete_samples": true,
   "extraction": {
     "max_recursion_depth": 2,
@@ -1161,7 +1131,22 @@ destination = "/media/tv"
   },
   "password_file": "/config/passwords.txt",
   "try_empty_password": true,
-  "database_path": "/config/usenet-dl.db",
+  "persistence": {
+    "database_path": "/config/usenet-dl.db",
+    "schedule_rules": [],
+    "categories": {
+      "movies": {
+        "destination": "/media/movies",
+        "post_process": "unpack_and_cleanup",
+        "scripts": []
+      },
+      "tv": {
+        "destination": "/media/tv",
+        "post_process": null,
+        "scripts": []
+      }
+    }
+  },
   "api": {
     "bind_address": "0.0.0.0:6789",
     "api_key": "secret123",
@@ -1224,21 +1209,7 @@ destination = "/media/tv"
       "events": ["on_complete", "on_failed"],
       "timeout": 300
     }
-  ],
-  "categories": {
-    "movies": {
-      "destination": "/media/movies",
-      "post_process": "unpack_and_cleanup",
-      "watch_folder": null,
-      "scripts": []
-    },
-    "tv": {
-      "destination": "/media/tv",
-      "post_process": null,
-      "watch_folder": null,
-      "scripts": []
-    }
-  }
+  ]
 }
 ```
 
@@ -1250,7 +1221,7 @@ destination = "/media/tv"
 
 - **Durations**: All durations are specified in **seconds** as integers (e.g., `timeout = 30` for 30 seconds)
 - **Sizes**: All sizes are in **bytes** as integers (e.g., `min_free_space = 1073741824` for 1 GB)
-- **Enums**: All enum values use **snake_case** strings (e.g., `"unpack_and_cleanup"`, `"move_to_failed"`)
+- **Enums**: All enum values use **snake_case** strings (e.g., `"unpack_and_cleanup"`, `"move_to_processed"`)
 - **IPs**: IP addresses are strings (e.g., `"127.0.0.1"`, `"::1"`)
 
 ### Security Considerations
@@ -1280,10 +1251,10 @@ password = "mypass"
 
 download_dir = "/media/downloads"
 
-[categories.movies]
+[persistence.categories.movies]
 destination = "/media/movies"
 
-[categories.tv]
+[persistence.categories.tv]
 destination = "/media/tv"
 ```
 

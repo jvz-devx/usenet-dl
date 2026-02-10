@@ -14,8 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     // Get NZB path
-    let nzb_path = std::env::var("TEST_NZB_PATH")
-        .expect("Set TEST_NZB_PATH to an NZB file path");
+    let nzb_path = std::env::var("TEST_NZB_PATH").expect("Set TEST_NZB_PATH to an NZB file path");
 
     // Load config from env
     let host = std::env::var("NNTP_HOST").expect("NNTP_HOST not set");
