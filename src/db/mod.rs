@@ -106,6 +106,8 @@ pub struct NewArticle {
     pub message_id: String,
     /// Segment number within the file
     pub segment_number: i32,
+    /// Index of the NZB file this article belongs to (0-based)
+    pub file_index: i32,
     /// Size of this segment in bytes
     pub size_bytes: i64,
 }
@@ -121,12 +123,46 @@ pub struct Article {
     pub message_id: String,
     /// Segment number within the file
     pub segment_number: i32,
+    /// Index of the NZB file this article belongs to (0-based)
+    pub file_index: i32,
     /// Size of this segment in bytes
     pub size_bytes: i64,
     /// Article status (see [`article_status`])
     pub status: i32,
     /// Unix timestamp when article was downloaded
     pub downloaded_at: Option<i64>,
+}
+
+/// New download file to be inserted into the database
+#[derive(Debug, Clone)]
+pub struct NewDownloadFile {
+    /// Download this file belongs to
+    pub download_id: crate::types::DownloadId,
+    /// Index of this file within the NZB (0-based)
+    pub file_index: i32,
+    /// Parsed filename (from NZB subject)
+    pub filename: String,
+    /// Original NZB subject line
+    pub subject: Option<String>,
+    /// Total number of segments in this file
+    pub total_segments: i32,
+}
+
+/// Download file record from database
+#[derive(Debug, Clone, FromRow)]
+pub struct DownloadFile {
+    /// Unique database ID
+    pub id: i64,
+    /// Download this file belongs to
+    pub download_id: i64,
+    /// Index of this file within the NZB (0-based)
+    pub file_index: i32,
+    /// Parsed filename (from NZB subject)
+    pub filename: String,
+    /// Original NZB subject line
+    pub subject: Option<String>,
+    /// Total number of segments in this file
+    pub total_segments: i32,
 }
 
 /// Article status constants

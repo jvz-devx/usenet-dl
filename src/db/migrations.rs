@@ -104,6 +104,9 @@ impl Database {
         if current_version < 3 {
             Self::migrate_v3(&mut conn).await?;
         }
+        if current_version < 4 {
+            Self::migrate_v4(&mut conn).await?;
+        }
 
         Ok(())
     }
@@ -579,6 +582,95 @@ impl Database {
         }
 
         tracing::info!("Database migration v3 complete");
+        Ok(())
+    }
+
+    /// Migration v4: Add download_files table and file_index column to download_articles
+    async fn migrate_v4(conn: &mut SqliteConnection) -> Result<()> {
+        tracing::info!("Applying database migration v4");
+
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
+
+        let result = async {
+            // File-level metadata table for NZB files
+            sqlx::query(
+                r#"
+                CREATE TABLE download_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    download_id INTEGER NOT NULL REFERENCES downloads(id) ON DELETE CASCADE,
+                    file_index INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    subject TEXT,
+                    total_segments INTEGER NOT NULL,
+                    UNIQUE(download_id, file_index)
+                )
+                "#,
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to create download_files table: {}",
+                    e
+                )))
+            })?;
+
+            sqlx::query("CREATE INDEX idx_download_files_download ON download_files(download_id)")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| {
+                    Error::Database(DatabaseError::MigrationFailed(format!(
+                        "Failed to create index: {}",
+                        e
+                    )))
+                })?;
+
+            // Add file_index column to existing download_articles table
+            sqlx::query(
+                "ALTER TABLE download_articles ADD COLUMN file_index INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to add file_index column: {}",
+                    e
+                )))
+            })?;
+
+            // Record migration
+            Self::record_migration(conn, 4).await?;
+            Ok::<(), Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v4: {}",
+                            e
+                        )))
+                    })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+
+        tracing::info!("Database migration v4 complete");
         Ok(())
     }
 

@@ -223,12 +223,27 @@ pub enum Event {
         percent: f32,
         /// Current speed in bytes per second
         speed_bps: u64,
+        /// Number of articles that have failed so far
+        #[serde(skip_serializing_if = "Option::is_none")]
+        failed_articles: Option<u64>,
+        /// Total number of articles in the download
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total_articles: Option<u64>,
+        /// Download health percentage (100.0 = no failures, 0.0 = all failed)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        health_percent: Option<f32>,
     },
 
     /// Download completed (starting post-processing)
     DownloadComplete {
         /// Download ID
         id: DownloadId,
+        /// Number of articles that failed during download
+        #[serde(skip_serializing_if = "Option::is_none")]
+        articles_failed: Option<u64>,
+        /// Total number of articles in the download
+        #[serde(skip_serializing_if = "Option::is_none")]
+        articles_total: Option<u64>,
     },
 
     /// Download failed
@@ -237,6 +252,15 @@ pub enum Event {
         id: DownloadId,
         /// Error message
         error: String,
+        /// Number of articles that succeeded before failure
+        #[serde(skip_serializing_if = "Option::is_none")]
+        articles_succeeded: Option<u64>,
+        /// Number of articles that failed
+        #[serde(skip_serializing_if = "Option::is_none")]
+        articles_failed: Option<u64>,
+        /// Total number of articles in the download
+        #[serde(skip_serializing_if = "Option::is_none")]
+        articles_total: Option<u64>,
     },
 
     /// PAR2 verification started

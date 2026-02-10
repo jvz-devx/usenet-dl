@@ -136,6 +136,9 @@ async fn handle_download_failure(
         .send(Event::DownloadFailed {
             id: download_id,
             error: error_msg.clone(),
+            articles_succeeded: Some(successes as u64),
+            articles_failed: Some(failures as u64),
+            articles_total: Some(total_articles as u64),
         })
         .ok();
 
@@ -194,6 +197,9 @@ async fn emit_final_progress(params: FinalProgressParams<'_>) -> Result<()> {
             id: download_id,
             percent: final_percent,
             speed_bps: final_speed_bps,
+            failed_articles: None,
+            total_articles: Some(total_articles as u64),
+            health_percent: None,
         })
         .ok();
 
@@ -243,6 +249,9 @@ impl UsenetDownloader {
                     id: download_id,
                     percent: 0.0,
                     speed_bps: 0,
+                    failed_articles: None,
+                    total_articles: None,
+                    health_percent: None,
                 })
                 .ok();
 
@@ -252,7 +261,11 @@ impl UsenetDownloader {
             if pending_articles.is_empty() {
                 // No articles to download - mark as complete
                 event_tx
-                    .send(Event::DownloadComplete { id: download_id })
+                    .send(Event::DownloadComplete {
+                        id: download_id,
+                        articles_failed: None,
+                        articles_total: None,
+                    })
                     .ok();
 
                 // Start post-processing pipeline asynchronously
@@ -376,7 +389,15 @@ impl UsenetDownloader {
             db.set_completed(download_id).await?;
 
             event_tx
-                .send(Event::DownloadComplete { id: download_id })
+                .send(Event::DownloadComplete {
+                    id: download_id,
+                    articles_failed: if failures > 0 {
+                        Some(failures as u64)
+                    } else {
+                        None
+                    },
+                    articles_total: Some(total_articles as u64),
+                })
                 .ok();
 
             // Start post-processing pipeline asynchronously

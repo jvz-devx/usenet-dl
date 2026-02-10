@@ -154,6 +154,7 @@ async fn test_real_nzb_download() {
                     id: _,
                     percent,
                     speed_bps,
+                    ..
                 }) => {
                     // Only print on significant progress change
                     if (percent - last_percent).abs() >= 1.0 || last_percent < 0.0 {

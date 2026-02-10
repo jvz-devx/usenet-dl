@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     id,
                     percent,
                     speed_bps,
+                    ..
                 } => {
                     println!(
                         "⬇ Download #{}: {:.1}% @ {:.2} MB/s",
@@ -63,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         speed_bps as f64 / 1_048_576.0
                     );
                 }
-                Event::DownloadComplete { id } => {
+                Event::DownloadComplete { id, .. } => {
                     println!("✓ Download #{} complete, starting post-processing", id);
                 }
                 Event::Extracting {

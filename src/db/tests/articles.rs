@@ -28,6 +28,7 @@ async fn test_insert_and_get_article() {
         download_id,
         message_id: "<test@example.com>".to_string(),
         segment_number: 1,
+        file_index: 0,
         size_bytes: 512 * 1024,
     };
     let article_id = db.insert_article(&new_article).await.unwrap();
@@ -79,6 +80,7 @@ async fn test_insert_articles_batch() {
             download_id,
             message_id: format!("<article{}@example.com>", i),
             segment_number: i,
+            file_index: 0,
             size_bytes: 10240,
         })
         .collect();
@@ -125,6 +127,7 @@ async fn test_update_article_status() {
         download_id,
         message_id: "<test@example.com>".to_string(),
         segment_number: 1,
+        file_index: 0,
         size_bytes: 1024,
     };
     let article_id = db.insert_article(&new_article).await.unwrap();
@@ -174,6 +177,7 @@ async fn test_get_pending_articles() {
             download_id,
             message_id: format!("<article{}@example.com>", i),
             segment_number: i,
+            file_index: 0,
             size_bytes: 1024,
         })
         .collect();
@@ -251,6 +255,7 @@ async fn test_delete_articles_cascade() {
             download_id,
             message_id: format!("<article{}@example.com>", i),
             segment_number: i,
+            file_index: 0,
             size_bytes: 1024,
         })
         .collect();
@@ -296,6 +301,7 @@ async fn test_batch_update_single_article() {
         download_id,
         message_id: "<test@example.com>".to_string(),
         segment_number: 1,
+        file_index: 0,
         size_bytes: 1024,
     };
     let article_id = db.insert_article(&new_article).await.unwrap();
@@ -347,6 +353,7 @@ async fn test_batch_update_multiple_articles() {
             download_id,
             message_id: format!("<article{}@example.com>", i),
             segment_number: i,
+            file_index: 0,
             size_bytes: 1024,
         })
         .collect();
@@ -411,6 +418,7 @@ async fn test_batch_update_mixed_statuses() {
             download_id,
             message_id: format!("<article{}@example.com>", i),
             segment_number: i,
+            file_index: 0,
             size_bytes: 1024,
         })
         .collect();
@@ -493,6 +501,7 @@ async fn test_batch_update_large_batch() {
             download_id,
             message_id: format!("<article{}@example.com>", i),
             segment_number: i,
+            file_index: 0,
             size_bytes: 1024,
         })
         .collect();
@@ -561,6 +570,7 @@ async fn test_batch_update_preserves_downloaded_at_on_non_downloaded_status() {
         download_id,
         message_id: "<test@example.com>".to_string(),
         segment_number: 1,
+        file_index: 0,
         size_bytes: 1024,
     };
     let article_id = db.insert_article(&new_article).await.unwrap();

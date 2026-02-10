@@ -28,6 +28,8 @@ pub(crate) struct ProgressReporterParams {
     pub downloaded_articles: Arc<AtomicU64>,
     /// Atomic counter for downloaded bytes
     pub downloaded_bytes: Arc<AtomicU64>,
+    /// Atomic counter for individually-failed articles
+    pub failed_articles: Arc<AtomicU64>,
     /// Event broadcast sender
     pub event_tx: tokio::sync::broadcast::Sender<Event>,
     /// Database handle
@@ -47,6 +49,7 @@ pub(crate) fn spawn_progress_reporter(
         download_start,
         downloaded_articles,
         downloaded_bytes,
+        failed_articles,
         event_tx,
         db,
         cancel_token,
@@ -60,6 +63,7 @@ pub(crate) fn spawn_progress_reporter(
                 _ = interval.tick() => {
                     let current_bytes = downloaded_bytes.load(Ordering::Relaxed);
                     let current_articles = downloaded_articles.load(Ordering::Relaxed);
+                    let current_failed = failed_articles.load(Ordering::Relaxed);
 
                     let progress_percent = if total_size_bytes > 0 {
                         (current_bytes as f32 / total_size_bytes as f32) * 100.0
@@ -72,6 +76,14 @@ pub(crate) fn spawn_progress_reporter(
                         (current_bytes as f64 / elapsed_secs) as u64
                     } else {
                         0
+                    };
+
+                    // Compute download health
+                    let attempted = current_articles + current_failed;
+                    let health_percent = if attempted > 0 {
+                        Some(100.0 * (1.0 - current_failed as f32 / attempted as f32))
+                    } else {
+                        None
                     };
 
                     if let Err(e) = db.update_progress(
@@ -88,6 +100,9 @@ pub(crate) fn spawn_progress_reporter(
                             id,
                             percent: progress_percent,
                             speed_bps,
+                            failed_articles: if current_failed > 0 { Some(current_failed) } else { None },
+                            total_articles: Some(total_articles as u64),
+                            health_percent,
                         })
                         .ok();
                 }
@@ -209,6 +224,7 @@ mod tests {
                     download_id,
                     message_id: format!("<article-{}@test>", i),
                     segment_number: i as i32,
+                    file_index: 0,
                     size_bytes: 10,
                 })
                 .await
@@ -233,6 +249,7 @@ mod tests {
             total_size_bytes: 1000,
             download_start: std::time::Instant::now(),
             downloaded_articles: Arc::new(AtomicU64::new(0)),
+            failed_articles: Arc::new(AtomicU64::new(0)),
             downloaded_bytes: Arc::new(AtomicU64::new(250)),
             event_tx,
             db,
@@ -282,6 +299,7 @@ mod tests {
             total_size_bytes: 1000,
             download_start: std::time::Instant::now(),
             downloaded_articles: Arc::new(AtomicU64::new(0)),
+            failed_articles: Arc::new(AtomicU64::new(0)),
             downloaded_bytes: Arc::new(AtomicU64::new(500)),
             event_tx,
             db,
@@ -318,6 +336,7 @@ mod tests {
             total_size_bytes: 0, // zero size → falls back to article-based percentage
             download_start: std::time::Instant::now(),
             downloaded_articles: Arc::new(AtomicU64::new(5)),
+            failed_articles: Arc::new(AtomicU64::new(0)),
             downloaded_bytes: Arc::new(AtomicU64::new(0)),
             event_tx,
             db,
@@ -354,6 +373,7 @@ mod tests {
             total_size_bytes: 1000,
             download_start: std::time::Instant::now(),
             downloaded_articles: Arc::new(AtomicU64::new(0)),
+            failed_articles: Arc::new(AtomicU64::new(0)),
             downloaded_bytes: Arc::new(AtomicU64::new(0)),
             event_tx,
             db,

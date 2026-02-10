@@ -7,9 +7,33 @@ use crate::utils::extract_filename_from_response;
 
 use super::UsenetDownloader;
 
-/// SQLite has a limit of ~999 variables per query. With 5 columns per article,
-/// we can insert at most 199 articles per batch (199 * 5 = 995 < 999).
-const SQLITE_BATCH_SIZE: usize = 199;
+/// SQLite has a limit of ~999 variables per query. With 6 columns per article,
+/// we can insert at most 166 articles per batch (166 * 6 = 996 < 999).
+const SQLITE_BATCH_SIZE: usize = 166;
+
+/// Parse a filename from an NZB subject line.
+///
+/// Usenet subjects typically contain the filename in quotes, e.g.:
+/// `Some.Movie.2024 [01/50] - "Some.Movie.2024.part01.rar" yEnc (1/100)`
+///
+/// Falls back to `file_{index}` if no quoted filename is found, but we return
+/// just the parsed portion here — the caller provides a fallback index.
+fn parse_filename_from_subject(subject: &str) -> String {
+    // Look for the first quoted string in the subject
+    if let Some(start) = subject.find('"')
+        && let Some(end) = subject[start + 1..].find('"')
+    {
+        let filename = &subject[start + 1..start + 1 + end];
+        if !filename.is_empty() {
+            return filename.to_string();
+        }
+    }
+    // Fallback: use a hash of the subject to create a unique name
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    subject.hash(&mut hasher);
+    format!("file_{:x}", hasher.finish())
+}
 
 /// Timeout for HTTP requests when fetching NZB files from URLs.
 const NZB_FETCH_TIMEOUT_SECS: u64 = 30;
@@ -252,22 +276,42 @@ impl UsenetDownloader {
         self.db.insert_download(&new_download).await
     }
 
-    /// Insert all articles (segments) and cache password if provided
+    /// Insert all download files, articles (segments), and cache password if provided
     async fn insert_articles_and_password(
         &self,
         nzb: &nntp_rs::Nzb,
         download_id: DownloadId,
         password: Option<String>,
     ) -> Result<()> {
+        // Build download_files rows — one per NZB file with parsed filename
+        let download_files: Vec<db::NewDownloadFile> = nzb
+            .files
+            .iter()
+            .enumerate()
+            .map(|(file_idx, file)| {
+                let filename = parse_filename_from_subject(&file.subject);
+                db::NewDownloadFile {
+                    download_id,
+                    file_index: file_idx as i32,
+                    filename,
+                    subject: Some(file.subject.clone()),
+                    total_segments: file.segments.len() as i32,
+                }
+            })
+            .collect();
+        self.db.insert_files_batch(&download_files).await?;
+
         // Insert all articles (segments) for resume support (batch insert for performance)
         let articles: Vec<db::NewArticle> = nzb
             .files
             .iter()
-            .flat_map(|file| {
-                file.segments.iter().map(|segment| db::NewArticle {
+            .enumerate()
+            .flat_map(|(file_idx, file)| {
+                file.segments.iter().map(move |segment| db::NewArticle {
                     download_id,
                     message_id: segment.message_id.clone(),
                     segment_number: segment.number as i32,
+                    file_index: file_idx as i32,
                     size_bytes: segment.bytes as i64,
                 })
             })

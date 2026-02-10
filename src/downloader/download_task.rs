@@ -2,13 +2,49 @@
 
 use crate::types::{DownloadId, Event, Status};
 use futures::stream::{self, StreamExt};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::UsenetDownloader;
 
-/// Maximum article failure ratio before considering a download failed (50%)
-const MAX_FAILURE_RATIO: f64 = 0.5;
+/// Manages output file handles for DirectWrite — one file per NZB file entry.
+///
+/// Uses `std::os::unix::fs::FileExt::write_all_at()` which takes `&self` (not `&mut self`),
+/// enabling lock-free concurrent writes from different batches to the same file.
+/// Each segment writes to non-overlapping byte ranges via yEnc part offsets.
+pub(crate) struct OutputFiles {
+    /// file_index → (File handle, filename)
+    files: HashMap<i32, (std::fs::File, String)>,
+}
+
+impl OutputFiles {
+    /// Create OutputFiles by pre-creating empty files for each download file entry.
+    fn create(
+        download_files: &[crate::db::DownloadFile],
+        temp_dir: &std::path::Path,
+    ) -> std::io::Result<Self> {
+        let mut files = HashMap::with_capacity(download_files.len());
+        for df in download_files {
+            let path = temp_dir.join(&df.filename);
+            let file = std::fs::File::create(&path)?;
+            files.insert(df.file_index, (file, df.filename.clone()));
+        }
+        Ok(Self { files })
+    }
+}
+
+/// Check whether an NNTP error indicates a missing/expired article (vs connection/protocol failure).
+fn is_missing_article_error(err: &nntp_rs::NntpError) -> bool {
+    match err {
+        nntp_rs::NntpError::NoSuchArticle(_) => true,
+        nntp_rs::NntpError::Protocol { code, .. } if *code == 430 => true,
+        other => {
+            let msg = other.to_string();
+            msg.contains("No such article") || msg.contains("no such article")
+        }
+    }
+}
 
 /// Abstraction over NNTP article fetching, enabling testability.
 #[async_trait::async_trait]
@@ -99,6 +135,17 @@ impl DownloadTaskContext {
 
     /// Mark the download as failed with an error message and emit the failure event.
     async fn mark_failed(&self, error: &str) {
+        self.mark_failed_with_stats(error, None, None, None).await;
+    }
+
+    /// Mark the download as failed with an error message and optional article stats.
+    async fn mark_failed_with_stats(
+        &self,
+        error: &str,
+        articles_succeeded: Option<u64>,
+        articles_failed: Option<u64>,
+        articles_total: Option<u64>,
+    ) {
         let _ = self
             .db
             .update_status(self.id, Status::Failed.to_i32())
@@ -108,6 +155,9 @@ impl DownloadTaskContext {
             .send(Event::DownloadFailed {
                 id: self.id,
                 error: error.to_string(),
+                articles_succeeded,
+                articles_failed,
+                articles_total,
             })
             .ok();
     }
@@ -131,6 +181,10 @@ struct DownloadResults {
     success_count: usize,
     failed_count: usize,
     first_error: Option<String>,
+    /// Total articles in the download (for stats)
+    total_articles: usize,
+    /// Count of individually-failed articles (tracked via atomic, separate from batch failures)
+    individually_failed: u64,
 }
 
 /// Core download task — orchestrates the full lifecycle of a single download.
@@ -152,7 +206,13 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
 
     // Phase 2: Handle empty article list (nothing to download)
     if pending_articles.is_empty() {
-        ctx.event_tx.send(Event::DownloadComplete { id }).ok();
+        ctx.event_tx
+            .send(Event::DownloadComplete {
+                id,
+                articles_failed: None,
+                articles_total: None,
+            })
+            .ok();
         ctx.remove_from_active().await;
         ctx.spawn_post_processing();
         return;
@@ -172,11 +232,47 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
         return;
     }
 
+    // Phase 3b: Create output files for DirectWrite
+    let download_files = match ctx.db.get_download_files(id).await {
+        Ok(files) => files,
+        Err(e) => {
+            let msg = format!("Failed to get download files: {}", e);
+            tracing::error!(download_id = id.0, error = %e, "Failed to get download files");
+            ctx.mark_failed(&msg).await;
+            ctx.remove_from_active().await;
+            return;
+        }
+    };
+
+    let output_files = if download_files.is_empty() {
+        // Legacy downloads without download_files rows — no DirectWrite
+        Arc::new(OutputFiles {
+            files: HashMap::new(),
+        })
+    } else {
+        match OutputFiles::create(&download_files, &download_temp_dir) {
+            Ok(of) => Arc::new(of),
+            Err(e) => {
+                let msg = format!("Failed to create output files: {}", e);
+                tracing::error!(download_id = id.0, error = %e, "Failed to create output files");
+                ctx.mark_failed(&msg).await;
+                ctx.remove_from_active().await;
+                return;
+            }
+        }
+    };
+
     // Phase 4: Download articles
     let _total_articles = pending_articles.len();
     let total_size_bytes = download.size_bytes as u64;
-    let results =
-        download_articles(&ctx, pending_articles, total_size_bytes, &download_temp_dir).await;
+    let results = download_articles(
+        &ctx,
+        pending_articles,
+        total_size_bytes,
+        &download_temp_dir,
+        &output_files,
+    )
+    .await;
 
     // Phase 5: Finalize based on results
     finalize_download(ctx, results, total_size_bytes).await;
@@ -224,6 +320,9 @@ async fn fetch_download_record(
             id,
             percent: 0.0,
             speed_bps: 0,
+            failed_articles: None,
+            total_articles: None,
+            health_percent: None,
         })
         .ok();
 
@@ -249,11 +348,15 @@ async fn download_articles(
     pending_articles: Vec<crate::db::Article>,
     total_size_bytes: u64,
     download_temp_dir: &std::path::Path,
+    output_files: &Arc<OutputFiles>,
 ) -> DownloadResults {
     let id = ctx.id;
     let total_articles = pending_articles.len();
-    let downloaded_articles = Arc::new(AtomicU64::new(0));
-    let downloaded_bytes = Arc::new(AtomicU64::new(0));
+    let counters = DownloadCounters {
+        downloaded_articles: Arc::new(AtomicU64::new(0)),
+        downloaded_bytes: Arc::new(AtomicU64::new(0)),
+        failed_articles: Arc::new(AtomicU64::new(0)),
+    };
     let download_start = std::time::Instant::now();
 
     // Set up background tasks for progress reporting and DB updates
@@ -262,9 +365,17 @@ async fn download_articles(
         total_articles,
         total_size_bytes,
         download_start,
-        &downloaded_articles,
-        &downloaded_bytes,
+        &counters,
         ctx,
+    );
+
+    // Spawn fast-fail watcher: if most articles in an early sample are missing, cancel early
+    let fast_fail_task = spawn_fast_fail_watcher(
+        &counters.downloaded_articles,
+        &counters.failed_articles,
+        ctx.config.download.fast_fail_threshold,
+        ctx.config.download.fast_fail_sample_size,
+        ctx.cancel_token.clone(),
     );
 
     // Calculate concurrency and split articles into batches
@@ -277,19 +388,32 @@ async fn download_articles(
         article_batches,
         ctx,
         batch_tx: &batch_tx,
-        downloaded_bytes: &downloaded_bytes,
-        downloaded_articles: &downloaded_articles,
+        downloaded_bytes: &counters.downloaded_bytes,
+        downloaded_articles: &counters.downloaded_articles,
+        failed_articles: &counters.failed_articles,
         download_temp_dir,
+        output_files,
         concurrency,
         pipeline_depth,
     })
     .await;
 
     // Clean up background tasks
+    fast_fail_task.abort();
     cleanup_background_tasks(id, progress_task, batch_tx, batch_task).await;
 
     // Aggregate and return results
-    aggregate_results(results)
+    let mut agg = aggregate_results(results);
+    agg.total_articles = total_articles;
+    agg.individually_failed = counters.failed_articles.load(Ordering::Relaxed);
+    agg
+}
+
+/// Atomic counters shared across the download pipeline.
+struct DownloadCounters {
+    downloaded_articles: Arc<AtomicU64>,
+    downloaded_bytes: Arc<AtomicU64>,
+    failed_articles: Arc<AtomicU64>,
 }
 
 /// Spawn progress reporter and database batch updater background tasks.
@@ -298,8 +422,7 @@ fn spawn_background_tasks(
     total_articles: usize,
     total_size_bytes: u64,
     download_start: std::time::Instant,
-    downloaded_articles: &Arc<AtomicU64>,
-    downloaded_bytes: &Arc<AtomicU64>,
+    counters: &DownloadCounters,
     ctx: &DownloadTaskContext,
 ) -> (
     tokio::task::JoinHandle<()>,
@@ -312,8 +435,9 @@ fn spawn_background_tasks(
             total_articles,
             total_size_bytes,
             download_start,
-            downloaded_articles: Arc::clone(downloaded_articles),
-            downloaded_bytes: Arc::clone(downloaded_bytes),
+            downloaded_articles: Arc::clone(&counters.downloaded_articles),
+            downloaded_bytes: Arc::clone(&counters.downloaded_bytes),
+            failed_articles: Arc::clone(&counters.failed_articles),
             event_tx: ctx.event_tx.clone(),
             db: Arc::clone(&ctx.db),
             cancel_token: ctx.cancel_token.child_token(),
@@ -330,6 +454,55 @@ fn spawn_background_tasks(
     );
 
     (progress_task, batch_tx, batch_task)
+}
+
+/// Spawn a fast-fail watcher that cancels the download if too many early articles are missing.
+///
+/// Polls the atomic counters every 200ms. After `sample_size` articles have been attempted
+/// (downloaded + failed), if the failure ratio >= `threshold`, cancels via the token.
+fn spawn_fast_fail_watcher(
+    downloaded_articles: &Arc<AtomicU64>,
+    failed_articles: &Arc<AtomicU64>,
+    threshold: f64,
+    sample_size: usize,
+    cancel_token: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    let downloaded = Arc::clone(downloaded_articles);
+    let failed = Arc::clone(failed_articles);
+    let child_token = cancel_token.child_token();
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let d = downloaded.load(Ordering::Relaxed);
+                    let f = failed.load(Ordering::Relaxed);
+                    let attempted = d + f;
+                    if attempted >= sample_size as u64 && attempted > 0 {
+                        let fail_ratio = f as f64 / attempted as f64;
+                        if fail_ratio >= threshold {
+                            tracing::warn!(
+                                failed = f,
+                                attempted = attempted,
+                                ratio = %format!("{:.1}%", fail_ratio * 100.0),
+                                "Fast-fail: too many articles missing, cancelling download"
+                            );
+                            cancel_token.cancel();
+                            return;
+                        }
+                        // Once we've passed the sample without triggering, stop watching
+                        return;
+                    }
+                }
+                _ = child_token.cancelled() => {
+                    return;
+                }
+            }
+        }
+    })
 }
 
 /// Calculate concurrency settings and split articles into pipeline-sized batches.
@@ -360,7 +533,9 @@ struct DownloadAllBatchesParams<'a> {
     batch_tx: &'a tokio::sync::mpsc::Sender<(i64, i32)>,
     downloaded_bytes: &'a Arc<AtomicU64>,
     downloaded_articles: &'a Arc<AtomicU64>,
+    failed_articles: &'a Arc<AtomicU64>,
     download_temp_dir: &'a std::path::Path,
+    output_files: &'a Arc<OutputFiles>,
     concurrency: usize,
     pipeline_depth: usize,
 }
@@ -374,7 +549,9 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
         batch_tx,
         downloaded_bytes,
         downloaded_articles,
+        failed_articles,
         download_temp_dir,
+        output_files,
         concurrency,
         pipeline_depth,
     } = params;
@@ -387,6 +564,8 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
             let download_temp_dir = download_temp_dir.to_path_buf();
             let downloaded_bytes = Arc::clone(downloaded_bytes);
             let downloaded_articles = Arc::clone(downloaded_articles);
+            let failed_articles = Arc::clone(failed_articles);
+            let output_files = Arc::clone(output_files);
 
             async move {
                 fetch_article_batch(FetchArticleBatchParams {
@@ -399,6 +578,8 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
                     download_temp_dir,
                     downloaded_bytes,
                     downloaded_articles,
+                    failed_articles,
+                    output_files,
                     pipeline_depth,
                 })
                 .await
@@ -447,6 +628,8 @@ fn aggregate_results(results: BatchResultVec) -> DownloadResults {
         success_count,
         failed_count,
         first_error,
+        total_articles: 0,      // Set by caller after aggregation
+        individually_failed: 0, // Set by caller from atomic counter
     }
 }
 
@@ -470,11 +653,18 @@ struct FetchArticleBatchParams {
     downloaded_bytes: Arc<AtomicU64>,
     /// Atomic counter for downloaded articles
     downloaded_articles: Arc<AtomicU64>,
+    /// Atomic counter for individually-failed articles (missing/expired)
+    failed_articles: Arc<AtomicU64>,
+    /// Output file handles for DirectWrite
+    output_files: Arc<OutputFiles>,
     /// Pipeline depth for NNTP commands
     pipeline_depth: usize,
 }
 
 /// Fetch a single batch of articles via pipelined NNTP commands.
+///
+/// On missing-article errors, falls back to per-article retry so that available
+/// articles in the batch are still downloaded and only truly missing ones are marked failed.
 async fn fetch_article_batch(
     params: FetchArticleBatchParams,
 ) -> std::result::Result<Vec<(i32, u64)>, (String, usize)> {
@@ -488,6 +678,8 @@ async fn fetch_article_batch(
         download_temp_dir,
         downloaded_bytes,
         downloaded_articles,
+        failed_articles,
+        output_files,
         pipeline_depth,
     } = params;
     let batch_size = article_batch.len();
@@ -522,6 +714,31 @@ async fn fetch_article_batch(
     {
         Ok(r) => r,
         Err(e) => {
+            // If the error indicates a missing article, retry each article individually
+            // so we can salvage the ones that exist
+            if is_missing_article_error(&e) {
+                tracing::debug!(
+                    download_id = id.0,
+                    batch_size = batch_size,
+                    error = %e,
+                    "Batch failed with missing article, retrying individually"
+                );
+                return retry_articles_individually(RetryArticlesParams {
+                    id,
+                    article_batch,
+                    article_provider,
+                    batch_tx,
+                    cancel_token,
+                    download_temp_dir,
+                    downloaded_bytes,
+                    downloaded_articles,
+                    failed_articles,
+                    output_files,
+                })
+                .await;
+            }
+
+            // Non-article errors (connection, timeout) fail the whole batch
             tracing::error!(download_id = id.0, batch_size = batch_size, error = %e, "Batch fetch failed");
             for article in &article_batch {
                 if let Err(e) = batch_tx
@@ -535,32 +752,223 @@ async fn fetch_article_batch(
         }
     };
 
-    // Process each article response
+    // Process each article response — decode yEnc and DirectWrite to output files
     let mut batch_results = Vec::with_capacity(batch_size);
 
     for (article, response) in article_batch.iter().zip(responses.iter()) {
-        let article_file =
-            download_temp_dir.join(format!("article_{}.dat", article.segment_number));
+        match decode_and_write(article, &response.data, &output_files, &download_temp_dir) {
+            Ok(decoded_size) => {
+                if let Err(e) = batch_tx
+                    .send((article.id, crate::db::article_status::DOWNLOADED))
+                    .await
+                {
+                    tracing::warn!(download_id = id.0, article_id = article.id, error = %e, "Failed to send status update to batch channel");
+                }
 
-        if let Err(e) = tokio::fs::write(&article_file, &response.data).await {
-            tracing::error!(download_id = id.0, article_id = article.id, error = %e, "Failed to write article file");
-            return Err((format!("Failed to write article file: {}", e), batch_size));
+                downloaded_articles.fetch_add(1, Ordering::Relaxed);
+                downloaded_bytes.fetch_add(decoded_size, Ordering::Relaxed);
+
+                batch_results.push((article.segment_number, decoded_size));
+            }
+            Err(e) => {
+                tracing::error!(download_id = id.0, article_id = article.id, error = %e, "Failed to decode/write article");
+                return Err((format!("Failed to decode/write article: {}", e), batch_size));
+            }
         }
-
-        if let Err(e) = batch_tx
-            .send((article.id, crate::db::article_status::DOWNLOADED))
-            .await
-        {
-            tracing::warn!(download_id = id.0, article_id = article.id, error = %e, "Failed to send status update to batch channel");
-        }
-
-        downloaded_articles.fetch_add(1, Ordering::Relaxed);
-        downloaded_bytes.fetch_add(article.size_bytes as u64, Ordering::Relaxed);
-
-        batch_results.push((article.segment_number, article.size_bytes as u64));
     }
 
     Ok(batch_results)
+}
+
+/// Decode a yEnc-encoded article and write the decoded data to the correct output file.
+///
+/// If `output_files` has a mapping for the article's `file_index`, uses DirectWrite
+/// (positional write via `write_all_at`). Otherwise falls back to writing the raw data
+/// as `article_{segment}.dat` (for legacy downloads without file metadata).
+///
+/// Returns the number of decoded bytes written.
+fn decode_and_write(
+    article: &crate::db::Article,
+    data: &[u8],
+    output_files: &OutputFiles,
+    download_temp_dir: &std::path::Path,
+) -> std::result::Result<u64, String> {
+    use std::os::unix::fs::FileExt;
+
+    // Try yEnc decode
+    match nntp_rs::yenc_decode(data) {
+        Ok(decoded) => {
+            let decoded_size = decoded.data.len() as u64;
+
+            if let Some((file_handle, _filename)) = output_files.files.get(&article.file_index) {
+                // Calculate byte offset (yEnc begin is 1-based)
+                let offset = decoded
+                    .part
+                    .as_ref()
+                    .map(|p| p.begin - 1) // multi-part: write at byte offset
+                    .unwrap_or(0); // single-part: write at start
+
+                // Pre-allocate file to full size on first segment write (creates sparse file)
+                if decoded.header.size > 0 {
+                    let current_len = file_handle.metadata().map(|m| m.len()).unwrap_or(0);
+                    if current_len == 0 {
+                        file_handle
+                            .set_len(decoded.header.size)
+                            .map_err(|e| format!("Failed to pre-allocate file: {}", e))?;
+                    }
+                }
+
+                // Write decoded data at correct offset (lock-free via pwrite)
+                file_handle
+                    .write_all_at(&decoded.data, offset)
+                    .map_err(|e| format!("Failed to write at offset {}: {}", offset, e))?;
+            } else {
+                // Fallback: no output file mapping — write raw decoded data as article file
+                let article_file =
+                    download_temp_dir.join(format!("article_{}.dat", article.segment_number));
+                std::fs::write(&article_file, &decoded.data)
+                    .map_err(|e| format!("Failed to write article file: {}", e))?;
+            }
+
+            Ok(decoded_size)
+        }
+        Err(_) => {
+            // yEnc decode failed — write raw data as fallback
+            let article_file =
+                download_temp_dir.join(format!("article_{}.dat", article.segment_number));
+            let raw_size = data.len() as u64;
+            std::fs::write(&article_file, data)
+                .map_err(|e| format!("Failed to write raw article file: {}", e))?;
+            Ok(raw_size)
+        }
+    }
+}
+
+/// Parameters for retrying articles individually after a batch failure.
+struct RetryArticlesParams {
+    id: DownloadId,
+    article_batch: Vec<crate::db::Article>,
+    article_provider: Arc<dyn ArticleProvider>,
+    batch_tx: tokio::sync::mpsc::Sender<(i64, i32)>,
+    cancel_token: tokio_util::sync::CancellationToken,
+    download_temp_dir: std::path::PathBuf,
+    downloaded_bytes: Arc<AtomicU64>,
+    downloaded_articles: Arc<AtomicU64>,
+    failed_articles: Arc<AtomicU64>,
+    output_files: Arc<OutputFiles>,
+}
+
+/// Retry each article in a failed batch individually (pipeline_depth=1).
+///
+/// Articles that succeed are written to disk and marked DOWNLOADED.
+/// Articles that fail are marked FAILED and counted in the `failed_articles` atomic.
+/// Returns Ok with successful results if any articles succeeded, Err if ALL failed.
+async fn retry_articles_individually(
+    params: RetryArticlesParams,
+) -> std::result::Result<Vec<(i32, u64)>, (String, usize)> {
+    let RetryArticlesParams {
+        id,
+        article_batch,
+        article_provider,
+        batch_tx,
+        cancel_token,
+        download_temp_dir,
+        downloaded_bytes,
+        downloaded_articles,
+        failed_articles,
+        output_files,
+    } = params;
+    let batch_size = article_batch.len();
+    let mut successful_results = Vec::new();
+    let mut first_error: Option<String> = None;
+
+    for article in &article_batch {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+
+        let msg_id = if article.message_id.starts_with('<') {
+            article.message_id.clone()
+        } else {
+            format!("<{}>", article.message_id)
+        };
+
+        match article_provider.fetch_articles(&[&msg_id], 1).await {
+            Ok(responses) if !responses.is_empty() => {
+                let response = &responses[0];
+
+                match decode_and_write(article, &response.data, &output_files, &download_temp_dir) {
+                    Ok(decoded_size) => {
+                        let _ = batch_tx
+                            .send((article.id, crate::db::article_status::DOWNLOADED))
+                            .await;
+                        downloaded_articles.fetch_add(1, Ordering::Relaxed);
+                        downloaded_bytes.fetch_add(decoded_size, Ordering::Relaxed);
+                        successful_results.push((article.segment_number, decoded_size));
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            download_id = id.0,
+                            article_id = article.id,
+                            error = %e,
+                            "Failed to decode/write article during individual retry"
+                        );
+                        failed_articles.fetch_add(1, Ordering::Relaxed);
+                        if first_error.is_none() {
+                            first_error = Some(format!("Failed to decode/write article: {}", e));
+                        }
+                        let _ = batch_tx
+                            .send((article.id, crate::db::article_status::FAILED))
+                            .await;
+                        continue;
+                    }
+                }
+            }
+            Ok(_) => {
+                // Empty response = article missing
+                tracing::debug!(
+                    download_id = id.0,
+                    article_id = article.id,
+                    message_id = %article.message_id,
+                    "Article missing (empty response)"
+                );
+                failed_articles.fetch_add(1, Ordering::Relaxed);
+                if first_error.is_none() {
+                    first_error = Some(format!("No such article: {}", article.message_id));
+                }
+                let _ = batch_tx
+                    .send((article.id, crate::db::article_status::FAILED))
+                    .await;
+            }
+            Err(e) => {
+                tracing::debug!(
+                    download_id = id.0,
+                    article_id = article.id,
+                    message_id = %article.message_id,
+                    error = %e,
+                    "Article fetch failed during individual retry"
+                );
+                failed_articles.fetch_add(1, Ordering::Relaxed);
+                if first_error.is_none() {
+                    first_error = Some(format!("No such article: {}", article.message_id));
+                }
+                let _ = batch_tx
+                    .send((article.id, crate::db::article_status::FAILED))
+                    .await;
+            }
+        }
+    }
+
+    if successful_results.is_empty() {
+        Err((
+            first_error.unwrap_or_else(|| "All articles in batch failed".to_string()),
+            batch_size,
+        ))
+    } else {
+        // Partial success: return the articles we got, failures are already tracked
+        // via the failed_articles atomic and batch_tx
+        Ok(successful_results)
+    }
 }
 
 /// Evaluate download results and finalize the download status.
@@ -577,29 +985,68 @@ async fn finalize_download(
         success_count,
         failed_count,
         first_error,
+        total_articles,
+        individually_failed,
     } = results;
 
-    let total = success_count + failed_count;
+    // Combine batch-level failures with individual article failures
+    let total_failed = failed_count as u64 + individually_failed;
+    let total = success_count as u64 + total_failed;
+    let max_failure_ratio = ctx.config.download.max_failure_ratio;
 
     // Handle partial or total failures
-    if failed_count > 0 {
+    if total_failed > 0 {
         tracing::warn!(
             download_id = id.0,
-            failed = failed_count,
+            batch_failed = failed_count,
+            individually_failed = individually_failed,
+            total_failed = total_failed,
             succeeded = success_count,
             total = total,
+            total_articles = total_articles,
             "Download completed with some failures"
         );
 
-        if success_count == 0 || (failed_count as f64 / total as f64) > MAX_FAILURE_RATIO {
-            let error_msg = first_error.unwrap_or_else(|| "Unknown error".to_string());
+        if success_count == 0
+            || (total > 0 && (total_failed as f64 / total as f64) > max_failure_ratio)
+        {
+            let error_msg = if let Some(ref first) = first_error {
+                format!(
+                    "{} of {} articles failed ({:.0}%). First error: {}",
+                    total_failed,
+                    total,
+                    if total > 0 {
+                        total_failed as f64 / total as f64 * 100.0
+                    } else {
+                        100.0
+                    },
+                    first,
+                )
+            } else {
+                format!(
+                    "{} of {} articles failed ({:.0}%)",
+                    total_failed,
+                    total,
+                    if total > 0 {
+                        total_failed as f64 / total as f64 * 100.0
+                    } else {
+                        100.0
+                    },
+                )
+            };
             tracing::error!(
                 download_id = id.0,
-                failed = failed_count,
+                total_failed = total_failed,
                 succeeded = success_count,
                 "Download failed - too many article failures"
             );
-            ctx.mark_failed(&error_msg).await;
+            ctx.mark_failed_with_stats(
+                &error_msg,
+                Some(success_count as u64),
+                Some(total_failed),
+                Some(total_articles as u64),
+            )
+            .await;
             ctx.remove_from_active().await;
             return;
         }
@@ -615,7 +1062,17 @@ async fn finalize_download(
         tracing::error!(download_id = id.0, error = %e, "Failed to set completion time");
     }
 
-    ctx.event_tx.send(Event::DownloadComplete { id }).ok();
+    ctx.event_tx
+        .send(Event::DownloadComplete {
+            id,
+            articles_failed: if total_failed > 0 {
+                Some(total_failed)
+            } else {
+                None
+            },
+            articles_total: Some(total_articles as u64),
+        })
+        .ok();
     ctx.remove_from_active().await;
     ctx.spawn_post_processing();
 }
@@ -653,6 +1110,7 @@ mod tests {
             download_id: 1,
             message_id: format!("<article-{id}@test>"),
             segment_number: segment,
+            file_index: 0,
             size_bytes: size,
             status: crate::db::article_status::PENDING,
             downloaded_at: None,
@@ -913,60 +1371,63 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // MAX_FAILURE_RATIO boundary tests
+    // max_failure_ratio boundary tests (uses config default of 0.5)
     // -----------------------------------------------------------------------
 
     #[test]
     fn max_failure_ratio_exactly_at_boundary_does_not_fail() {
-        // finalize_download uses strictly-greater: (failed / total) > MAX_FAILURE_RATIO
+        // finalize_download uses strictly-greater: (failed / total) > max_failure_ratio
         // At exactly 50% failures (ratio == 0.5), the download should NOT be marked failed
+        let max_ratio = crate::config::DownloadConfig::default().max_failure_ratio;
         let success_count: usize = 50;
         let failed_count: usize = 50;
         let total = success_count + failed_count;
         let ratio = failed_count as f64 / total as f64;
 
         assert!(
-            !(success_count == 0 || ratio > MAX_FAILURE_RATIO),
+            !(success_count == 0 || ratio > max_ratio),
             "exactly 50% failures should NOT trigger failure (uses > not >=)"
         );
     }
 
     #[test]
     fn max_failure_ratio_just_above_boundary_fails() {
+        let max_ratio = crate::config::DownloadConfig::default().max_failure_ratio;
         let success_count: usize = 49;
         let failed_count: usize = 51;
         let total = success_count + failed_count;
         let ratio = failed_count as f64 / total as f64;
 
         assert!(
-            success_count == 0 || ratio > MAX_FAILURE_RATIO,
+            success_count == 0 || ratio > max_ratio,
             "51% failures should trigger failure"
         );
     }
 
     #[test]
     fn max_failure_ratio_all_failures_always_fails() {
+        let max_ratio = crate::config::DownloadConfig::default().max_failure_ratio;
         let success_count: usize = 0;
         let failed_count: usize = 100;
 
         // Even without checking the ratio, success_count == 0 triggers failure
         assert!(
             success_count == 0
-                || (failed_count as f64 / (success_count + failed_count) as f64)
-                    > MAX_FAILURE_RATIO,
+                || (failed_count as f64 / (success_count + failed_count) as f64) > max_ratio,
             "zero successes should always trigger failure regardless of ratio"
         );
     }
 
     #[test]
     fn max_failure_ratio_single_failure_in_large_set_does_not_fail() {
+        let max_ratio = crate::config::DownloadConfig::default().max_failure_ratio;
         let success_count: usize = 999;
         let failed_count: usize = 1;
         let total = success_count + failed_count;
         let ratio = failed_count as f64 / total as f64;
 
         assert!(
-            !(success_count == 0 || ratio > MAX_FAILURE_RATIO),
+            !(success_count == 0 || ratio > max_ratio),
             "0.1% failure rate should not trigger failure"
         );
     }
@@ -1064,6 +1525,7 @@ mod tests {
                 download_id,
                 message_id: format!("<seg-{}@test>", i + 1),
                 segment_number: (i + 1) as i32,
+                file_index: 0,
                 size_bytes: 100,
             };
             let id = db.insert_article(&article).await.unwrap();
@@ -1231,6 +1693,7 @@ mod tests {
                 id,
                 percent,
                 speed_bps,
+                ..
             } => {
                 assert_eq!(id, dl_id);
                 assert!((percent - 0.0).abs() < f32::EPSILON);
@@ -1290,6 +1753,8 @@ mod tests {
                 success_count: 10,
                 failed_count: 0,
                 first_error: None,
+                total_articles: 10,
+                individually_failed: 0,
             },
             1000,
         )
@@ -1306,7 +1771,7 @@ mod tests {
         // Event: DownloadComplete
         let event = rx.try_recv().unwrap();
         match event {
-            crate::types::Event::DownloadComplete { id } => {
+            crate::types::Event::DownloadComplete { id, .. } => {
                 assert_eq!(id, dl_id);
             }
             other => panic!("expected DownloadComplete event, got {:?}", other),
@@ -1329,6 +1794,8 @@ mod tests {
                 success_count: 4,
                 failed_count: 6,
                 first_error: Some("batch fetch failed".to_string()),
+                total_articles: 10,
+                individually_failed: 0,
             },
             1000,
         )
@@ -1345,9 +1812,12 @@ mod tests {
         // Event: DownloadFailed
         let event = rx.try_recv().unwrap();
         match event {
-            crate::types::Event::DownloadFailed { id, error } => {
+            crate::types::Event::DownloadFailed { id, error, .. } => {
                 assert_eq!(id, dl_id);
-                assert_eq!(error, "batch fetch failed");
+                assert!(
+                    error.contains("articles failed"),
+                    "error should contain article stats, got: {error}"
+                );
             }
             other => panic!("expected DownloadFailed event, got {:?}", other),
         }
@@ -1369,6 +1839,8 @@ mod tests {
                 success_count: 50,
                 failed_count: 50,
                 first_error: Some("some error".to_string()),
+                total_articles: 100,
+                individually_failed: 0,
             },
             1000,
         )
@@ -1406,6 +1878,8 @@ mod tests {
                 success_count: 0,
                 failed_count: 5,
                 first_error: Some("total failure".to_string()),
+                total_articles: 5,
+                individually_failed: 0,
             },
             1000,
         )
@@ -1430,6 +1904,13 @@ mod tests {
     // fetch_article_batch tests
     // ===================================================================
 
+    /// Helper to create empty OutputFiles (no DirectWrite — fallback to article_N.dat)
+    fn empty_output_files() -> Arc<super::OutputFiles> {
+        Arc::new(super::OutputFiles {
+            files: std::collections::HashMap::new(),
+        })
+    }
+
     #[tokio::test]
     async fn fetch_article_batch_cancelled() {
         let provider = Arc::new(MockArticleProvider::succeeding(vec![b"data".to_vec()]));
@@ -1450,6 +1931,8 @@ mod tests {
             download_temp_dir: temp_dir.path().to_path_buf(),
             downloaded_bytes: Arc::new(AtomicU64::new(0)),
             downloaded_articles: Arc::new(AtomicU64::new(0)),
+            failed_articles: Arc::new(AtomicU64::new(0)),
+            output_files: empty_output_files(),
             pipeline_depth: 10,
         })
         .await;
@@ -1488,17 +1971,20 @@ mod tests {
             download_temp_dir: temp_dir.path().to_path_buf(),
             downloaded_bytes: downloaded_bytes.clone(),
             downloaded_articles: downloaded_articles.clone(),
+            failed_articles: Arc::new(AtomicU64::new(0)),
+            output_files: empty_output_files(),
             pipeline_depth: 10,
         })
         .await;
 
-        // Assert success
+        // Assert success — with empty OutputFiles, yEnc decode fails so raw data is written
         let batch_results = result.unwrap();
         assert_eq!(batch_results.len(), 2);
-        assert_eq!(batch_results[0], (1, 50));
-        assert_eq!(batch_results[1], (2, 60));
+        // Sizes are now the raw data sizes (yEnc decode fails, fallback writes raw bytes)
+        assert_eq!(batch_results[0].0, 1); // segment_number
+        assert_eq!(batch_results[1].0, 2); // segment_number
 
-        // Files exist on disk
+        // Files exist on disk (fallback article_N.dat since no OutputFiles mapping)
         let file1 = temp_dir.path().join("article_1.dat");
         let file2 = temp_dir.path().join("article_2.dat");
         assert!(file1.exists(), "article_1.dat should exist");
@@ -1516,10 +2002,11 @@ mod tests {
 
         // Atomics incremented
         assert_eq!(downloaded_articles.load(Ordering::Relaxed), 2);
+        let total_bytes = downloaded_bytes.load(Ordering::Relaxed);
         assert_eq!(
-            downloaded_bytes.load(Ordering::Relaxed),
-            110,
-            "50 + 60 = 110 bytes"
+            total_bytes,
+            (b"hello world".len() + b"second article".len()) as u64,
+            "bytes should reflect raw data sizes"
         );
 
         // DOWNLOADED status sent via batch_tx for both articles
@@ -1550,6 +2037,8 @@ mod tests {
             download_temp_dir: temp_dir.path().to_path_buf(),
             downloaded_bytes: Arc::new(AtomicU64::new(0)),
             downloaded_articles: Arc::new(AtomicU64::new(0)),
+            failed_articles: Arc::new(AtomicU64::new(0)),
+            output_files: empty_output_files(),
             pipeline_depth: 10,
         })
         .await;
@@ -1623,7 +2112,7 @@ mod tests {
         // Collect events — find DownloadComplete
         let mut found_complete = false;
         while let Ok(event) = rx.try_recv() {
-            if matches!(event, crate::types::Event::DownloadComplete { id } if id == dl_id) {
+            if matches!(event, crate::types::Event::DownloadComplete { id, .. } if id == dl_id) {
                 found_complete = true;
             }
         }
@@ -1631,6 +2120,312 @@ mod tests {
             found_complete,
             "DownloadComplete event should have been emitted"
         );
+    }
+
+    // ===================================================================
+    // retry_articles_individually tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn retry_articles_individually_partial_success() {
+        // Mock: 3 individual fetches — article 1 succeeds, article 2 missing, article 3 succeeds
+        let provider = Arc::new(MockArticleProvider::with_responses(vec![
+            // Article 1: success
+            Ok(vec![nntp_rs::NntpBinaryResponse {
+                code: 222,
+                message: "Body follows".into(),
+                data: b"article-1-data".to_vec(),
+            }]),
+            // Article 2: NoSuchArticle
+            Err(nntp_rs::NntpError::NoSuchArticle(
+                "<article-2@test>".to_string(),
+            )),
+            // Article 3: success
+            Ok(vec![nntp_rs::NntpBinaryResponse {
+                code: 222,
+                message: "Body follows".into(),
+                data: b"article-3-data".to_vec(),
+            }]),
+        ]));
+
+        let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel(100);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
+        let downloaded_articles = Arc::new(AtomicU64::new(0));
+        let failed_articles = Arc::new(AtomicU64::new(0));
+
+        let articles = vec![
+            make_article(1, 1, 100),
+            make_article(2, 2, 200),
+            make_article(3, 3, 300),
+        ];
+
+        let result = super::retry_articles_individually(super::RetryArticlesParams {
+            id: crate::types::DownloadId(1),
+            article_batch: articles,
+            article_provider: provider,
+            batch_tx,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            download_temp_dir: temp_dir.path().to_path_buf(),
+            downloaded_bytes: downloaded_bytes.clone(),
+            downloaded_articles: downloaded_articles.clone(),
+            failed_articles: failed_articles.clone(),
+            output_files: empty_output_files(),
+        })
+        .await;
+
+        // Should succeed with 2 articles
+        let batch_results = result.unwrap();
+        assert_eq!(batch_results.len(), 2, "2 of 3 articles should succeed");
+        // Sizes are raw data sizes (yEnc decode fails, fallback writes raw bytes)
+        assert_eq!(batch_results[0].0, 1); // segment_number
+        assert_eq!(batch_results[1].0, 3); // segment_number
+
+        // Counters — sizes are raw byte counts
+        assert_eq!(downloaded_articles.load(Ordering::Relaxed), 2);
+        let total_bytes = downloaded_bytes.load(Ordering::Relaxed);
+        assert_eq!(
+            total_bytes,
+            (b"article-1-data".len() + b"article-3-data".len()) as u64
+        );
+        assert_eq!(failed_articles.load(Ordering::Relaxed), 1);
+
+        // Status updates via batch_tx
+        let (id1, status1) = batch_rx.try_recv().unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(status1, crate::db::article_status::DOWNLOADED);
+
+        let (id2, status2) = batch_rx.try_recv().unwrap();
+        assert_eq!(id2, 2);
+        assert_eq!(status2, crate::db::article_status::FAILED);
+
+        let (id3, status3) = batch_rx.try_recv().unwrap();
+        assert_eq!(id3, 3);
+        assert_eq!(status3, crate::db::article_status::DOWNLOADED);
+    }
+
+    #[tokio::test]
+    async fn retry_articles_individually_all_missing() {
+        // Mock: all 3 articles return 430
+        let provider = Arc::new(MockArticleProvider::with_responses(vec![
+            Err(nntp_rs::NntpError::NoSuchArticle(
+                "<article-1@test>".to_string(),
+            )),
+            Err(nntp_rs::NntpError::NoSuchArticle(
+                "<article-2@test>".to_string(),
+            )),
+            Err(nntp_rs::NntpError::NoSuchArticle(
+                "<article-3@test>".to_string(),
+            )),
+        ]));
+
+        let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel(100);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let failed_articles = Arc::new(AtomicU64::new(0));
+
+        let articles = vec![
+            make_article(10, 1, 100),
+            make_article(11, 2, 200),
+            make_article(12, 3, 300),
+        ];
+
+        let result = super::retry_articles_individually(super::RetryArticlesParams {
+            id: crate::types::DownloadId(1),
+            article_batch: articles,
+            article_provider: provider,
+            batch_tx,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            download_temp_dir: temp_dir.path().to_path_buf(),
+            downloaded_bytes: Arc::new(AtomicU64::new(0)),
+            downloaded_articles: Arc::new(AtomicU64::new(0)),
+            failed_articles: failed_articles.clone(),
+            output_files: empty_output_files(),
+        })
+        .await;
+
+        // Should fail — all articles missing
+        assert!(result.is_err(), "should return Err when all articles fail");
+        let (msg, count) = result.unwrap_err();
+        assert!(
+            msg.contains("No such article"),
+            "error should mention missing article, got: {msg}"
+        );
+        assert_eq!(count, 3, "batch_size should be 3");
+
+        // All 3 articles counted as failed
+        assert_eq!(failed_articles.load(Ordering::Relaxed), 3);
+
+        // All 3 marked FAILED via batch_tx
+        for expected_id in [10, 11, 12] {
+            let (id, status) = batch_rx.try_recv().unwrap();
+            assert_eq!(id, expected_id);
+            assert_eq!(status, crate::db::article_status::FAILED);
+        }
+    }
+
+    // ===================================================================
+    // fast-fail watcher tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn fast_fail_cancels_when_mostly_missing() {
+        let downloaded_articles = Arc::new(AtomicU64::new(0));
+        let failed_articles = Arc::new(AtomicU64::new(0));
+        let cancel_token = tokio_util::sync::CancellationToken::new();
+
+        // Configure: threshold 0.8, sample size 5
+        let _watcher = super::spawn_fast_fail_watcher(
+            &downloaded_articles,
+            &failed_articles,
+            0.8,
+            5,
+            cancel_token.clone(),
+        );
+
+        // Simulate 4 failures, 1 success (80% failure = threshold)
+        failed_articles.store(4, Ordering::Relaxed);
+        downloaded_articles.store(1, Ordering::Relaxed);
+
+        // Wait for the watcher to detect it (polls every 200ms)
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        assert!(
+            cancel_token.is_cancelled(),
+            "should cancel when failure ratio >= threshold (4/5 = 0.8 >= 0.8)"
+        );
+    }
+
+    #[tokio::test]
+    async fn fast_fail_does_not_cancel_below_threshold() {
+        let downloaded_articles = Arc::new(AtomicU64::new(0));
+        let failed_articles = Arc::new(AtomicU64::new(0));
+        let cancel_token = tokio_util::sync::CancellationToken::new();
+
+        let _watcher = super::spawn_fast_fail_watcher(
+            &downloaded_articles,
+            &failed_articles,
+            0.8,
+            5,
+            cancel_token.clone(),
+        );
+
+        // 3 failures, 2 successes (60% < 80% threshold)
+        failed_articles.store(3, Ordering::Relaxed);
+        downloaded_articles.store(2, Ordering::Relaxed);
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        assert!(
+            !cancel_token.is_cancelled(),
+            "should NOT cancel when failure ratio < threshold (3/5 = 0.6 < 0.8)"
+        );
+    }
+
+    // ===================================================================
+    // configurable failure ratio tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn configurable_failure_ratio_from_config() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        // Set a low failure ratio threshold
+        let mut config = (*ctx.config).clone();
+        config.download.max_failure_ratio = 0.1; // 10% threshold
+        ctx.config = std::sync::Arc::new(config);
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        let db = ctx.db.clone();
+
+        // 85 successes, 15 failures = 15% > 10% threshold
+        super::finalize_download(
+            ctx,
+            super::DownloadResults {
+                success_count: 85,
+                failed_count: 15,
+                first_error: Some("missing article".to_string()),
+                total_articles: 100,
+                individually_failed: 0,
+            },
+            10000,
+        )
+        .await;
+
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Failed.to_i32(),
+            "15% failure rate should trigger failure with max_failure_ratio=0.1"
+        );
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            crate::types::Event::DownloadFailed { id, error, .. } => {
+                assert_eq!(id, dl_id);
+                assert!(
+                    error.contains("articles failed"),
+                    "error should contain article stats, got: {error}"
+                );
+            }
+            other => panic!("expected DownloadFailed event, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn partial_success_emits_complete_with_stats() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        let db = ctx.db.clone();
+
+        // 90 successes, 10 failures = 10% (at default 50% threshold, this is fine)
+        super::finalize_download(
+            ctx,
+            super::DownloadResults {
+                success_count: 90,
+                failed_count: 5,
+                first_error: Some("missing".to_string()),
+                total_articles: 100,
+                individually_failed: 5, // 5 batch + 5 individual = 10 total
+            },
+            10000,
+        )
+        .await;
+
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Complete.to_i32(),
+            "10% failure rate should still complete with default 50% threshold"
+        );
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            crate::types::Event::DownloadComplete {
+                id,
+                articles_failed,
+                articles_total,
+            } => {
+                assert_eq!(id, dl_id);
+                assert_eq!(
+                    articles_failed,
+                    Some(10),
+                    "should report 10 total failed articles"
+                );
+                assert_eq!(
+                    articles_total,
+                    Some(100),
+                    "should report 100 total articles"
+                );
+            }
+            other => panic!("expected DownloadComplete event, got {:?}", other),
+        }
     }
 
     #[tokio::test]
@@ -1650,7 +2445,7 @@ mod tests {
         // DownloadComplete should be emitted immediately
         let mut found_complete = false;
         while let Ok(event) = rx.try_recv() {
-            if matches!(event, crate::types::Event::DownloadComplete { id } if id == dl_id) {
+            if matches!(event, crate::types::Event::DownloadComplete { id, .. } if id == dl_id) {
                 found_complete = true;
             }
         }

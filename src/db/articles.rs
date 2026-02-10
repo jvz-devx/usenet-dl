@@ -12,13 +12,14 @@ impl Database {
         let result = sqlx::query(
             r#"
             INSERT INTO download_articles (
-                download_id, message_id, segment_number, size_bytes, status
-            ) VALUES (?, ?, ?, ?, 0)
+                download_id, message_id, segment_number, file_index, size_bytes, status
+            ) VALUES (?, ?, ?, ?, ?, 0)
             "#,
         )
         .bind(article.download_id)
         .bind(&article.message_id)
         .bind(article.segment_number)
+        .bind(article.file_index)
         .bind(article.size_bytes)
         .execute(&self.pool)
         .await
@@ -42,18 +43,19 @@ impl Database {
         }
 
         // SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999.
-        // Each article uses 5 bind variables, so max 199 articles per batch.
-        const MAX_ARTICLES_PER_BATCH: usize = 199;
+        // Each article uses 6 bind variables, so max 166 articles per batch.
+        const MAX_ARTICLES_PER_BATCH: usize = 166;
 
         for chunk in articles.chunks(MAX_ARTICLES_PER_BATCH) {
             let mut query_builder = sqlx::QueryBuilder::new(
-                "INSERT INTO download_articles (download_id, message_id, segment_number, size_bytes, status) ",
+                "INSERT INTO download_articles (download_id, message_id, segment_number, file_index, size_bytes, status) ",
             );
 
             query_builder.push_values(chunk, |mut b, article| {
                 b.push_bind(article.download_id)
                     .push_bind(&article.message_id)
                     .push_bind(article.segment_number)
+                    .push_bind(article.file_index)
                     .push_bind(article.size_bytes)
                     .push_bind(0); // status = PENDING
             });
@@ -226,10 +228,10 @@ impl Database {
     pub async fn get_articles(&self, download_id: DownloadId) -> Result<Vec<Article>> {
         let rows = sqlx::query_as::<_, Article>(
             r#"
-            SELECT id, download_id, message_id, segment_number, size_bytes, status, downloaded_at
+            SELECT id, download_id, message_id, segment_number, file_index, size_bytes, status, downloaded_at
             FROM download_articles
             WHERE download_id = ?
-            ORDER BY segment_number ASC
+            ORDER BY file_index ASC, segment_number ASC
             "#,
         )
         .bind(download_id)
@@ -249,10 +251,10 @@ impl Database {
     pub async fn get_pending_articles(&self, download_id: DownloadId) -> Result<Vec<Article>> {
         let rows = sqlx::query_as::<_, Article>(
             r#"
-            SELECT id, download_id, message_id, segment_number, size_bytes, status, downloaded_at
+            SELECT id, download_id, message_id, segment_number, file_index, size_bytes, status, downloaded_at
             FROM download_articles
             WHERE download_id = ? AND status = 0
-            ORDER BY segment_number ASC
+            ORDER BY file_index ASC, segment_number ASC
             "#,
         )
         .bind(download_id)
@@ -276,7 +278,7 @@ impl Database {
     ) -> Result<Option<Article>> {
         let row = sqlx::query_as::<_, Article>(
             r#"
-            SELECT id, download_id, message_id, segment_number, size_bytes, status, downloaded_at
+            SELECT id, download_id, message_id, segment_number, file_index, size_bytes, status, downloaded_at
             FROM download_articles
             WHERE download_id = ? AND message_id = ?
             "#,
@@ -349,5 +351,65 @@ impl Database {
             })?;
 
         Ok(())
+    }
+
+    /// Insert multiple download files in a batch
+    pub async fn insert_files_batch(&self, files: &[super::NewDownloadFile]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+
+        // Each file uses 5 bind variables, max 199 per batch
+        const MAX_FILES_PER_BATCH: usize = 199;
+
+        for chunk in files.chunks(MAX_FILES_PER_BATCH) {
+            let mut query_builder = sqlx::QueryBuilder::new(
+                "INSERT INTO download_files (download_id, file_index, filename, subject, total_segments) ",
+            );
+
+            query_builder.push_values(chunk, |mut b, file| {
+                b.push_bind(file.download_id)
+                    .push_bind(file.file_index)
+                    .push_bind(&file.filename)
+                    .push_bind(&file.subject)
+                    .push_bind(file.total_segments);
+            });
+
+            let query = query_builder.build();
+            query.execute(&self.pool).await.map_err(|e| {
+                Error::Database(DatabaseError::QueryFailed(format!(
+                    "Failed to insert files batch: {}",
+                    e
+                )))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Get all download files for a download
+    pub async fn get_download_files(
+        &self,
+        download_id: DownloadId,
+    ) -> Result<Vec<super::DownloadFile>> {
+        let rows = sqlx::query_as::<_, super::DownloadFile>(
+            r#"
+            SELECT id, download_id, file_index, filename, subject, total_segments
+            FROM download_files
+            WHERE download_id = ?
+            ORDER BY file_index ASC
+            "#,
+        )
+        .bind(download_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to get download files: {}",
+                e
+            )))
+        })?;
+
+        Ok(rows)
     }
 }

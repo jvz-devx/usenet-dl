@@ -169,6 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             default_post_process: PostProcess::UnpackAndCleanup,
             delete_samples: true,
             file_collision: FileCollisionAction::Rename,
+            ..Default::default()
         },
 
         // External tools and passwords

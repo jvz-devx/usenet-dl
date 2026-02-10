@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get NZB path
     let nzb_path = std::env::var("TEST_NZB_PATH").unwrap_or_else(|_| {
-        "/home/jens/Documents/source/usenet-dl/Fallout.S02E06.The.Other.Player.2160p.AMZN.WEB-DL.DDP5.1.Atmos.DV.HDR10H.265-Kitsune.nzb".to_string()
+        "/home/jens/Documents/source/usenet-dl/Killers.of.the.Flower.Moon.2023.2160p.ATVP.WEB-DL.DUAL.DDP5.1.Atmos.DoVi.HDR.H.265-TURG.nzb".to_string()
     });
 
     // Load config from env
@@ -90,57 +90,206 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_speed = Arc::new(AtomicU64::new(0));
     let max_speed_clone = max_speed.clone();
 
+    let min_speed = Arc::new(AtomicU64::new(u64::MAX));
+    let min_speed_clone = min_speed.clone();
+    let event_count = Arc::new(AtomicU64::new(0));
+    let event_count_clone = event_count.clone();
+
     let mut events = downloader.subscribe();
     let progress_task = tokio::spawn(async move {
         let mut last_percent = -1.0_f32;
+        let mut speed_samples: Vec<u64> = Vec::new();
+        let mut stall_count: u64 = 0;
+        let mut last_speed: u64 = 0;
+        let pipeline_start = Instant::now();
+        let mut download_elapsed = std::time::Duration::ZERO;
+        let mut stage_start = Instant::now();
+        let mut printed_speed_stats = false;
+
         loop {
             match events.recv().await {
                 Ok(Event::Downloading {
                     id: _,
                     percent,
                     speed_bps,
+                    failed_articles: failed,
+                    health_percent: health,
+                    ..
                 }) => {
-                    // Track max speed
+                    event_count_clone.fetch_add(1, Ordering::Relaxed);
                     max_speed_clone.fetch_max(speed_bps, Ordering::SeqCst);
+                    if speed_bps > 0 {
+                        min_speed_clone.fetch_min(speed_bps, Ordering::SeqCst);
+                        speed_samples.push(speed_bps);
+                    }
+
+                    // Detect stalls (speed dropped >80% from last)
+                    if last_speed > 0 && speed_bps < last_speed / 5 {
+                        stall_count += 1;
+                        let speed_mbps = speed_bps as f64 / 1_000_000.0;
+                        eprintln!(
+                            "  [STALL #{stall_count}] Speed dropped to {speed_mbps:.2} MB/s at {percent:.1}%"
+                        );
+                    }
+                    last_speed = speed_bps;
 
                     if (percent - last_percent).abs() >= 5.0 || last_percent < 0.0 {
                         let speed_mbps = speed_bps as f64 / 1_000_000.0;
+                        let secs = pipeline_start.elapsed().as_secs();
+                        let health_str = match (health, failed) {
+                            (Some(h), Some(f)) => format!("  health={h:.0}% ({f} failed)"),
+                            _ => String::new(),
+                        };
                         println!(
-                            "  Progress: {:5.1}%  Speed: {:7.2} MB/s",
+                            "  [{secs:>4}s] {:5.1}%  {:7.2} MB/s{health_str}",
                             percent, speed_mbps
                         );
                         last_percent = percent;
                     }
-
-                    // Consider 99%+ as complete for benchmark purposes
-                    if percent >= 99.0 {
-                        println!("  Download reached 99%+, considering complete for benchmark");
-                        done_clone.notify_one();
-                        break;
+                }
+                Ok(Event::Queued { id, name }) => {
+                    println!("  [QUEUED] #{id}: {name}");
+                }
+                Ok(Event::DownloadComplete {
+                    id,
+                    articles_failed: dl_failed,
+                    articles_total: dl_total,
+                }) => {
+                    download_elapsed = pipeline_start.elapsed();
+                    let fail_info = match (dl_failed, dl_total) {
+                        (Some(f), Some(t)) if f > 0 => format!(" ({f} of {t} articles failed)"),
+                        _ => String::new(),
+                    };
+                    println!(
+                        "\n  [DOWNLOAD COMPLETE] #{id} in {:.1}s{fail_info}",
+                        download_elapsed.as_secs_f64()
+                    );
+                    // Print speed stats once
+                    if !printed_speed_stats && !speed_samples.is_empty() {
+                        printed_speed_stats = true;
+                        let mut sorted = speed_samples.clone();
+                        sorted.sort();
+                        let p50 = sorted[sorted.len() / 2] as f64 / 1_000_000.0;
+                        let p95 = sorted[sorted.len() * 95 / 100] as f64 / 1_000_000.0;
+                        let p5 = sorted[sorted.len() * 5 / 100] as f64 / 1_000_000.0;
+                        println!(
+                            "  Speed percentiles: P5={p5:.1} P50={p50:.1} P95={p95:.1} MB/s  Stalls: {stall_count}"
+                        );
                     }
+                    println!("\n  --- Post-Processing Pipeline ---");
+                    stage_start = Instant::now();
                 }
-                Ok(Event::DownloadComplete { id: _ }) => {
-                    println!("  Download complete (starting post-processing)");
+                Ok(Event::DownloadFailed {
+                    id,
+                    error,
+                    articles_succeeded: a_ok,
+                    articles_failed: a_fail,
+                    articles_total: a_total,
+                }) => {
+                    let stats = match (a_ok, a_fail, a_total) {
+                        (Some(ok), Some(fail), Some(total)) => {
+                            format!(" ({ok} ok, {fail} failed of {total})")
+                        }
+                        _ => String::new(),
+                    };
+                    eprintln!("  [DOWNLOAD FAILED] #{id}: {error}{stats}");
                     done_clone.notify_one();
                     break;
                 }
-                Ok(Event::Complete { id: _, path }) => {
-                    println!("  Fully complete! Path: {:?}", path);
+                Ok(Event::Verifying { id }) => {
+                    println!("  [VERIFY] #{id} Checking PAR2...");
+                    stage_start = Instant::now();
+                }
+                Ok(Event::VerifyComplete { id, damaged }) => {
+                    let dt = stage_start.elapsed().as_secs_f64();
+                    println!("  [VERIFY DONE] #{id} damaged={damaged} ({dt:.1}s)");
+                }
+                Ok(Event::Repairing {
+                    id,
+                    blocks_needed,
+                    blocks_available,
+                }) => {
+                    println!("  [REPAIR] #{id} need={blocks_needed} avail={blocks_available}");
+                    stage_start = Instant::now();
+                }
+                Ok(Event::RepairComplete { id, success }) => {
+                    let dt = stage_start.elapsed().as_secs_f64();
+                    println!("  [REPAIR DONE] #{id} success={success} ({dt:.1}s)");
+                }
+                Ok(Event::RepairSkipped { id, reason }) => {
+                    println!("  [REPAIR SKIP] #{id} {reason}");
+                }
+                Ok(Event::Extracting {
+                    id,
+                    archive,
+                    percent,
+                }) => {
+                    if percent < 1.0 {
+                        stage_start = Instant::now();
+                    }
+                    let dt = stage_start.elapsed().as_secs_f64();
+                    println!("  [EXTRACT] #{id} {archive} {percent:.1}% ({dt:.1}s)");
+                }
+                Ok(Event::ExtractComplete { id }) => {
+                    let dt = stage_start.elapsed().as_secs_f64();
+                    println!("  [EXTRACT DONE] #{id} ({dt:.1}s)");
+                }
+                Ok(Event::Moving { id, destination }) => {
+                    println!("  [MOVE] #{id} -> {destination:?}");
+                    stage_start = Instant::now();
+                }
+                Ok(Event::Cleaning { id }) => {
+                    println!("  [CLEAN] #{id}");
+                }
+                Ok(Event::Complete { id, path }) => {
+                    let total = pipeline_start.elapsed().as_secs_f64();
+                    let pp = total - download_elapsed.as_secs_f64();
+                    println!("\n  [COMPLETE] #{id} -> {path:?}");
+                    println!(
+                        "  Total pipeline: {total:.1}s (download: {:.1}s + post-process: {pp:.1}s)",
+                        download_elapsed.as_secs_f64()
+                    );
                     done_clone.notify_one();
                     break;
                 }
-                Ok(Event::Failed { id: _, error, .. }) => {
-                    eprintln!("  Failed: {}", error);
+                Ok(Event::Failed {
+                    id,
+                    stage,
+                    error,
+                    files_kept,
+                }) => {
+                    let total = pipeline_start.elapsed().as_secs_f64();
+                    eprintln!(
+                        "  [FAILED] #{id} at {stage:?}: {error} (files kept: {files_kept}) after {total:.1}s"
+                    );
                     done_clone.notify_one();
                     break;
                 }
-                Ok(Event::Verifying { id: _, .. }) => {
-                    println!("  Verifying PAR2...");
+                Ok(Event::DuplicateDetected {
+                    id,
+                    name,
+                    method,
+                    existing_name,
+                }) => {
+                    eprintln!(
+                        "  [DUPLICATE] #{id} '{name}' matches '{existing_name}' via {method:?}"
+                    );
                 }
-                Ok(Event::Extracting { id: _, .. }) => {
-                    println!("  Extracting...");
+                Ok(Event::SpeedLimitChanged { limit_bps }) => {
+                    println!("  [SPEED LIMIT] {:?}", limit_bps);
                 }
-                Ok(_) => {}
+                Ok(Event::QueuePaused) => println!("  [PAUSED]"),
+                Ok(Event::QueueResumed) => println!("  [RESUMED]"),
+                Ok(Event::Shutdown) => {
+                    println!("  [SHUTDOWN]");
+                    break;
+                }
+                Ok(other) => {
+                    println!("  [EVENT] {other:?}");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("  [WARNING] Event receiver lagged, missed {n} events!");
+                }
                 Err(_) => break,
             }
         }
@@ -153,7 +302,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wait for completion with timeout
     tokio::select! {
         _ = done.notified() => {}
-        _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
+        _ = tokio::time::sleep(std::time::Duration::from_secs(1800)) => {
             eprintln!("Timeout!");
         }
     }
@@ -178,17 +327,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let peak_speed = max_speed.load(Ordering::SeqCst) as f64 / 1_000_000.0;
+    let min_spd = min_speed.load(Ordering::SeqCst);
+    let min_speed_val = if min_spd == u64::MAX {
+        0.0
+    } else {
+        min_spd as f64 / 1_000_000.0
+    };
+    let events_total = event_count.load(Ordering::Relaxed);
 
     println!("\n═══════════════════════════════════════════════════════════");
     println!("  Results");
     println!("═══════════════════════════════════════════════════════════");
-    println!("  Time:       {:.2} seconds", secs);
+    println!("  Time:        {:.2} seconds", secs);
     println!(
-        "  On disk:    {:.2} MB",
-        total_disk_bytes as f64 / 1_000_000.0
+        "  On disk:     {:.2} MB ({:.2} GB)",
+        total_disk_bytes as f64 / 1_000_000.0,
+        total_disk_bytes as f64 / 1_000_000_000.0
     );
-    println!("  Avg Speed:  {:.2} MB/s", speed_mbps);
-    println!("  Peak Speed: {:.2} MB/s", peak_speed);
+    println!("  Avg Speed:   {:.2} MB/s", speed_mbps);
+    println!("  Peak Speed:  {:.2} MB/s", peak_speed);
+    println!("  Min Speed:   {:.2} MB/s", min_speed_val);
+    println!("  Events:      {}", events_total);
     println!("═══════════════════════════════════════════════════════════");
 
     downloader.shutdown().await.ok();

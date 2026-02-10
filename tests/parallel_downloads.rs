@@ -217,6 +217,7 @@ async fn test_parallel_article_download() {
                     id,
                     percent,
                     speed_bps,
+                    ..
                 }) if id == download_id => {
                     progress_events.push((percent, speed_bps));
                 }
@@ -658,6 +659,7 @@ async fn test_stress_large_nzb_download() {
                     id,
                     percent,
                     speed_bps,
+                    ..
                 }) if id == download_id => {
                     progress_events.push((percent, speed_bps));
                     max_speed_bps = max_speed_bps.max(speed_bps);

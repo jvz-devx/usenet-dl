@@ -38,6 +38,26 @@ pub struct DownloadConfig {
     /// File collision handling
     #[serde(default)]
     pub file_collision: FileCollisionAction,
+
+    /// Maximum article failure ratio before considering a download failed (default: 0.5 = 50%)
+    ///
+    /// When the ratio of failed articles to total articles exceeds this threshold,
+    /// the download is marked as failed. Otherwise, post-processing (PAR2 repair)
+    /// is attempted.
+    #[serde(default = "default_max_failure_ratio")]
+    pub max_failure_ratio: f64,
+
+    /// Fast-fail threshold — abort early if this fraction of a sample is missing (default: 0.8 = 80%)
+    ///
+    /// After `fast_fail_sample_size` articles have been attempted, if the failure ratio
+    /// meets or exceeds this threshold, the download is cancelled immediately to avoid
+    /// wasting bandwidth on mostly-expired NZBs.
+    #[serde(default = "default_fast_fail_threshold")]
+    pub fast_fail_threshold: f64,
+
+    /// Number of articles to sample before evaluating the fast-fail heuristic (default: 10)
+    #[serde(default = "default_fast_fail_sample_size")]
+    pub fast_fail_sample_size: usize,
 }
 
 impl Default for DownloadConfig {
@@ -50,6 +70,9 @@ impl Default for DownloadConfig {
             default_post_process: PostProcess::default(),
             delete_samples: true,
             file_collision: FileCollisionAction::default(),
+            max_failure_ratio: default_max_failure_ratio(),
+            fast_fail_threshold: default_fast_fail_threshold(),
+            fast_fail_sample_size: default_fast_fail_sample_size(),
         }
     }
 }
@@ -861,6 +884,18 @@ fn default_pipeline_depth() -> usize {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_max_failure_ratio() -> f64 {
+    0.5
+}
+
+fn default_fast_fail_threshold() -> f64 {
+    0.8
+}
+
+fn default_fast_fail_sample_size() -> usize {
+    10
 }
 
 fn default_max_attempts() -> u32 {

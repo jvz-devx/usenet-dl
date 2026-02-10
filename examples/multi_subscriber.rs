@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     id,
                     percent,
                     speed_bps,
+                    ..
                 } => {
                     // Update progress bar
                     println!(
