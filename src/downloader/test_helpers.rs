@@ -15,8 +15,14 @@ pub(crate) async fn create_test_downloader() -> (UsenetDownloader, tempfile::Tem
 
     let mut config = Config::default();
     config.persistence.database_path = db_path;
+    config.download.download_dir = temp_dir.path().join("downloads");
+    config.download.temp_dir = temp_dir.path().join("temp");
     config.servers = vec![]; // No servers for testing
     config.download.max_concurrent_downloads = 3;
+
+    // Create working directories inside temp dir
+    std::fs::create_dir_all(&config.download.download_dir).unwrap();
+    std::fs::create_dir_all(&config.download.temp_dir).unwrap();
 
     // Initialize database
     let db = Database::new(&config.persistence.database_path)

@@ -151,6 +151,32 @@ impl UsenetDownloader {
     /// - Creates NNTP connection pools for each configured server
     /// - Sets up the event broadcast channel
     pub async fn new(config: Config) -> Result<Self> {
+        // Ensure download and temp directories exist
+        tokio::fs::create_dir_all(&config.download.download_dir)
+            .await
+            .map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to create download directory '{}': {}",
+                        config.download.download_dir.display(),
+                        e
+                    ),
+                ))
+            })?;
+        tokio::fs::create_dir_all(&config.download.temp_dir)
+            .await
+            .map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to create temp directory '{}': {}",
+                        config.download.temp_dir.display(),
+                        e
+                    ),
+                ))
+            })?;
+
         // Initialize database
         let db = Database::new(&config.persistence.database_path).await?;
 
