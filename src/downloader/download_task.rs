@@ -10,6 +10,64 @@ use super::UsenetDownloader;
 /// Maximum article failure ratio before considering a download failed (50%)
 const MAX_FAILURE_RATIO: f64 = 0.5;
 
+/// Abstraction over NNTP article fetching, enabling testability.
+#[async_trait::async_trait]
+pub(crate) trait ArticleProvider: Send + Sync {
+    async fn fetch_articles(
+        &self,
+        message_ids: &[&str],
+        pipeline_depth: usize,
+    ) -> nntp_rs::Result<Vec<nntp_rs::NntpBinaryResponse>>;
+}
+
+/// Production [`ArticleProvider`] that iterates NNTP connection pools.
+pub(crate) struct NntpArticleProvider {
+    pools: Arc<Vec<nntp_rs::NntpPool>>,
+}
+
+impl NntpArticleProvider {
+    pub(crate) fn new(pools: Arc<Vec<nntp_rs::NntpPool>>) -> Self {
+        Self { pools }
+    }
+}
+
+#[async_trait::async_trait]
+impl ArticleProvider for NntpArticleProvider {
+    async fn fetch_articles(
+        &self,
+        message_ids: &[&str],
+        pipeline_depth: usize,
+    ) -> nntp_rs::Result<Vec<nntp_rs::NntpBinaryResponse>> {
+        if self.pools.is_empty() {
+            return Err(nntp_rs::NntpError::Other(
+                "No NNTP pools configured".to_string(),
+            ));
+        }
+
+        let mut last_error = None;
+        for (pool_idx, pool) in self.pools.iter().enumerate() {
+            match pool.get().await {
+                Ok(mut conn) => {
+                    return conn
+                        .fetch_articles_pipelined(message_ids, pipeline_depth)
+                        .await;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        pool_index = pool_idx,
+                        error = %e,
+                        "Failed to get connection from NNTP pool, trying next server"
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| nntp_rs::NntpError::Other("All NNTP servers failed".to_string())))
+    }
+}
+
 /// Result type for a collection of downloaded article batches.
 /// Each batch either succeeds with a list of (segment_number, size_bytes) pairs,
 /// or fails with an error message and the number of articles in the batch.
@@ -20,7 +78,7 @@ pub(crate) struct DownloadTaskContext {
     pub(crate) id: DownloadId,
     pub(crate) db: Arc<crate::db::Database>,
     pub(crate) event_tx: tokio::sync::broadcast::Sender<Event>,
-    pub(crate) nntp_pools: Arc<Vec<nntp_rs::NntpPool>>,
+    pub(crate) article_provider: Arc<dyn ArticleProvider>,
     pub(crate) config: Arc<crate::config::Config>,
     pub(crate) active_downloads: Arc<
         tokio::sync::Mutex<
@@ -322,7 +380,7 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
     } = params;
     stream::iter(article_batches)
         .map(|article_batch| {
-            let pool = Arc::clone(&ctx.nntp_pools);
+            let article_provider = Arc::clone(&ctx.article_provider);
             let batch_tx = batch_tx.clone();
             let speed_limiter = ctx.speed_limiter.clone();
             let cancel_token = ctx.cancel_token.clone();
@@ -334,7 +392,7 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
                 fetch_article_batch(FetchArticleBatchParams {
                     id,
                     article_batch,
-                    nntp_pools: pool,
+                    article_provider,
                     batch_tx,
                     speed_limiter,
                     cancel_token,
@@ -398,8 +456,8 @@ struct FetchArticleBatchParams {
     id: DownloadId,
     /// Articles to fetch in this batch
     article_batch: Vec<crate::db::Article>,
-    /// NNTP connection pools
-    nntp_pools: Arc<Vec<nntp_rs::NntpPool>>,
+    /// Article provider for fetching articles from NNTP servers
+    article_provider: Arc<dyn ArticleProvider>,
     /// Channel for sending article status updates
     batch_tx: tokio::sync::mpsc::Sender<(i64, i32)>,
     /// Speed limiter
@@ -423,7 +481,7 @@ async fn fetch_article_batch(
     let FetchArticleBatchParams {
         id,
         article_batch,
-        nntp_pools,
+        article_provider,
         batch_tx,
         speed_limiter,
         cancel_token,
@@ -438,40 +496,6 @@ async fn fetch_article_batch(
     if cancel_token.is_cancelled() {
         return Err(("Download cancelled".to_string(), batch_size));
     }
-
-    // Try each NNTP pool in order (primary first, then backup/fill servers)
-    if nntp_pools.is_empty() {
-        tracing::error!(download_id = id.0, "No NNTP pools configured");
-        return Err(("No NNTP pools configured".to_string(), batch_size));
-    }
-
-    let mut conn = None;
-    let mut last_error = String::new();
-    for (pool_idx, pool) in nntp_pools.iter().enumerate() {
-        match pool.get().await {
-            Ok(c) => {
-                conn = Some(c);
-                break;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    download_id = id.0,
-                    pool_index = pool_idx,
-                    error = %e,
-                    "Failed to get connection from NNTP pool, trying next server"
-                );
-                last_error = format!("Failed to get NNTP connection: {}", e);
-            }
-        }
-    }
-
-    let mut conn = match conn {
-        Some(c) => c,
-        None => {
-            tracing::error!(download_id = id.0, "All NNTP servers failed");
-            return Err((last_error, batch_size));
-        }
-    };
 
     // Prepare message IDs for pipelined fetch
     let message_ids: Vec<std::borrow::Cow<'_, str>> = article_batch
@@ -491,9 +515,9 @@ async fn fetch_article_batch(
     let total_batch_size: u64 = article_batch.iter().map(|a| a.size_bytes as u64).sum();
     speed_limiter.acquire(total_batch_size).await;
 
-    // Fetch articles using pipelined API
-    let responses = match conn
-        .fetch_articles_pipelined(&message_id_refs, pipeline_depth)
+    // Fetch articles via the article provider
+    let responses = match article_provider
+        .fetch_articles(&message_id_refs, pipeline_depth)
         .await
     {
         Ok(r) => r,
@@ -944,6 +968,704 @@ mod tests {
         assert!(
             !(success_count == 0 || ratio > MAX_FAILURE_RATIO),
             "0.1% failure rate should not trigger failure"
+        );
+    }
+
+    // ===================================================================
+    // MockArticleProvider and test context helpers
+    // ===================================================================
+
+    use std::collections::VecDeque;
+
+    struct MockArticleProvider {
+        responses: std::sync::Mutex<VecDeque<nntp_rs::Result<Vec<nntp_rs::NntpBinaryResponse>>>>,
+    }
+
+    impl MockArticleProvider {
+        /// Returns Ok with NntpBinaryResponse for each data Vec
+        fn succeeding(data: Vec<Vec<u8>>) -> Self {
+            let responses: Vec<nntp_rs::NntpBinaryResponse> = data
+                .into_iter()
+                .map(|d| nntp_rs::NntpBinaryResponse {
+                    code: 222,
+                    message: "Body follows".into(),
+                    data: d,
+                })
+                .collect();
+            Self {
+                responses: std::sync::Mutex::new(VecDeque::from(vec![Ok(responses)])),
+            }
+        }
+
+        /// Returns Err for every call
+        fn failing(err_msg: &str) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(VecDeque::from(vec![Err(
+                    nntp_rs::NntpError::Other(err_msg.to_string()),
+                )])),
+            }
+        }
+
+        /// Custom sequence of responses
+        fn with_responses(
+            responses: Vec<nntp_rs::Result<Vec<nntp_rs::NntpBinaryResponse>>>,
+        ) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(VecDeque::from(responses)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::ArticleProvider for MockArticleProvider {
+        async fn fetch_articles(
+            &self,
+            _message_ids: &[&str],
+            _pipeline_depth: usize,
+        ) -> nntp_rs::Result<Vec<nntp_rs::NntpBinaryResponse>> {
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(nntp_rs::NntpError::Other(
+                        "No more mock responses".to_string(),
+                    ))
+                })
+        }
+    }
+
+    /// Helper: create a NewDownload for test insertion.
+    fn make_new_download(temp_dir: &tempfile::TempDir) -> crate::db::NewDownload {
+        crate::db::NewDownload {
+            name: "test".to_string(),
+            nzb_path: "/tmp/test.nzb".to_string(),
+            nzb_meta_name: None,
+            nzb_hash: None,
+            job_name: None,
+            category: None,
+            destination: temp_dir.path().join("dest").to_string_lossy().to_string(),
+            post_process: 0,
+            priority: 0,
+            status: crate::types::Status::Queued.to_i32(),
+            size_bytes: 1000,
+        }
+    }
+
+    /// Helper: insert N pending articles for a download.
+    async fn insert_test_articles(
+        db: &crate::db::Database,
+        download_id: crate::types::DownloadId,
+        count: usize,
+    ) -> Vec<i64> {
+        let mut article_ids = Vec::with_capacity(count);
+        for i in 0..count {
+            let article = crate::db::NewArticle {
+                download_id,
+                message_id: format!("<seg-{}@test>", i + 1),
+                segment_number: (i + 1) as i32,
+                size_bytes: 100,
+            };
+            let id = db.insert_article(&article).await.unwrap();
+            article_ids.push(id);
+        }
+        article_ids
+    }
+
+    /// Build a full DownloadTaskContext backed by a real SQLite DB and the given mock provider.
+    async fn make_test_context(
+        provider: Arc<dyn super::ArticleProvider>,
+    ) -> (
+        super::DownloadTaskContext,
+        tempfile::TempDir,
+        tokio::sync::broadcast::Receiver<crate::types::Event>,
+    ) {
+        use crate::parity::NoOpParityHandler;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        let mut config = Config::default();
+        config.persistence.database_path = db_path;
+        config.servers = vec![];
+        config.download.max_concurrent_downloads = 3;
+        config.download.temp_dir = temp_dir.path().join("tmp");
+
+        // Initialize database
+        let db = crate::db::Database::new(&config.persistence.database_path)
+            .await
+            .unwrap();
+
+        // Broadcast channel
+        let (event_tx, event_rx) = tokio::sync::broadcast::channel(1000);
+
+        // Speed limiter (unlimited)
+        let speed_limiter =
+            crate::speed_limiter::SpeedLimiter::new(config.download.speed_limit_bps);
+
+        let config_arc = std::sync::Arc::new(config.clone());
+        let db_arc = std::sync::Arc::new(db);
+
+        // Active downloads map
+        let active_downloads =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+        // Queue state
+        let queue =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BinaryHeap::new()));
+        let concurrent_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            config.download.max_concurrent_downloads,
+        ));
+        let queue_state = super::super::QueueState {
+            queue,
+            concurrent_limit,
+            active_downloads: active_downloads.clone(),
+            accepting_new: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+
+        // Runtime config
+        let categories = std::sync::Arc::new(tokio::sync::RwLock::new(
+            config.persistence.categories.clone(),
+        ));
+        let schedule_rules = std::sync::Arc::new(tokio::sync::RwLock::new(vec![]));
+        let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+        let runtime_config = super::super::RuntimeConfig {
+            categories,
+            schedule_rules,
+            next_schedule_rule_id,
+        };
+
+        // Parity + post-processor
+        let parity_handler: std::sync::Arc<dyn crate::parity::ParityHandler> =
+            std::sync::Arc::new(NoOpParityHandler);
+        let post_processor = std::sync::Arc::new(crate::post_processing::PostProcessor::new(
+            event_tx.clone(),
+            config_arc.clone(),
+            parity_handler.clone(),
+            db_arc.clone(),
+        ));
+        let processing = super::super::ProcessingPipeline {
+            post_processor,
+            parity_handler,
+        };
+
+        let downloader = super::super::UsenetDownloader {
+            db: db_arc.clone(),
+            event_tx: event_tx.clone(),
+            config: config_arc.clone(),
+            nntp_pools: std::sync::Arc::new(Vec::new()),
+            speed_limiter: speed_limiter.clone(),
+            queue_state,
+            runtime_config,
+            processing,
+        };
+
+        let ctx = super::DownloadTaskContext {
+            id: crate::types::DownloadId(1), // placeholder; tests override
+            db: db_arc,
+            event_tx,
+            article_provider: provider,
+            config: config_arc,
+            active_downloads,
+            speed_limiter,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            downloader,
+        };
+
+        (ctx, temp_dir, event_rx)
+    }
+
+    // ===================================================================
+    // fetch_download_record tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn fetch_download_record_not_found() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (ctx, _temp_dir, _rx) = make_test_context(provider).await;
+        // ctx.id defaults to DownloadId(1) which doesn't exist in DB
+
+        let result = super::fetch_download_record(&ctx).await;
+
+        assert!(
+            result.is_none(),
+            "should return None when download is not in DB"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_download_record_transitions_to_downloading() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        // Insert download + 3 articles
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        insert_test_articles(&ctx.db, dl_id, 3).await;
+
+        let result = super::fetch_download_record(&ctx).await;
+
+        // Returns Some with 3 pending articles
+        let (_download, articles) = result.expect("should return Some");
+        assert_eq!(articles.len(), 3, "should return all 3 pending articles");
+
+        // DB status changed to Downloading
+        let db_dl = ctx.db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Downloading.to_i32(),
+            "status should be Downloading"
+        );
+
+        // started_at is set
+        assert!(
+            db_dl.started_at.is_some(),
+            "started_at should be set after transitioning to Downloading"
+        );
+
+        // Event::Downloading{percent:0.0} was emitted
+        let event = rx.try_recv().unwrap();
+        match event {
+            crate::types::Event::Downloading {
+                id,
+                percent,
+                speed_bps,
+            } => {
+                assert_eq!(id, dl_id);
+                assert!((percent - 0.0).abs() < f32::EPSILON);
+                assert_eq!(speed_bps, 0);
+            }
+            other => panic!("expected Downloading event, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_download_record_returns_only_pending_articles() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, _rx) = make_test_context(provider).await;
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+
+        // Insert 5 articles
+        let article_ids = insert_test_articles(&ctx.db, dl_id, 5).await;
+
+        // Mark 2 as DOWNLOADED
+        ctx.db
+            .update_articles_status_batch(&[
+                (article_ids[0], crate::db::article_status::DOWNLOADED),
+                (article_ids[1], crate::db::article_status::DOWNLOADED),
+            ])
+            .await
+            .unwrap();
+
+        let result = super::fetch_download_record(&ctx).await;
+        let (_download, articles) = result.unwrap();
+        assert_eq!(
+            articles.len(),
+            3,
+            "should return only the 3 pending articles"
+        );
+    }
+
+    // ===================================================================
+    // finalize_download tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn finalize_all_success_marks_complete() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        let db = ctx.db.clone();
+
+        super::finalize_download(
+            ctx,
+            super::DownloadResults {
+                success_count: 10,
+                failed_count: 0,
+                first_error: None,
+            },
+            1000,
+        )
+        .await;
+
+        // DB status = Complete
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Complete.to_i32(),
+            "status should be Complete"
+        );
+
+        // Event: DownloadComplete
+        let event = rx.try_recv().unwrap();
+        match event {
+            crate::types::Event::DownloadComplete { id } => {
+                assert_eq!(id, dl_id);
+            }
+            other => panic!("expected DownloadComplete event, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn finalize_above_threshold_marks_failed() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        let db = ctx.db.clone();
+
+        super::finalize_download(
+            ctx,
+            super::DownloadResults {
+                success_count: 4,
+                failed_count: 6,
+                first_error: Some("batch fetch failed".to_string()),
+            },
+            1000,
+        )
+        .await;
+
+        // DB status = Failed
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Failed.to_i32(),
+            "60% failure rate should mark Failed"
+        );
+
+        // Event: DownloadFailed
+        let event = rx.try_recv().unwrap();
+        match event {
+            crate::types::Event::DownloadFailed { id, error } => {
+                assert_eq!(id, dl_id);
+                assert_eq!(error, "batch fetch failed");
+            }
+            other => panic!("expected DownloadFailed event, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn finalize_at_exact_boundary_marks_complete() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        let db = ctx.db.clone();
+
+        super::finalize_download(
+            ctx,
+            super::DownloadResults {
+                success_count: 50,
+                failed_count: 50,
+                first_error: Some("some error".to_string()),
+            },
+            1000,
+        )
+        .await;
+
+        // At exactly 50% the condition is > 0.5, so it should NOT fail
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Complete.to_i32(),
+            "exactly 50% failures uses strict >, so should be Complete"
+        );
+
+        let event = rx.try_recv().unwrap();
+        assert!(
+            matches!(event, crate::types::Event::DownloadComplete { .. }),
+            "expected DownloadComplete, got {:?}",
+            event
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_zero_success_always_fails() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        let db = ctx.db.clone();
+
+        super::finalize_download(
+            ctx,
+            super::DownloadResults {
+                success_count: 0,
+                failed_count: 5,
+                first_error: Some("total failure".to_string()),
+            },
+            1000,
+        )
+        .await;
+
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Failed.to_i32(),
+            "zero success should always fail"
+        );
+
+        let event = rx.try_recv().unwrap();
+        assert!(
+            matches!(event, crate::types::Event::DownloadFailed { .. }),
+            "expected DownloadFailed, got {:?}",
+            event
+        );
+    }
+
+    // ===================================================================
+    // fetch_article_batch tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn fetch_article_batch_cancelled() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![b"data".to_vec()]));
+        let cancel_token = tokio_util::sync::CancellationToken::new();
+        cancel_token.cancel(); // pre-cancel
+
+        let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel(100);
+        let articles = vec![make_article(1, 1, 100)];
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let result = super::fetch_article_batch(super::FetchArticleBatchParams {
+            id: crate::types::DownloadId(1),
+            article_batch: articles,
+            article_provider: provider,
+            batch_tx,
+            speed_limiter: crate::speed_limiter::SpeedLimiter::new(None),
+            cancel_token,
+            download_temp_dir: temp_dir.path().to_path_buf(),
+            downloaded_bytes: Arc::new(AtomicU64::new(0)),
+            downloaded_articles: Arc::new(AtomicU64::new(0)),
+            pipeline_depth: 10,
+        })
+        .await;
+
+        assert!(result.is_err(), "should return Err when cancelled");
+        let (msg, count) = result.unwrap_err();
+        assert_eq!(msg, "Download cancelled");
+        assert_eq!(count, 1);
+
+        // No status updates sent
+        assert!(
+            batch_rx.try_recv().is_err(),
+            "no status updates should be sent when cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_article_batch_success_writes_files() {
+        let article_data = vec![b"hello world".to_vec(), b"second article".to_vec()];
+        let provider = Arc::new(MockArticleProvider::succeeding(article_data.clone()));
+
+        let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel(100);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
+        let downloaded_articles = Arc::new(AtomicU64::new(0));
+
+        let articles = vec![make_article(10, 1, 50), make_article(11, 2, 60)];
+
+        let result = super::fetch_article_batch(super::FetchArticleBatchParams {
+            id: crate::types::DownloadId(1),
+            article_batch: articles,
+            article_provider: provider,
+            batch_tx,
+            speed_limiter: crate::speed_limiter::SpeedLimiter::new(None),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            download_temp_dir: temp_dir.path().to_path_buf(),
+            downloaded_bytes: downloaded_bytes.clone(),
+            downloaded_articles: downloaded_articles.clone(),
+            pipeline_depth: 10,
+        })
+        .await;
+
+        // Assert success
+        let batch_results = result.unwrap();
+        assert_eq!(batch_results.len(), 2);
+        assert_eq!(batch_results[0], (1, 50));
+        assert_eq!(batch_results[1], (2, 60));
+
+        // Files exist on disk
+        let file1 = temp_dir.path().join("article_1.dat");
+        let file2 = temp_dir.path().join("article_2.dat");
+        assert!(file1.exists(), "article_1.dat should exist");
+        assert!(file2.exists(), "article_2.dat should exist");
+        assert_eq!(
+            std::fs::read(&file1).unwrap(),
+            b"hello world",
+            "article_1.dat content should match"
+        );
+        assert_eq!(
+            std::fs::read(&file2).unwrap(),
+            b"second article",
+            "article_2.dat content should match"
+        );
+
+        // Atomics incremented
+        assert_eq!(downloaded_articles.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            downloaded_bytes.load(Ordering::Relaxed),
+            110,
+            "50 + 60 = 110 bytes"
+        );
+
+        // DOWNLOADED status sent via batch_tx for both articles
+        let (id1, status1) = batch_rx.try_recv().unwrap();
+        assert_eq!(id1, 10);
+        assert_eq!(status1, crate::db::article_status::DOWNLOADED);
+        let (id2, status2) = batch_rx.try_recv().unwrap();
+        assert_eq!(id2, 11);
+        assert_eq!(status2, crate::db::article_status::DOWNLOADED);
+    }
+
+    #[tokio::test]
+    async fn fetch_article_batch_provider_error() {
+        let provider = Arc::new(MockArticleProvider::failing("connection refused"));
+
+        let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel(100);
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let articles = vec![make_article(20, 1, 100), make_article(21, 2, 200)];
+
+        let result = super::fetch_article_batch(super::FetchArticleBatchParams {
+            id: crate::types::DownloadId(1),
+            article_batch: articles,
+            article_provider: provider,
+            batch_tx,
+            speed_limiter: crate::speed_limiter::SpeedLimiter::new(None),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            download_temp_dir: temp_dir.path().to_path_buf(),
+            downloaded_bytes: Arc::new(AtomicU64::new(0)),
+            downloaded_articles: Arc::new(AtomicU64::new(0)),
+            pipeline_depth: 10,
+        })
+        .await;
+
+        assert!(result.is_err(), "should return Err on provider failure");
+        let (msg, count) = result.unwrap_err();
+        assert!(
+            msg.contains("connection refused"),
+            "error should contain provider message"
+        );
+        assert_eq!(count, 2, "batch_size should be 2");
+
+        // FAILED status sent for all articles
+        let (id1, status1) = batch_rx.try_recv().unwrap();
+        assert_eq!(id1, 20);
+        assert_eq!(status1, crate::db::article_status::FAILED);
+        let (id2, status2) = batch_rx.try_recv().unwrap();
+        assert_eq!(id2, 21);
+        assert_eq!(status2, crate::db::article_status::FAILED);
+    }
+
+    // ===================================================================
+    // run_download_task integration tests
+    // ===================================================================
+
+    #[tokio::test]
+    async fn run_download_task_full_lifecycle() {
+        // Mock provider that returns data for 3 articles
+        let provider = Arc::new(MockArticleProvider::with_responses(vec![
+            Ok(vec![nntp_rs::NntpBinaryResponse {
+                code: 222,
+                message: "Body follows".into(),
+                data: b"article-1-data".to_vec(),
+            }]),
+            Ok(vec![nntp_rs::NntpBinaryResponse {
+                code: 222,
+                message: "Body follows".into(),
+                data: b"article-2-data".to_vec(),
+            }]),
+            Ok(vec![nntp_rs::NntpBinaryResponse {
+                code: 222,
+                message: "Body follows".into(),
+                data: b"article-3-data".to_vec(),
+            }]),
+        ]));
+
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        // Insert download + 3 articles
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        insert_test_articles(&ctx.db, dl_id, 3).await;
+
+        // Need to configure a server for batching (pipeline_depth=1 so each article is its own batch)
+        let mut config = (*ctx.config).clone();
+        config.servers = vec![server(1, 1)];
+        ctx.config = std::sync::Arc::new(config);
+
+        let db = ctx.db.clone();
+        super::run_download_task(ctx).await;
+
+        // DB status = Complete
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Complete.to_i32(),
+            "download should be Complete after successful lifecycle"
+        );
+
+        // Collect events — find DownloadComplete
+        let mut found_complete = false;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, crate::types::Event::DownloadComplete { id } if id == dl_id) {
+                found_complete = true;
+            }
+        }
+        assert!(
+            found_complete,
+            "DownloadComplete event should have been emitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_download_task_empty_articles() {
+        let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+        let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+        // Insert download with 0 articles
+        let new_dl = make_new_download(&temp_dir);
+        let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+        ctx.id = dl_id;
+        // No articles inserted
+
+        let db = ctx.db.clone();
+        super::run_download_task(ctx).await;
+
+        // DownloadComplete should be emitted immediately
+        let mut found_complete = false;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, crate::types::Event::DownloadComplete { id } if id == dl_id) {
+                found_complete = true;
+            }
+        }
+        assert!(
+            found_complete,
+            "DownloadComplete event should be emitted immediately for empty articles"
+        );
+
+        // DB status should still be Downloading (fetch_download_record sets it)
+        // since finalize_download is not called for empty articles path
+        let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+        assert_eq!(
+            db_dl.status,
+            crate::types::Status::Downloading.to_i32(),
+            "status should be Downloading (empty articles skip finalize)"
         );
     }
 }

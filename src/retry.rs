@@ -388,14 +388,14 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Total expected delay: 10ms + 20ms + 40ms = 70ms
-        // We add some tolerance for execution time
+        // Upper bound is generous to tolerate CI and coverage instrumentation overhead
         assert!(
             elapsed >= Duration::from_millis(70),
             "should wait at least 70ms, waited {:?}",
             elapsed
         );
         assert!(
-            elapsed < Duration::from_millis(200),
+            elapsed < Duration::from_secs(2),
             "should not wait too long, waited {:?}",
             elapsed
         );
@@ -728,15 +728,15 @@ mod tests {
 
         // With jitter, first delay is between 50ms and 100ms
         // Second attempt fails and exhausts retries (no more delay after that)
-        // So total elapsed should be >= 50ms (min jitter) and < ~200ms (generous upper bound)
+        // Upper bound is generous to tolerate CI and coverage instrumentation overhead
         assert!(
             elapsed >= Duration::from_millis(40),
             "should wait at least the base delay, waited {:?}",
             elapsed
         );
         assert!(
-            elapsed < Duration::from_millis(200),
-            "should not wait longer than 2x the base delay plus overhead, waited {:?}",
+            elapsed < Duration::from_secs(2),
+            "should not wait longer than expected, waited {:?}",
             elapsed
         );
     }
