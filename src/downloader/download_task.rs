@@ -595,3 +595,355 @@ async fn finalize_download(
     ctx.remove_from_active().await;
     ctx.spawn_post_processing();
 }
+
+// unwrap/expect are acceptable in tests for concise failure-on-error assertions
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, ServerConfig};
+
+    fn config_with_servers(servers: Vec<ServerConfig>) -> Config {
+        Config {
+            servers,
+            ..Config::default()
+        }
+    }
+
+    fn server(connections: usize, pipeline_depth: usize) -> ServerConfig {
+        ServerConfig {
+            host: "news.example.com".to_string(),
+            port: 563,
+            tls: true,
+            username: None,
+            password: None,
+            connections,
+            priority: 0,
+            pipeline_depth,
+        }
+    }
+
+    fn make_article(id: i64, segment: i32, size: i64) -> crate::db::Article {
+        crate::db::Article {
+            id,
+            download_id: 1,
+            message_id: format!("<article-{id}@test>"),
+            segment_number: segment,
+            size_bytes: size,
+            status: crate::db::article_status::PENDING,
+            downloaded_at: None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // prepare_batches: concurrency calculation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn prepare_batches_sums_connections_across_all_servers() {
+        let config = config_with_servers(vec![server(8, 10), server(4, 10)]);
+        let articles = (0..5).map(|i| make_article(i, i as i32, 100)).collect();
+
+        let (concurrency, _, _) = prepare_batches(&config, articles);
+
+        assert_eq!(
+            concurrency, 12,
+            "concurrency should be sum of all server connections"
+        );
+    }
+
+    #[test]
+    fn prepare_batches_single_server_concurrency() {
+        let config = config_with_servers(vec![server(20, 10)]);
+        let articles = vec![make_article(1, 1, 100)];
+
+        let (concurrency, _, _) = prepare_batches(&config, articles);
+
+        assert_eq!(concurrency, 20);
+    }
+
+    #[test]
+    fn prepare_batches_no_servers_gives_zero_concurrency() {
+        let config = config_with_servers(vec![]);
+        let articles = vec![make_article(1, 1, 100)];
+
+        let (concurrency, _, _) = prepare_batches(&config, articles);
+
+        assert_eq!(concurrency, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // prepare_batches: pipeline depth
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn prepare_batches_uses_first_server_pipeline_depth() {
+        let config = config_with_servers(vec![server(4, 25), server(4, 50)]);
+        let articles = (0..100).map(|i| make_article(i, i as i32, 100)).collect();
+
+        let (_, pipeline_depth, _) = prepare_batches(&config, articles);
+
+        assert_eq!(
+            pipeline_depth, 25,
+            "pipeline_depth should come from first server"
+        );
+    }
+
+    #[test]
+    fn prepare_batches_clamps_zero_pipeline_depth_to_one() {
+        let config = config_with_servers(vec![server(4, 0)]);
+        let articles = (0..5).map(|i| make_article(i, i as i32, 100)).collect();
+
+        let (_, pipeline_depth, _) = prepare_batches(&config, articles);
+
+        assert_eq!(
+            pipeline_depth, 1,
+            "pipeline_depth of 0 should be clamped to 1"
+        );
+    }
+
+    #[test]
+    fn prepare_batches_defaults_pipeline_depth_when_no_servers() {
+        let config = config_with_servers(vec![]);
+        let articles = vec![make_article(1, 1, 100)];
+
+        let (_, pipeline_depth, _) = prepare_batches(&config, articles);
+
+        assert_eq!(
+            pipeline_depth, 10,
+            "should default to 10 when no servers present"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // prepare_batches: batch creation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn prepare_batches_creates_correct_batch_sizes() {
+        let config = config_with_servers(vec![server(4, 3)]);
+        let articles: Vec<_> = (0..10).map(|i| make_article(i, i as i32, 100)).collect();
+
+        let (_, _, batches) = prepare_batches(&config, articles);
+
+        assert_eq!(batches.len(), 4, "10 articles / batch size 3 = 4 batches");
+        assert_eq!(batches[0].len(), 3);
+        assert_eq!(batches[1].len(), 3);
+        assert_eq!(batches[2].len(), 3);
+        assert_eq!(batches[3].len(), 1, "last batch gets the remainder");
+    }
+
+    #[test]
+    fn prepare_batches_preserves_article_order() {
+        let config = config_with_servers(vec![server(2, 2)]);
+        let articles: Vec<_> = (0..4).map(|i| make_article(i, i as i32, 100)).collect();
+
+        let (_, _, batches) = prepare_batches(&config, articles);
+
+        assert_eq!(batches[0][0].id, 0);
+        assert_eq!(batches[0][1].id, 1);
+        assert_eq!(batches[1][0].id, 2);
+        assert_eq!(batches[1][1].id, 3);
+    }
+
+    #[test]
+    fn prepare_batches_empty_articles_produces_no_batches() {
+        let config = config_with_servers(vec![server(4, 10)]);
+
+        let (_, _, batches) = prepare_batches(&config, vec![]);
+
+        assert!(batches.is_empty());
+    }
+
+    #[test]
+    fn prepare_batches_single_article_makes_one_batch() {
+        let config = config_with_servers(vec![server(4, 10)]);
+        let articles = vec![make_article(42, 1, 500)];
+
+        let (_, _, batches) = prepare_batches(&config, articles);
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].len(), 1);
+        assert_eq!(batches[0][0].id, 42);
+    }
+
+    #[test]
+    fn prepare_batches_exactly_one_batch_when_articles_equal_pipeline_depth() {
+        let config = config_with_servers(vec![server(4, 5)]);
+        let articles: Vec<_> = (0..5).map(|i| make_article(i, i as i32, 100)).collect();
+
+        let (_, _, batches) = prepare_batches(&config, articles);
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // aggregate_results: all success
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_results_all_success() {
+        let results: BatchResultVec = vec![Ok(vec![(1, 100), (2, 200)]), Ok(vec![(3, 300)])];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(agg.success_count, 3);
+        assert_eq!(agg.failed_count, 0);
+        assert!(agg.first_error.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // aggregate_results: all failure
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_results_all_failure() {
+        let results: BatchResultVec = vec![
+            Err(("timeout".to_string(), 5)),
+            Err(("connection reset".to_string(), 3)),
+        ];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(agg.success_count, 0);
+        assert_eq!(agg.failed_count, 8);
+        assert_eq!(agg.first_error.as_deref(), Some("timeout"));
+    }
+
+    // -----------------------------------------------------------------------
+    // aggregate_results: mixed results
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_results_mixed_preserves_first_error() {
+        let results: BatchResultVec = vec![
+            Ok(vec![(1, 100)]),
+            Err(("first failure".to_string(), 2)),
+            Ok(vec![(2, 200), (3, 300)]),
+            Err(("second failure".to_string(), 1)),
+        ];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(agg.success_count, 3);
+        assert_eq!(agg.failed_count, 3);
+        assert_eq!(
+            agg.first_error.as_deref(),
+            Some("first failure"),
+            "first_error should be from the first Err encountered"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // aggregate_results: empty
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_results_empty_input() {
+        let results: BatchResultVec = vec![];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(agg.success_count, 0);
+        assert_eq!(agg.failed_count, 0);
+        assert!(agg.first_error.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // aggregate_results: edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_results_single_success_batch() {
+        let results: BatchResultVec = vec![Ok(vec![(1, 50)])];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(agg.success_count, 1);
+        assert_eq!(agg.failed_count, 0);
+    }
+
+    #[test]
+    fn aggregate_results_success_batch_with_empty_vec() {
+        let results: BatchResultVec = vec![Ok(vec![])];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(
+            agg.success_count, 0,
+            "an Ok with empty vec contributes 0 to success_count"
+        );
+        assert_eq!(agg.failed_count, 0);
+    }
+
+    #[test]
+    fn aggregate_results_failure_with_zero_batch_size() {
+        let results: BatchResultVec = vec![Err(("weird error".to_string(), 0))];
+
+        let agg = aggregate_results(results);
+
+        assert_eq!(agg.success_count, 0);
+        assert_eq!(agg.failed_count, 0);
+        assert_eq!(agg.first_error.as_deref(), Some("weird error"));
+    }
+
+    // -----------------------------------------------------------------------
+    // MAX_FAILURE_RATIO boundary tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn max_failure_ratio_exactly_at_boundary_does_not_fail() {
+        // finalize_download uses strictly-greater: (failed / total) > MAX_FAILURE_RATIO
+        // At exactly 50% failures (ratio == 0.5), the download should NOT be marked failed
+        let success_count: usize = 50;
+        let failed_count: usize = 50;
+        let total = success_count + failed_count;
+        let ratio = failed_count as f64 / total as f64;
+
+        assert!(
+            !(success_count == 0 || ratio > MAX_FAILURE_RATIO),
+            "exactly 50% failures should NOT trigger failure (uses > not >=)"
+        );
+    }
+
+    #[test]
+    fn max_failure_ratio_just_above_boundary_fails() {
+        let success_count: usize = 49;
+        let failed_count: usize = 51;
+        let total = success_count + failed_count;
+        let ratio = failed_count as f64 / total as f64;
+
+        assert!(
+            success_count == 0 || ratio > MAX_FAILURE_RATIO,
+            "51% failures should trigger failure"
+        );
+    }
+
+    #[test]
+    fn max_failure_ratio_all_failures_always_fails() {
+        let success_count: usize = 0;
+        let failed_count: usize = 100;
+
+        // Even without checking the ratio, success_count == 0 triggers failure
+        assert!(
+            success_count == 0
+                || (failed_count as f64 / (success_count + failed_count) as f64)
+                    > MAX_FAILURE_RATIO,
+            "zero successes should always trigger failure regardless of ratio"
+        );
+    }
+
+    #[test]
+    fn max_failure_ratio_single_failure_in_large_set_does_not_fail() {
+        let success_count: usize = 999;
+        let failed_count: usize = 1;
+        let total = success_count + failed_count;
+        let ratio = failed_count as f64 / total as f64;
+
+        assert!(
+            !(success_count == 0 || ratio > MAX_FAILURE_RATIO),
+            "0.1% failure rate should not trigger failure"
+        );
+    }
+}

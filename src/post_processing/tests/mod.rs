@@ -837,6 +837,70 @@ async fn test_verify_stage_handles_not_supported() {
 }
 
 #[tokio::test]
+async fn test_move_nested_subdirectory_with_collision_rename() {
+    use tempfile::TempDir;
+    use tokio::fs;
+
+    let (tx, _rx) = broadcast::channel(100);
+    let mut config = Config::default();
+    config.download.file_collision = crate::config::FileCollisionAction::Rename;
+    let processor = PostProcessor::new(
+        tx,
+        Arc::new(config),
+        test_parity_handler(),
+        test_database().await,
+    );
+
+    let temp_dir = TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("source");
+    let dest_dir = temp_dir.path().join("dest");
+
+    // Create source with nested subdirectory containing a file
+    let source_subdir = source_dir.join("subdir");
+    fs::create_dir_all(&source_subdir).await.unwrap();
+    fs::write(source_subdir.join("file.txt"), b"new nested content")
+        .await
+        .unwrap();
+
+    // Create destination with same subdirectory and a conflicting file
+    let dest_subdir = dest_dir.join("subdir");
+    fs::create_dir_all(&dest_subdir).await.unwrap();
+    fs::write(dest_subdir.join("file.txt"), b"existing nested content")
+        .await
+        .unwrap();
+
+    let result = processor
+        .move_files(DownloadId(1), &source_dir, &dest_dir)
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), dest_dir);
+
+    // Original file should be preserved at its original path
+    let original = fs::read_to_string(dest_subdir.join("file.txt"))
+        .await
+        .unwrap();
+    assert_eq!(
+        original, "existing nested content",
+        "original nested file should be preserved"
+    );
+
+    // New file should have been renamed to avoid collision
+    let renamed = fs::read_to_string(dest_subdir.join("file (1).txt"))
+        .await
+        .unwrap();
+    assert_eq!(
+        renamed, "new nested content",
+        "moved file should be renamed with (1) suffix"
+    );
+
+    // Source subdirectory should have been cleaned up (emptied and removed)
+    assert!(
+        !source_subdir.exists(),
+        "source subdirectory should be removed after move"
+    );
+}
+
+#[tokio::test]
 async fn test_repair_stage_handles_not_supported() {
     use tempfile::TempDir;
     use tokio::fs;

@@ -389,6 +389,120 @@ mod tests {
         assert!(result.repairable);
     }
 
+    // --- Malformed / edge-case output tests ---
+
+    #[test]
+    fn verify_empty_stdout_with_failure_exit_reports_incomplete() {
+        let result = parse_par2_verify_output(b"", b"", ExitStatus::Failure).unwrap();
+
+        assert!(
+            !result.is_complete,
+            "empty output with failure exit should not report complete"
+        );
+        assert_eq!(
+            result.damaged_blocks, 0,
+            "no block info can be parsed from empty output"
+        );
+        assert!(!result.repairable, "cannot be repairable with no info");
+    }
+
+    #[test]
+    fn repair_empty_stdout_with_failure_exit_reports_unsuccessful() {
+        let result = parse_par2_repair_output(b"", b"", ExitStatus::Failure).unwrap();
+
+        assert!(
+            !result.success,
+            "empty output with failure exit should not report success"
+        );
+        assert!(
+            result.repaired_files.is_empty(),
+            "no files can be parsed from empty output"
+        );
+    }
+
+    #[test]
+    fn verify_garbage_stdout_with_success_exit_reports_complete() {
+        let garbage = b"\x00\xff\xfe RANDOM GARBAGE {{{ not par2 output at all ///";
+        let result = parse_par2_verify_output(garbage, b"", ExitStatus::Success).unwrap();
+
+        // Exit code says success, no damage indicators found → complete
+        assert!(
+            result.is_complete,
+            "success exit with no damage indicators should be considered complete"
+        );
+        assert_eq!(result.damaged_blocks, 0);
+        assert!(result.damaged_files.is_empty());
+        assert!(result.missing_files.is_empty());
+    }
+
+    #[test]
+    fn repair_garbage_stdout_with_success_exit_reports_successful() {
+        let garbage = b"ZZZZZ not parseable output ZZZZZ";
+        let result = parse_par2_repair_output(garbage, b"", ExitStatus::Success).unwrap();
+
+        assert!(
+            result.success,
+            "success exit code should make repair report success regardless of stdout content"
+        );
+        assert!(result.repaired_files.is_empty());
+        assert!(result.failed_files.is_empty());
+    }
+
+    #[test]
+    fn repair_success_exit_but_repair_failed_in_output_still_reports_success() {
+        // Conflicting signals: exit code 0 but output says "REPAIR FAILED"
+        // The parser uses exit code as the source of truth for `success`
+        let stdout = b"Could not repair: \"corrupted.bin\"\nREPAIR FAILED\n";
+        let result = parse_par2_repair_output(stdout, b"", ExitStatus::Success).unwrap();
+
+        // success is driven by exit code
+        assert!(
+            result.success,
+            "success field should follow exit code, not output text"
+        );
+        // But the parser should still extract the failed file info
+        assert!(
+            result.failed_files.contains(&"corrupted.bin".to_string()),
+            "should still parse failed filenames from output, got: {:?}",
+            result.failed_files
+        );
+    }
+
+    #[test]
+    fn repair_failure_exit_but_repaired_in_output_reports_unsuccessful() {
+        // Opposite conflict: exit code says failure but output mentions repaired files
+        let stdout = b"Repaired: \"fixed.bin\"\nSome other error occurred\n";
+        let stderr = b"Error: partial repair\n";
+        let result = parse_par2_repair_output(stdout, stderr, ExitStatus::Failure).unwrap();
+
+        assert!(
+            !result.success,
+            "failure exit code should override repaired mentions in output"
+        );
+        assert!(
+            result.repaired_files.contains(&"fixed.bin".to_string()),
+            "should still parse repaired filenames even on failure exit"
+        );
+        assert!(
+            result.error.is_some(),
+            "should capture error message from output"
+        );
+    }
+
+    #[test]
+    fn verify_failure_exit_with_stderr_error_reports_incomplete() {
+        let stdout = b"";
+        let stderr = b"par2: fatal error: unable to read recovery file\n";
+        let result = parse_par2_verify_output(stdout, stderr, ExitStatus::Failure).unwrap();
+
+        assert!(
+            !result.is_complete,
+            "failure exit with stderr error should not report complete"
+        );
+        // No damage info could be extracted, so blocks should be 0
+        assert_eq!(result.damaged_blocks, 0);
+    }
+
     #[test]
     fn test_parse_repair_real_output_success() {
         // par2cmdline uses "Repairing:" (present tense) not "Repaired:" (past tense),

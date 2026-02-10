@@ -1,4 +1,5 @@
 mod articles;
+mod close;
 mod downloads;
 mod duplicates;
 mod history;

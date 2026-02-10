@@ -36,6 +36,7 @@ pkgs'.mkShell {
     cargo-outdated   # Check for outdated deps
     cargo-flamegraph # Performance profiling
     cargo-expand     # Expand macros
+    cargo-tarpaulin  # Code coverage
 
     # Debugging
     gdb
