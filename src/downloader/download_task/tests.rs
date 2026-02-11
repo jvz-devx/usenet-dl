@@ -843,6 +843,7 @@ async fn fetch_article_batch_cancelled() {
     let articles = vec![make_article(1, 1, 100)];
     let temp_dir = tempfile::tempdir().unwrap();
 
+    let (fct_tx, _fct_rx) = tokio::sync::mpsc::unbounded_channel();
     let result = super::batch_processor::fetch_article_batch(FetchArticleBatchParams {
         id: crate::types::DownloadId(1),
         article_batch: articles,
@@ -856,6 +857,7 @@ async fn fetch_article_batch_cancelled() {
         failed_articles: Arc::new(AtomicU64::new(0)),
         output_files: empty_output_files(),
         pipeline_depth: 10,
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
     })
     .await;
 
@@ -883,6 +885,7 @@ async fn fetch_article_batch_success_writes_files() {
 
     let articles = vec![make_article(10, 1, 50), make_article(11, 2, 60)];
 
+    let (fct_tx, _fct_rx) = tokio::sync::mpsc::unbounded_channel();
     let result = super::batch_processor::fetch_article_batch(FetchArticleBatchParams {
         id: crate::types::DownloadId(1),
         article_batch: articles,
@@ -896,6 +899,7 @@ async fn fetch_article_batch_success_writes_files() {
         failed_articles: Arc::new(AtomicU64::new(0)),
         output_files: empty_output_files(),
         pipeline_depth: 10,
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
     })
     .await;
 
@@ -949,6 +953,7 @@ async fn fetch_article_batch_provider_error() {
 
     let articles = vec![make_article(20, 1, 100), make_article(21, 2, 200)];
 
+    let (fct_tx, _fct_rx) = tokio::sync::mpsc::unbounded_channel();
     let result = super::batch_processor::fetch_article_batch(FetchArticleBatchParams {
         id: crate::types::DownloadId(1),
         article_batch: articles,
@@ -962,6 +967,7 @@ async fn fetch_article_batch_provider_error() {
         failed_articles: Arc::new(AtomicU64::new(0)),
         output_files: empty_output_files(),
         pipeline_depth: 10,
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
     })
     .await;
 
@@ -1082,6 +1088,7 @@ async fn retry_articles_individually_partial_success() {
         make_article(3, 3, 300),
     ];
 
+    let (fct_tx, _fct_rx) = tokio::sync::mpsc::unbounded_channel();
     let result = super::batch_processor::retry_articles_individually(RetryArticlesParams {
         id: crate::types::DownloadId(1),
         article_batch: articles,
@@ -1093,6 +1100,7 @@ async fn retry_articles_individually_partial_success() {
         downloaded_articles: downloaded_articles.clone(),
         failed_articles: failed_articles.clone(),
         output_files: empty_output_files(),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
     })
     .await;
 
@@ -1151,6 +1159,7 @@ async fn retry_articles_individually_all_missing() {
         make_article(12, 3, 300),
     ];
 
+    let (fct_tx, _fct_rx) = tokio::sync::mpsc::unbounded_channel();
     let result = super::batch_processor::retry_articles_individually(RetryArticlesParams {
         id: crate::types::DownloadId(1),
         article_batch: articles,
@@ -1162,6 +1171,7 @@ async fn retry_articles_individually_all_missing() {
         downloaded_articles: Arc::new(AtomicU64::new(0)),
         failed_articles: failed_articles.clone(),
         output_files: empty_output_files(),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
     })
     .await;
 

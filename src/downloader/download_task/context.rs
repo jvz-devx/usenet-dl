@@ -13,8 +13,8 @@ use super::super::UsenetDownloader;
 /// batches to the same file. Each segment writes to non-overlapping byte ranges
 /// via yEnc part offsets.
 pub(crate) struct OutputFiles {
-    /// file_index -> (File handle, filename)
-    pub(super) files: HashMap<i32, (std::fs::File, String)>,
+    /// file_index -> (File handle, filename, pre-allocated flag)
+    pub(super) files: HashMap<i32, (std::fs::File, String, std::sync::atomic::AtomicBool)>,
 }
 
 impl OutputFiles {
@@ -27,9 +27,51 @@ impl OutputFiles {
         for df in download_files {
             let path = temp_dir.join(&df.filename);
             let file = std::fs::File::create(&path)?;
-            files.insert(df.file_index, (file, df.filename.clone()));
+            files.insert(df.file_index, (file, df.filename.clone(), std::sync::atomic::AtomicBool::new(false)));
         }
         Ok(Self { files })
+    }
+}
+
+/// Tracks per-file article completion counts for instant DirectUnpack notification.
+///
+/// Each successful `decode_and_write` decrements the file's counter. When it hits zero,
+/// a notification is sent via the channel so the DirectUnpack coordinator can act immediately
+/// instead of waiting for the next DB poll cycle.
+pub(crate) struct FileCompletionTracker {
+    /// file_index -> remaining article count
+    remaining: HashMap<i32, std::sync::atomic::AtomicU32>,
+    /// Channel to notify coordinator when a file completes (all articles decoded)
+    completion_tx: tokio::sync::mpsc::UnboundedSender<i32>,
+}
+
+impl FileCompletionTracker {
+    /// Create a tracker from per-file article counts.
+    ///
+    /// `file_article_counts` maps file_index to the number of pending articles for that file.
+    pub(crate) fn new(
+        file_article_counts: HashMap<i32, u32>,
+        completion_tx: tokio::sync::mpsc::UnboundedSender<i32>,
+    ) -> Self {
+        let remaining = file_article_counts
+            .into_iter()
+            .map(|(idx, count)| (idx, std::sync::atomic::AtomicU32::new(count)))
+            .collect();
+        Self {
+            remaining,
+            completion_tx,
+        }
+    }
+
+    /// Record a successfully decoded article. If this was the last article for the file,
+    /// sends a completion notification to the DirectUnpack coordinator.
+    pub(crate) fn article_completed(&self, file_index: i32) {
+        if let Some(counter) = self.remaining.get(&file_index)
+            && counter.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1
+        {
+            // This was the last article — file is complete
+            let _ = self.completion_tx.send(file_index);
+        }
     }
 }
 

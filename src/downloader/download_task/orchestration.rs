@@ -101,6 +101,22 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
     // Create shared failed_articles counter (shared between download pipeline and DirectUnpack)
     let failed_articles = Arc::new(AtomicU64::new(0));
 
+    // Create file completion channel for DirectUnpack notification
+    let (file_completion_tx, file_completion_rx) =
+        tokio::sync::mpsc::unbounded_channel::<i32>();
+
+    // Build per-file article counts for the completion tracker
+    let file_article_counts: HashMap<i32, u32> = {
+        let mut counts: HashMap<i32, u32> = HashMap::new();
+        for article in &pending_articles {
+            *counts.entry(article.file_index).or_default() += 1;
+        }
+        counts
+    };
+    let file_completion_tracker = Arc::new(
+        super::context::FileCompletionTracker::new(file_article_counts, file_completion_tx),
+    );
+
     // Phase 3c: Spawn DirectUnpack coordinator if enabled and post-process includes unpack
     let post_process = PostProcess::from_i32(download.post_process);
     let direct_unpack_enabled = ctx.config.processing.direct_unpack.enabled
@@ -120,6 +136,7 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
             download_temp_dir.clone(),
             Arc::clone(&failed_articles),
             Arc::clone(&download_complete),
+            file_completion_rx,
         );
         Some(tokio::spawn(coordinator.run()))
     } else {
@@ -136,6 +153,7 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
         &download_temp_dir,
         &output_files,
         &failed_articles,
+        &file_completion_tracker,
     )
     .await;
 

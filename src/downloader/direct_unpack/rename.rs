@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::db::Database;
 use crate::parity::par2_metadata::{compute_16k_md5, parse_par2_file_entries};
@@ -63,7 +62,7 @@ impl DirectRenameState {
         file_index: i32,
         current_filename: &str,
         temp_dir: &Path,
-        db: &Arc<Database>,
+        db: &Database,
         event_tx: &tokio::sync::broadcast::Sender<Event>,
     ) -> Option<(String, String)> {
         if !self.metadata_loaded || self.hash_to_name.is_empty() {

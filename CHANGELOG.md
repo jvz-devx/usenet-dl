@@ -5,7 +5,7 @@ All notable changes to the usenet-dl project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-02-11
 
 ### Added
 
@@ -15,7 +15,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **New configuration**: `processing.direct_unpack.enabled` (default: `false`), `processing.direct_unpack.direct_rename` (default: `false`), `processing.direct_unpack.poll_interval_ms` (default: `200`)
 - **New events**: `DirectUnpackStarted`, `FileCompleted`, `DirectUnpackExtracting`, `DirectUnpackExtracted`, `DirectUnpackCancelled`, `DirectUnpackComplete`, `DirectRenamed`
 - **PAR2 metadata parser**: Pure Rust binary parser for PAR2 File Description packets, used by DirectRename to map 16KB MD5 hashes to real filenames
+- **File completion tracker**: Per-file atomic counters with `mpsc` channel notifications so the DirectUnpack coordinator reacts instantly to file completions instead of waiting for the next poll cycle
+- **DirectUnpack extracted count tracking**: New `direct_unpack_extracted_count` column persists how many files were actually extracted, preventing vacuous completions (0 extractions) from incorrectly skipping the full post-processing pipeline
 - **Database migration v5**: Adds `direct_unpack_state` column to `downloads`, `completed` and `original_filename` columns to `download_files`
+- **Database migration v6**: Adds `direct_unpack_extracted_count` column to `downloads`
+
+### Changed
+- **yEnc decode + disk I/O offloaded to blocking threads**: `decode_and_write` now runs in `tokio::task::spawn_blocking`, keeping tokio worker threads free for concurrent NNTP fetches across batches
+- **Atomic file pre-allocation**: File size pre-allocation uses an `AtomicBool` flag instead of repeated `fstat` + `ftruncate` syscalls on every segment write (~10k syscalls saved per download)
+- **Faster article batch updates**: Batch updater interval reduced from 1s to 500ms for more responsive article status persistence
+- **Conditional repair stage**: `run_verify_stage` now returns whether damage was found; the repair stage is only invoked when verification reports actual damage, skipping unnecessary PAR2 repair for healthy downloads
+- **DirectUnpack coordinator is now event-driven**: Uses `tokio::select!` on both a file completion channel and the poll timer, reacting immediately to completed files instead of only on timer ticks
+- **Removed unnecessary `Arc` wrapping in post-processing**: Function signatures for verify, repair, and cleanup stages now accept `&dyn ParityHandler`, `&Config`, and `&Database` directly instead of `&Arc<T>`, reducing indirection where the `Arc` was not being cloned
+
+### Fixed
+- DirectUnpack with 0 actual extractions (e.g. no RAR archives present) no longer skips the full verify/repair/extract pipeline — the post-process skip now requires `direct_unpack_extracted_count > 0`
+
+## [0.1.1] - 2026-02-11
+
+### Fixed
+- PAR2 verification incorrectly failing when par2 exits non-zero but reports no file damage. The parser now determines completeness from parsed output (damaged blocks, damaged/missing files) rather than the exit code, fixing false failures like "files are damaged (0 blocks) but cannot be repaired (need 0 more recovery blocks)".
+- CI build cache causing stale artifacts: cache keys now use `Cargo.toml` hash instead of `Cargo.lock` (which is gitignored).
+- `test_health_endpoint` breaking on version bumps due to hardcoded version string.
+
+## [Unreleased]
 
 ### Added
 

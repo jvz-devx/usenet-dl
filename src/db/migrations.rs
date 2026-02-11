@@ -110,6 +110,9 @@ impl Database {
         if current_version < 5 {
             Self::migrate_v5(&mut conn).await?;
         }
+        if current_version < 6 {
+            Self::migrate_v6(&mut conn).await?;
+        }
 
         Ok(())
     }
@@ -767,6 +770,60 @@ impl Database {
         }
 
         tracing::info!("Database migration v5 complete");
+        Ok(())
+    }
+
+    /// Migration v6: Add direct_unpack_extracted_count column
+    async fn migrate_v6(conn: &mut SqliteConnection) -> Result<()> {
+        tracing::info!("Applying database migration v6");
+
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
+
+        let result = async {
+            sqlx::query(
+                "ALTER TABLE downloads ADD COLUMN direct_unpack_extracted_count INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to add direct_unpack_extracted_count column: {}",
+                    e
+                )))
+            })?;
+
+            Self::record_migration(conn, 6).await?;
+            Ok::<(), Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v6: {}",
+                            e
+                        )))
+                    })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+
+        tracing::info!("Database migration v6 complete");
         Ok(())
     }
 

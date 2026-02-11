@@ -24,7 +24,18 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
+# Temporary plan/progress/scan files
+*-plan.md
+*_PLAN.md
+*_PROGRESS.md
+*-scan.md
+
 # Internal development files
 docs/sabnzbd-comparison.md
 benchmarks/
 downloads/
+
+# Claude
+.claude/
+CLAUDE.md
+AGENT.md

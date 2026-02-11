@@ -46,7 +46,7 @@ impl From<bool> for ExitStatus {
 pub fn parse_par2_verify_output(
     stdout: &[u8],
     stderr: &[u8],
-    exit_status: ExitStatus,
+    _exit_status: ExitStatus,
 ) -> crate::Result<VerifyResult> {
     let output = str::from_utf8(stdout).unwrap_or_default();
     let error_output = str::from_utf8(stderr).unwrap_or_default();
@@ -115,8 +115,11 @@ pub fn parse_par2_verify_output(
         }
     }
 
-    // Determine completeness based on exit code and damaged blocks
-    let is_complete = exit_status.is_success() && damaged_blocks == 0 && missing_files.is_empty();
+    // Determine completeness based on parsed damage indicators.
+    // We prioritize the parsed output over the exit code because some par2
+    // implementations exit non-zero for reasons unrelated to file damage
+    // (e.g., missing .vol recovery files while base data is intact).
+    let is_complete = damaged_blocks == 0 && damaged_files.is_empty() && missing_files.is_empty();
 
     // Determine if repair is possible
     let repairable =
@@ -392,18 +395,20 @@ mod tests {
     // --- Malformed / edge-case output tests ---
 
     #[test]
-    fn verify_empty_stdout_with_failure_exit_reports_incomplete() {
+    fn verify_empty_stdout_with_failure_exit_reports_complete() {
+        // When par2 fails but reports no damage, we treat the data as intact.
+        // If files are actually damaged, extraction will catch it downstream.
         let result = parse_par2_verify_output(b"", b"", ExitStatus::Failure).unwrap();
 
         assert!(
-            !result.is_complete,
-            "empty output with failure exit should not report complete"
+            result.is_complete,
+            "no damage indicators found, so data should be considered complete"
         );
         assert_eq!(
             result.damaged_blocks, 0,
             "no block info can be parsed from empty output"
         );
-        assert!(!result.repairable, "cannot be repairable with no info");
+        assert!(!result.repairable, "nothing to repair with no damage");
     }
 
     #[test]
@@ -490,16 +495,17 @@ mod tests {
     }
 
     #[test]
-    fn verify_failure_exit_with_stderr_error_reports_incomplete() {
+    fn verify_failure_exit_with_stderr_error_but_no_damage_reports_complete() {
+        // par2 failed (e.g., couldn't read recovery file) but reported no file damage.
+        // We treat the data as intact since there's no evidence of corruption.
         let stdout = b"";
         let stderr = b"par2: fatal error: unable to read recovery file\n";
         let result = parse_par2_verify_output(stdout, stderr, ExitStatus::Failure).unwrap();
 
         assert!(
-            !result.is_complete,
-            "failure exit with stderr error should not report complete"
+            result.is_complete,
+            "no damage indicators found, so data should be considered complete"
         );
-        // No damage info could be extracted, so blocks should be 0
         assert_eq!(result.damaged_blocks, 0);
     }
 

@@ -24,7 +24,7 @@ async fn fetch_article(
     pool: &NntpPool,
     article: Article,
     temp_dir: &Path,
-    db: &Arc<Database>,
+    db: &Database,
     download_id: DownloadId,
 ) -> std::result::Result<(i32, u64), String> {
     // Get a connection from the pool
@@ -112,7 +112,7 @@ fn tally_results(
 
 /// Handle download failure by updating status and emitting events
 async fn handle_download_failure(
-    db: &Arc<Database>,
+    db: &Database,
     event_tx: &broadcast::Sender<Event>,
     download_id: DownloadId,
     failures: usize,
@@ -150,7 +150,7 @@ async fn handle_download_failure(
 
 /// Parameters for emitting final progress
 struct FinalProgressParams<'a> {
-    db: &'a Arc<Database>,
+    db: &'a Database,
     event_tx: &'a broadcast::Sender<Event>,
     download_id: DownloadId,
     downloaded_bytes: u64,

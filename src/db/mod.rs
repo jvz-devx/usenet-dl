@@ -97,6 +97,8 @@ pub struct Download {
     pub completed_at: Option<i64>,
     /// DirectUnpack state (0=NotStarted, 1=Active, 2=Completed, 3=Cancelled, 4=Failed)
     pub direct_unpack_state: i32,
+    /// Number of files extracted by DirectUnpack (0 means vacuous completion)
+    pub direct_unpack_extracted_count: i32,
 }
 
 /// New article to be inserted into the database

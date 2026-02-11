@@ -4,7 +4,6 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::types::{DownloadId, Event};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
@@ -13,7 +12,7 @@ pub(crate) async fn run_cleanup_stage(
     download_id: DownloadId,
     download_path: &Path,
     event_tx: &broadcast::Sender<Event>,
-    config: &Arc<Config>,
+    config: &Config,
 ) -> Result<()> {
     debug!(
         download_id = download_id.0,
@@ -51,7 +50,7 @@ pub(crate) async fn run_cleanup_stage(
 async fn cleanup(
     download_id: DownloadId,
     download_path: &Path,
-    config: &Arc<Config>,
+    config: &Config,
 ) -> Result<()> {
     use tokio::fs;
 
@@ -144,7 +143,7 @@ fn collect_cleanup_targets<'a>(
     target_extensions: &'a [&'a str],
     files_to_delete: &'a mut Vec<PathBuf>,
     folders_to_delete: &'a mut Vec<PathBuf>,
-    config: &'a Arc<Config>,
+    config: &'a Config,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
         use tokio::fs;

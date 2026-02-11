@@ -4,19 +4,21 @@ use crate::error::Result;
 use crate::parity::ParityHandler;
 use crate::types::{DownloadId, Event};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
 use super::PostProcessError;
 
 /// Execute the verify stage
+///
+/// Returns `Ok(true)` if files are damaged but repairable, `Ok(false)` if
+/// files are intact (or verification was skipped/not supported).
 pub(crate) async fn run_verify_stage(
     download_id: DownloadId,
     download_path: &Path,
     event_tx: &broadcast::Sender<Event>,
-    parity_handler: &Arc<dyn ParityHandler>,
-) -> Result<()> {
+    parity_handler: &dyn ParityHandler,
+) -> Result<bool> {
     debug!(
         download_id = download_id.0,
         ?download_path,
@@ -43,7 +45,7 @@ pub(crate) async fn run_verify_stage(
             })
             .ok();
 
-        return Ok(());
+        return Ok(false);
     }
 
     // Use the first PAR2 file found (typically the .par2 file, not .vol files)
@@ -73,7 +75,7 @@ pub(crate) async fn run_verify_stage(
                 })
                 .ok();
 
-            return Ok(());
+            return Ok(false);
         }
         Err(e) => return Err(e),
     };
@@ -108,7 +110,8 @@ pub(crate) async fn run_verify_stage(
         .into());
     }
 
-    Ok(())
+    // Return whether files are damaged (but repairable)
+    Ok(!verify_result.is_complete)
 }
 
 /// Find all PAR2 files in the download directory

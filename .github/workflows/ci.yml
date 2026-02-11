@@ -40,7 +40,7 @@ jobs:
           path: |
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
@@ -48,8 +48,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('rust-toolchain.toml', 'rust-toolchain') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.toml') }}-
             ${{ runner.os }}-cargo-build-
 
       - name: Run tests
@@ -71,7 +72,7 @@ jobs:
           path: |
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
@@ -79,8 +80,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('rust-toolchain.toml', 'rust-toolchain') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.toml') }}-
             ${{ runner.os }}-cargo-check-
 
       - name: Check compilation
@@ -108,7 +110,7 @@ jobs:
           path: |
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
@@ -116,8 +118,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-clippy-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-clippy-build-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('rust-toolchain.toml', 'rust-toolchain') }}
           restore-keys: |
+            ${{ runner.os }}-clippy-build-${{ hashFiles('**/Cargo.toml') }}-
             ${{ runner.os }}-clippy-build-
 
       - name: Run clippy
