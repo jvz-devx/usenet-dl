@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - PAR2 verification incorrectly failing when par2 exits non-zero but reports no file damage. The parser now determines completeness from parsed output (damaged blocks, damaged/missing files) rather than the exit code, fixing false failures like "files are damaged (0 blocks) but cannot be repaired (need 0 more recovery blocks)".
+- CI build cache causing stale artifacts: cache keys now use `Cargo.toml` hash instead of `Cargo.lock` (which is gitignored).
+- `test_health_endpoint` breaking on version bumps due to hardcoded version string.
 
 ## [Unreleased]
 
