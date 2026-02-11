@@ -139,7 +139,7 @@ async fn test_health_endpoint() {
     let body_str = String::from_utf8(body.to_vec()).unwrap();
 
     assert!(body_str.contains("ok"));
-    assert!(body_str.contains("0.1.0")); // Version from Cargo.toml
+    assert!(body_str.contains(env!("CARGO_PKG_VERSION")));
 }
 
 #[tokio::test]
