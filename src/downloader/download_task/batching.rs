@@ -77,19 +77,23 @@ pub(super) async fn fetch_download_record(
 ///
 /// Sets up background tasks for progress reporting and database batching,
 /// then streams article batches through pipelined NNTP fetches.
+///
+/// The `failed_articles` counter is created externally so it can be shared with
+/// the DirectUnpack coordinator (which cancels on any article failure).
 pub(super) async fn download_articles(
     ctx: &DownloadTaskContext,
     pending_articles: Vec<crate::db::Article>,
     total_size_bytes: u64,
     download_temp_dir: &std::path::Path,
     output_files: &Arc<OutputFiles>,
+    failed_articles: &Arc<AtomicU64>,
 ) -> DownloadResults {
     let id = ctx.id;
     let total_articles = pending_articles.len();
     let counters = DownloadCounters {
         downloaded_articles: Arc::new(AtomicU64::new(0)),
         downloaded_bytes: Arc::new(AtomicU64::new(0)),
-        failed_articles: Arc::new(AtomicU64::new(0)),
+        failed_articles: Arc::clone(failed_articles),
     };
     let download_start = std::time::Instant::now();
 
@@ -114,7 +118,7 @@ pub(super) async fn download_articles(
 
     // Calculate concurrency and split articles into batches
     let (concurrency, pipeline_depth, article_batches) =
-        prepare_batches(&ctx.config, pending_articles);
+        prepare_batches(&ctx.config, pending_articles, None);
 
     // Download all batches in parallel
     let results = download_all_batches(DownloadAllBatchesParams {
@@ -241,9 +245,13 @@ pub(super) fn spawn_fast_fail_watcher(
 }
 
 /// Calculate concurrency settings and split articles into pipeline-sized batches.
+///
+/// When `download_files` is provided and DirectRename is enabled, PAR2 file articles
+/// are sorted to the front so their metadata is available early for renaming obfuscated files.
 pub(super) fn prepare_batches(
     config: &crate::config::Config,
-    pending_articles: Vec<crate::db::Article>,
+    mut pending_articles: Vec<crate::db::Article>,
+    download_files: Option<&[crate::db::DownloadFile]>,
 ) -> (usize, usize, Vec<Vec<crate::db::Article>>) {
     let concurrency: usize = config.servers.iter().map(|s| s.connections).sum();
     let pipeline_depth = config
@@ -251,6 +259,28 @@ pub(super) fn prepare_batches(
         .first()
         .map(|s| s.pipeline_depth.max(1))
         .unwrap_or(10);
+
+    // When DirectRename is enabled, prioritize PAR2 file articles so metadata loads early
+    if config.processing.direct_unpack.direct_rename
+        && let Some(files) = download_files
+    {
+        let par2_indices: std::collections::HashSet<i32> = files
+            .iter()
+            .filter(|f| f.filename.to_lowercase().ends_with(".par2"))
+            .map(|f| f.file_index)
+            .collect();
+
+        if !par2_indices.is_empty() {
+            // Stable sort: PAR2 articles first, preserving order within groups
+            pending_articles.sort_by_key(|a| {
+                if par2_indices.contains(&a.file_index) {
+                    0
+                } else {
+                    1
+                }
+            });
+        }
+    }
 
     let article_batches: Vec<Vec<_>> = pending_articles
         .chunks(pipeline_depth)

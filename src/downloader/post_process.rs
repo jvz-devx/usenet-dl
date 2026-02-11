@@ -64,13 +64,37 @@ impl UsenetDownloader {
         // Determine post-processing mode
         let post_process = crate::config::PostProcess::from_i32(download.post_process);
 
-        // Execute post-processing pipeline
-        match self
-            .processing
-            .post_processor
-            .start_post_processing(download_id, download_path, post_process, destination)
+        // Check if DirectUnpack completed successfully — skip verify/repair/extract
+        let direct_unpack_state = self
+            .db
+            .get_direct_unpack_state(download_id)
             .await
-        {
+            .unwrap_or(super::direct_unpack::direct_unpack_state::NOT_STARTED);
+        let direct_unpack_completed =
+            direct_unpack_state == super::direct_unpack::direct_unpack_state::COMPLETED;
+
+        // Execute post-processing pipeline
+        let pipeline_result = if direct_unpack_completed
+            && matches!(
+                post_process,
+                crate::config::PostProcess::Unpack | crate::config::PostProcess::UnpackAndCleanup
+            ) {
+            tracing::info!(
+                download_id = download_id.0,
+                "DirectUnpack succeeded — skipping verify/repair/extract, running move+cleanup only"
+            );
+            self.processing
+                .post_processor
+                .run_move_and_cleanup(download_id, download_path, destination)
+                .await
+        } else {
+            self.processing
+                .post_processor
+                .start_post_processing(download_id, download_path, post_process, destination)
+                .await
+        };
+
+        match pipeline_result {
             Ok(final_path) => {
                 self.handle_post_process_success(
                     download_id,

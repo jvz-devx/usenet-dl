@@ -183,6 +183,8 @@ pub enum Stage {
     Move,
     /// Cleanup intermediate files
     Cleanup,
+    /// DirectUnpack (extraction during download)
+    DirectUnpack,
 }
 
 /// Archive type detected by file extension
@@ -391,6 +393,64 @@ pub enum Event {
         method: DuplicateMethod,
         /// Name of the existing download
         existing_name: String,
+    },
+
+    /// DirectUnpack coordinator started for a download
+    DirectUnpackStarted {
+        /// Download ID
+        id: DownloadId,
+    },
+
+    /// An individual file within a download has completed (all segments downloaded)
+    FileCompleted {
+        /// Download ID
+        id: DownloadId,
+        /// File index within the NZB
+        file_index: i32,
+        /// Filename
+        filename: String,
+    },
+
+    /// DirectUnpack is extracting a completed RAR archive
+    DirectUnpackExtracting {
+        /// Download ID
+        id: DownloadId,
+        /// Archive filename being extracted
+        filename: String,
+    },
+
+    /// DirectUnpack successfully extracted an archive
+    DirectUnpackExtracted {
+        /// Download ID
+        id: DownloadId,
+        /// Archive filename that was extracted
+        filename: String,
+        /// List of extracted file paths
+        extracted_files: Vec<String>,
+    },
+
+    /// DirectUnpack was cancelled (typically due to article failures)
+    DirectUnpackCancelled {
+        /// Download ID
+        id: DownloadId,
+        /// Reason for cancellation
+        reason: String,
+    },
+
+    /// DirectUnpack completed successfully for a download
+    DirectUnpackComplete {
+        /// Download ID
+        id: DownloadId,
+    },
+
+    /// DirectRename renamed a file using PAR2 metadata
+    DirectRenamed {
+        /// Download ID
+        id: DownloadId,
+        /// Original (obfuscated) filename
+        old_name: String,
+        /// New (correct) filename from PAR2 metadata
+        new_name: String,
     },
 
     /// Graceful shutdown initiated

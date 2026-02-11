@@ -199,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             duplicate: duplicate_config,
             disk_space: disk_space_config,
             cleanup: CleanupConfig::default(),
+            direct_unpack: Default::default(),
         },
 
         // Automation (watch folders, RSS, deobfuscation)

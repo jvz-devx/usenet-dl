@@ -95,6 +95,8 @@ pub struct Download {
     pub started_at: Option<i64>,
     /// Unix timestamp when download completed
     pub completed_at: Option<i64>,
+    /// DirectUnpack state (0=NotStarted, 1=Active, 2=Completed, 3=Cancelled, 4=Failed)
+    pub direct_unpack_state: i32,
 }
 
 /// New article to be inserted into the database
@@ -163,6 +165,10 @@ pub struct DownloadFile {
     pub subject: Option<String>,
     /// Total number of segments in this file
     pub total_segments: i32,
+    /// Whether all segments of this file have been downloaded (0=no, 1=yes)
+    pub completed: i32,
+    /// Original filename before DirectRename (None if not renamed)
+    pub original_filename: Option<String>,
 }
 
 /// Article status constants

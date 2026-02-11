@@ -61,6 +61,7 @@ All other settings use sensible defaults and are optional.
 | `duplicate` | `DuplicateConfig` | See below | Duplicate detection settings |
 | `disk_space` | `DiskSpaceConfig` | See below | Disk space checking settings |
 | `cleanup` | `CleanupConfig` | See below | Cleanup configuration |
+| `direct_unpack` | `DirectUnpackConfig` | See below | DirectUnpack configuration (extract during download) |
 | `password_file` | String (path, optional) | `null` | Path to file with passwords (one per line) |
 | `try_empty_password` | Boolean | `true` | Try empty password as fallback for archives |
 | `unrar_path` | String (path, optional) | `null` | Path to unrar executable (auto-detected if null) |
@@ -477,6 +478,46 @@ size_multiplier = 2.5
 | `enabled` | Boolean | `true` | Enable disk space checking |
 | `min_free_space` | Integer (bytes) | `1073741824` (1 GB) | Minimum free space to maintain |
 | `size_multiplier` | Float | `2.5` | Multiplier for download size (accounts for extraction: compressed + extracted + headroom) |
+
+---
+
+## DirectUnpackConfig
+
+Extract archives while downloads are still in progress. When enabled and post-processing includes `unpack` or `unpack_and_cleanup`, a background coordinator polls for completed files and extracts RAR archives as they finish downloading. If all articles succeed and extraction completes, the post-processing pipeline skips verify/repair/extract and runs only move + cleanup.
+
+### TOML
+```toml
+[direct_unpack]
+enabled = true
+direct_rename = true
+poll_interval_ms = 200
+```
+
+### JSON
+```json
+{
+  "direct_unpack": {
+    "enabled": true,
+    "direct_rename": true,
+    "poll_interval_ms": 200
+  }
+}
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | Boolean | `false` | Enable DirectUnpack (extract during download) |
+| `direct_rename` | Boolean | `false` | Enable DirectRename (use PAR2 metadata to fix obfuscated filenames mid-download) |
+| `poll_interval_ms` | Integer (milliseconds) | `200` | How often to poll for newly completed files |
+
+### Behavior
+
+- **Zero-tolerance for failures**: If any article download fails, DirectUnpack cancels immediately and the normal post-processing pipeline (verify/repair/extract) runs instead
+- **DirectRename**: When enabled, PAR2 files are prioritized for early download. Once a PAR2 file completes, its metadata maps 16KB MD5 hashes to real filenames. Files are renamed as they complete, before DirectUnpack processes them
+- **Cancellation token**: DirectUnpack respects download pause/cancel operations
+- **Post-processing shortcut**: If DirectUnpack succeeds with zero failures, only move + cleanup stages run
 
 ---
 
@@ -992,6 +1033,12 @@ target_extensions = ["par2", "nzb", "sfv"]
 archive_extensions = ["rar", "zip", "7z"]
 delete_samples = true
 
+# DirectUnpack (extract during download)
+[direct_unpack]
+enabled = false
+direct_rename = false
+poll_interval_ms = 200
+
 # Passwords
 password_file = "/config/passwords.txt"
 try_empty_password = true
@@ -1128,6 +1175,11 @@ timeout = 300
     "target_extensions": ["par2", "nzb", "sfv"],
     "archive_extensions": ["rar", "zip", "7z"],
     "delete_samples": true
+  },
+  "direct_unpack": {
+    "enabled": false,
+    "direct_rename": false,
+    "poll_interval_ms": 200
   },
   "password_file": "/config/passwords.txt",
   "try_empty_password": true,

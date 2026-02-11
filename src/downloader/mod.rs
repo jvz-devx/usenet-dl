@@ -19,6 +19,7 @@
 mod background_tasks;
 mod config_ops;
 mod control;
+pub(crate) mod direct_unpack;
 mod download_task;
 mod lifecycle;
 mod nzb;

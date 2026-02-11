@@ -19,6 +19,8 @@ A high-performance, highly configurable backend library for building Usenet down
 
 ### Post-Processing
 
+- **DirectUnpack**: Extract RAR archives while downloads are still in progress (overlaps extraction with download time)
+- **DirectRename**: Fix obfuscated filenames mid-download using PAR2 metadata
 - **Archive Extraction**: RAR, 7z, and ZIP with password support
 - **Nested Extraction**: Automatic recursive extraction (configurable depth)
 - **Password Management**: Multi-source passwords (per-download, NZB metadata, global file, cache)
@@ -248,6 +250,7 @@ All settings have sensible defaults. Only NNTP server configuration is required.
 | **Concurrent downloads** | 3 | Balanced throughput without overwhelming |
 | **Speed limit** | Unlimited | Users expect full speed by default |
 | **Post-processing** | Unpack + Cleanup | Most users want ready-to-use files |
+| **DirectUnpack** | Disabled | Opt-in for advanced users |
 | **Failed download action** | Keep files | Don't delete potentially recoverable data |
 | **File collision** | Rename (add number) | Never lose data silently |
 | **Nested extraction depth** | 2 levels | Handle common archive-in-archive |

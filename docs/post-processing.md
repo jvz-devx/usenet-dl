@@ -14,6 +14,10 @@ The post-processing pipeline is a five-stage sequential process that automatical
 
 Each stage is optional and can be configured based on your needs.
 
+### DirectUnpack Shortcut
+
+When [DirectUnpack](#directunpack) is enabled and completes successfully (zero article failures), stages 1-3 are skipped entirely. The pipeline runs only **Move** and **Cleanup**, since extraction already happened during download.
+
 ## Post-Processing Modes
 
 Configure which stages execute using the `PostProcess` enum:
@@ -332,6 +336,16 @@ tokio::spawn(async move {
             Event::Failed { id, stage, error, files_kept } => {
                 eprintln!("Failed at {:?}: {}", stage, error);
             }
+            // DirectUnpack events (when direct_unpack.enabled = true)
+            Event::DirectUnpackStarted { id } => {
+                println!("DirectUnpack started for {}", id);
+            }
+            Event::DirectUnpackExtracted { id, filename, extracted_files } => {
+                println!("DirectUnpack extracted {} ({} files)", filename, extracted_files.len());
+            }
+            Event::DirectRenamed { id, old_name, new_name } => {
+                println!("DirectRename: {} -> {}", old_name, new_name);
+            }
             _ => {}
         }
     }
@@ -436,8 +450,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## DirectUnpack
+
+DirectUnpack extracts RAR archives while the download is still in progress. As individual files complete downloading, a background coordinator detects them and starts extraction immediately, overlapping extraction time with download time.
+
+### How It Works
+
+```
+Queue → download_articles (parallel batches)
+            │
+            ├── [per-file completion] → DirectUnpackCoordinator
+            │                               ├── DirectRename (PAR2 metadata)
+            │                               └── Extract completed RAR volumes
+            │
+        finalize_download
+            │
+            ├── zero failures + DirectUnpack succeeded → skip verify/repair/extract
+            └── ANY article failed → full post-processing pipeline
+```
+
+1. A background coordinator task polls the database every 200ms for newly completed files
+2. When a PAR2 file completes (and DirectRename is enabled), its metadata is parsed to build a hash-to-filename mapping
+3. Non-PAR2 files are matched against this mapping and renamed if obfuscated
+4. First RAR volumes are extracted as they become available; if the next volume isn't ready yet, extraction is retried on the next poll cycle
+5. If any article download fails, DirectUnpack cancels immediately — the normal post-processing pipeline handles everything
+
+### Configuration
+
+```toml
+[direct_unpack]
+enabled = true        # Enable DirectUnpack
+direct_rename = true  # Fix obfuscated filenames using PAR2 metadata
+poll_interval_ms = 200
+```
+
+### Events
+
+| Event | When |
+|-------|------|
+| `DirectUnpackStarted { id }` | Coordinator started for a download |
+| `FileCompleted { id, file_index, filename }` | All articles for a file have been downloaded |
+| `DirectUnpackExtracting { id, filename }` | Starting extraction of a RAR volume |
+| `DirectUnpackExtracted { id, filename, extracted_files }` | Extraction succeeded |
+| `DirectUnpackCancelled { id, reason }` | Cancelled (article failures or download cancel) |
+| `DirectUnpackComplete { id }` | All files processed, extraction done |
+| `DirectRenamed { id, old_name, new_name }` | File renamed via PAR2 metadata |
+
+### Fallback
+
+DirectUnpack is designed to be fail-safe. If it cancels for any reason (article failures, extraction errors, cancellation), the normal five-stage post-processing pipeline runs as if DirectUnpack was never enabled. No data is lost.
+
 ## See Also
 
-- [Configuration Reference](configuration.md) - All configuration options
+- [Configuration Reference](configuration.md) - All configuration options including DirectUnpack settings
 - [Getting Started](getting-started.md) - Basic usage guide
 - [Architecture](architecture.md) - System design overview

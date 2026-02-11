@@ -22,7 +22,7 @@ The library is built on top of `nntp-rs` (a sibling crate) which handles the NNT
 ### Core Modules
 
 **downloader/** - Main orchestration
-Contains the `UsenetDownloader` struct and all download coordination: queue management (`queue.rs`, `queue_processor.rs`), NZB import (`nzb.rs`), download control (`control.rs`), background tasks (`background_tasks.rs`), and webhook dispatch (`webhooks.rs`).
+Contains the `UsenetDownloader` struct and all download coordination: queue management (`queue.rs`, `queue_processor.rs`), NZB import (`nzb.rs`), download control (`control.rs`), background tasks (`background_tasks.rs`), webhook dispatch (`webhooks.rs`), and DirectUnpack (`direct_unpack/`).
 
 **config.rs** - Configuration types
 Defines all configuration structures with sensible defaults for NNTP servers, post-processing, categories, rate limiting, and API settings. Uses `#[serde(flatten)]` for sub-configs so TOML/JSON fields appear at top level.
@@ -45,7 +45,7 @@ Implements the five-stage pipeline: Verify (`verify.rs`) → Repair (`repair.rs`
 RAR (`rar.rs`), 7z (`sevenz.rs`), and ZIP (`zip.rs`) extraction with multi-source password support (`password_list.rs`).
 
 **parity/** - PAR2 verification and repair
-`ParityHandler` trait (`traits.rs`) with pluggable implementations: `CliParityHandler` (`cli.rs`) for systems with `par2` binary, `NoOpParityHandler` (`noop.rs`) as fallback. Includes PAR2 output parser (`parser.rs`).
+`ParityHandler` trait (`traits.rs`) with pluggable implementations: `CliParityHandler` (`cli.rs`) for systems with `par2` binary, `NoOpParityHandler` (`noop.rs`) as fallback. Includes PAR2 output parser (`parser.rs`) and PAR2 binary metadata parser (`par2_metadata.rs`) for DirectRename.
 
 **deobfuscation.rs** - Filename cleanup
 Cleans up obfuscated filenames common in Usenet releases.
@@ -163,8 +163,9 @@ if let Some(token) = active_downloads.get(&download_id) {
 1. **Queue**: NZB added to priority queue with metadata
 2. **Dispatch**: Semaphore permit acquired, download task spawned
 3. **Download**: Articles fetched concurrently from NNTP servers
+3b. **DirectUnpack** (optional): Background coordinator extracts completed RAR volumes during download
 4. **Assembly**: Articles decoded (yEnc) and written to disk
-5. **Post-Processing**: Optional verify → repair → extract → move → cleanup
+5. **Post-Processing**: Optional verify → repair → extract → move → cleanup (stages 1-3 skipped if DirectUnpack succeeded)
 6. **Completion**: Final event emitted, download moved to history
 
 ### Post-Processing Pipeline
@@ -184,7 +185,7 @@ The pipeline can be configured to run none, some, or all stages via the `PostPro
 SQLite database with the following tables:
 
 **downloads** - Queue state
-Primary queue table with download metadata, status, progress, timestamps, and configuration.
+Primary queue table with download metadata, status, progress, timestamps, configuration, and DirectUnpack state.
 
 **download_articles** - Article tracking
 Per-article status for resume capability. Tracks individual article download state.
@@ -364,6 +365,7 @@ The event system emits typed events for all significant state changes:
 
 **Queue events**: `Queued`, `Removed`
 **Download lifecycle**: `Downloading`, `DownloadComplete`, `DownloadFailed`
+**DirectUnpack**: `DirectUnpackStarted`, `FileCompleted`, `DirectUnpackExtracting`, `DirectUnpackExtracted`, `DirectUnpackCancelled`, `DirectUnpackComplete`, `DirectRenamed`
 **Post-processing**: `Verifying`, `VerifyComplete`, `Repairing`, `RepairComplete`, `RepairSkipped`, `Extracting`, `ExtractComplete`, `Moving`, `Cleaning`
 **Final states**: `Complete`, `Failed`
 **Global events**: `SpeedLimitChanged`, `QueuePaused`, `QueueResumed`, `Shutdown`

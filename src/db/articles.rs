@@ -394,7 +394,7 @@ impl Database {
     ) -> Result<Vec<super::DownloadFile>> {
         let rows = sqlx::query_as::<_, super::DownloadFile>(
             r#"
-            SELECT id, download_id, file_index, filename, subject, total_segments
+            SELECT id, download_id, file_index, filename, subject, total_segments, completed, original_filename
             FROM download_files
             WHERE download_id = ?
             ORDER BY file_index ASC
@@ -411,5 +411,150 @@ impl Database {
         })?;
 
         Ok(rows)
+    }
+
+    /// Get newly completed files for DirectUnpack processing.
+    ///
+    /// Returns files where `completed=0` but all articles have been downloaded
+    /// (article count with status=DOWNLOADED matches total_segments).
+    pub async fn get_newly_completed_files(
+        &self,
+        download_id: DownloadId,
+    ) -> Result<Vec<super::DownloadFile>> {
+        let rows = sqlx::query_as::<_, super::DownloadFile>(
+            r#"
+            SELECT df.id, df.download_id, df.file_index, df.filename, df.subject,
+                   df.total_segments, df.completed, df.original_filename
+            FROM download_files df
+            WHERE df.download_id = ?
+              AND df.completed = 0
+              AND df.total_segments = (
+                SELECT COUNT(*) FROM download_articles da
+                WHERE da.download_id = df.download_id
+                  AND da.file_index = df.file_index
+                  AND da.status = 1
+              )
+            "#,
+        )
+        .bind(download_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to get newly completed files: {}",
+                e
+            )))
+        })?;
+
+        Ok(rows)
+    }
+
+    /// Mark a file as completed (all segments downloaded)
+    pub async fn mark_file_completed(
+        &self,
+        download_id: DownloadId,
+        file_index: i32,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE download_files SET completed = 1 WHERE download_id = ? AND file_index = ?",
+        )
+        .bind(download_id)
+        .bind(file_index)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to mark file completed: {}",
+                e
+            )))
+        })?;
+
+        Ok(())
+    }
+
+    /// Update the DirectUnpack state for a download
+    pub async fn update_direct_unpack_state(
+        &self,
+        download_id: DownloadId,
+        state: i32,
+    ) -> Result<()> {
+        sqlx::query("UPDATE downloads SET direct_unpack_state = ? WHERE id = ?")
+            .bind(state)
+            .bind(download_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::QueryFailed(format!(
+                    "Failed to update direct_unpack_state: {}",
+                    e
+                )))
+            })?;
+
+        Ok(())
+    }
+
+    /// Get the DirectUnpack state for a download
+    pub async fn get_direct_unpack_state(&self, download_id: DownloadId) -> Result<i32> {
+        let state: i32 =
+            sqlx::query_scalar("SELECT direct_unpack_state FROM downloads WHERE id = ?")
+                .bind(download_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    Error::Database(DatabaseError::QueryFailed(format!(
+                        "Failed to get direct_unpack_state: {}",
+                        e
+                    )))
+                })?;
+
+        Ok(state)
+    }
+
+    /// Rename a download file (for DirectRename), storing the original filename
+    pub async fn rename_download_file(
+        &self,
+        download_id: DownloadId,
+        file_index: i32,
+        new_filename: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE download_files
+            SET original_filename = CASE WHEN original_filename IS NULL THEN filename ELSE original_filename END,
+                filename = ?
+            WHERE download_id = ? AND file_index = ?
+            "#,
+        )
+        .bind(new_filename)
+        .bind(download_id)
+        .bind(file_index)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to rename download file: {}",
+                e
+            )))
+        })?;
+
+        Ok(())
+    }
+
+    /// Count failed articles for a download
+    pub async fn count_failed_articles(&self, download_id: DownloadId) -> Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM download_articles WHERE download_id = ? AND status = 2",
+        )
+        .bind(download_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to count failed articles: {}",
+                e
+            )))
+        })?;
+
+        Ok(count)
     }
 }
