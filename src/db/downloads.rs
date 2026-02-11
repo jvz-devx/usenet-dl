@@ -56,7 +56,8 @@ impl Database {
                 id, name, nzb_path, nzb_meta_name, nzb_hash, job_name,
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
-                error_message, created_at, started_at, completed_at
+                error_message, created_at, started_at, completed_at,
+                direct_unpack_state
             FROM downloads
             WHERE id = ?
             "#,
@@ -82,7 +83,8 @@ impl Database {
                 id, name, nzb_path, nzb_meta_name, nzb_hash, job_name,
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
-                error_message, created_at, started_at, completed_at
+                error_message, created_at, started_at, completed_at,
+                direct_unpack_state
             FROM downloads
             ORDER BY priority DESC, created_at ASC
             "#,
@@ -107,7 +109,8 @@ impl Database {
                 id, name, nzb_path, nzb_meta_name, nzb_hash, job_name,
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
-                error_message, created_at, started_at, completed_at
+                error_message, created_at, started_at, completed_at,
+                direct_unpack_state
             FROM downloads
             WHERE status = ?
             ORDER BY priority DESC, created_at ASC
@@ -264,7 +267,8 @@ impl Database {
                 id, name, nzb_path, nzb_meta_name, nzb_hash, job_name,
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
-                error_message, created_at, started_at, completed_at
+                error_message, created_at, started_at, completed_at,
+                direct_unpack_state
             FROM downloads
             WHERE status IN (0, 1, 3)
             ORDER BY priority DESC, created_at ASC
@@ -290,7 +294,8 @@ impl Database {
                 id, name, nzb_path, nzb_meta_name, nzb_hash, job_name,
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
-                error_message, created_at, started_at, completed_at
+                error_message, created_at, started_at, completed_at,
+                direct_unpack_state
             FROM downloads
             ORDER BY created_at ASC
             "#,

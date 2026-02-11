@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 
+use crate::config::PostProcess;
 use crate::types::Event;
 
 use super::batching::{download_articles, fetch_download_record};
@@ -26,6 +28,7 @@ pub(super) struct DownloadResults {
 /// 1. Fetch and validate the download record
 /// 2. Transition to Downloading state
 /// 3. Download all pending articles in parallel batches
+///    3b. Spawn DirectUnpack coordinator (if enabled)
 /// 4. Evaluate results and finalize status
 /// 5. Trigger post-processing
 pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
@@ -95,6 +98,34 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
         }
     };
 
+    // Create shared failed_articles counter (shared between download pipeline and DirectUnpack)
+    let failed_articles = Arc::new(AtomicU64::new(0));
+
+    // Phase 3c: Spawn DirectUnpack coordinator if enabled and post-process includes unpack
+    let post_process = PostProcess::from_i32(download.post_process);
+    let direct_unpack_enabled = ctx.config.processing.direct_unpack.enabled
+        && matches!(
+            post_process,
+            PostProcess::Unpack | PostProcess::UnpackAndCleanup
+        );
+
+    let download_complete = Arc::new(AtomicBool::new(false));
+    let direct_unpack_handle = if direct_unpack_enabled {
+        let coordinator = super::super::direct_unpack::DirectUnpackCoordinator::new(
+            id,
+            Arc::clone(&ctx.db),
+            Arc::clone(&ctx.config),
+            ctx.event_tx.clone(),
+            ctx.cancel_token.child_token(),
+            download_temp_dir.clone(),
+            Arc::clone(&failed_articles),
+            Arc::clone(&download_complete),
+        );
+        Some(tokio::spawn(coordinator.run()))
+    } else {
+        None
+    };
+
     // Phase 4: Download articles
     let _total_articles = pending_articles.len();
     let total_size_bytes = download.size_bytes as u64;
@@ -104,8 +135,28 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
         total_size_bytes,
         &download_temp_dir,
         &output_files,
+        &failed_articles,
     )
     .await;
+
+    // Signal DirectUnpack coordinator that downloading is done
+    download_complete.store(true, std::sync::atomic::Ordering::Release);
+
+    // Wait for DirectUnpack coordinator to finish processing remaining files
+    if let Some(handle) = direct_unpack_handle {
+        match handle.await {
+            Ok(_result) => {
+                tracing::debug!(download_id = id.0, "DirectUnpack coordinator finished");
+            }
+            Err(e) => {
+                tracing::error!(
+                    download_id = id.0,
+                    error = %e,
+                    "DirectUnpack coordinator task panicked"
+                );
+            }
+        }
+    }
 
     // Phase 5: Finalize based on results
     finalize_download(ctx, results, total_size_bytes).await;

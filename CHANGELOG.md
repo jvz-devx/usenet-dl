@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### DirectUnpack — Extract Archives During Download
+- **DirectUnpack coordinator**: Background task that polls for completed files and extracts RAR archives while the download is still in progress. When all articles download without failures and extraction succeeds, the post-processing pipeline skips verify/repair/extract and runs only move + cleanup, significantly reducing total completion time.
+- **DirectRename**: Uses PAR2 file metadata to fix obfuscated filenames mid-download. PAR2 files are prioritized for early download so their metadata is available to rename files as they complete.
+- **New configuration**: `processing.direct_unpack.enabled` (default: `false`), `processing.direct_unpack.direct_rename` (default: `false`), `processing.direct_unpack.poll_interval_ms` (default: `200`)
+- **New events**: `DirectUnpackStarted`, `FileCompleted`, `DirectUnpackExtracting`, `DirectUnpackExtracted`, `DirectUnpackCancelled`, `DirectUnpackComplete`, `DirectRenamed`
+- **PAR2 metadata parser**: Pure Rust binary parser for PAR2 File Description packets, used by DirectRename to map 16KB MD5 hashes to real filenames
+- **Database migration v5**: Adds `direct_unpack_state` column to `downloads`, `completed` and `original_filename` columns to `download_files`
+
+### Added
+
 #### Core Download Features
 - Core types: `Config`, `DownloadId`, `DownloadInfo`, `HistoryEntry`, `Status`, `Priority`, and `Stage` enums
 - SQLite persistence with automatic migrations for downloads, articles, history, RSS feeds, and scheduler

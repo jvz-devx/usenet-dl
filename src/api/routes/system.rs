@@ -104,6 +104,15 @@ pub async fn event_stream(
                     crate::types::Event::WebhookFailed { .. } => "webhook_failed",
                     crate::types::Event::ScriptFailed { .. } => "script_failed",
                     crate::types::Event::DuplicateDetected { .. } => "duplicate_detected",
+                    crate::types::Event::DirectUnpackStarted { .. } => "direct_unpack_started",
+                    crate::types::Event::FileCompleted { .. } => "file_completed",
+                    crate::types::Event::DirectUnpackExtracting { .. } => {
+                        "direct_unpack_extracting"
+                    }
+                    crate::types::Event::DirectUnpackExtracted { .. } => "direct_unpack_extracted",
+                    crate::types::Event::DirectUnpackCancelled { .. } => "direct_unpack_cancelled",
+                    crate::types::Event::DirectUnpackComplete { .. } => "direct_unpack_complete",
+                    crate::types::Event::DirectRenamed { .. } => "direct_renamed",
                     crate::types::Event::Shutdown => "shutdown",
                 };
 

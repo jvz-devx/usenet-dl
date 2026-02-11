@@ -107,6 +107,9 @@ impl Database {
         if current_version < 4 {
             Self::migrate_v4(&mut conn).await?;
         }
+        if current_version < 5 {
+            Self::migrate_v5(&mut conn).await?;
+        }
 
         Ok(())
     }
@@ -671,6 +674,99 @@ impl Database {
         }
 
         tracing::info!("Database migration v4 complete");
+        Ok(())
+    }
+
+    /// Migration v5: Add DirectUnpack support columns
+    async fn migrate_v5(conn: &mut SqliteConnection) -> Result<()> {
+        tracing::info!("Applying database migration v5");
+
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
+
+        let result = async {
+            // Add direct_unpack_state to downloads table
+            sqlx::query(
+                "ALTER TABLE downloads ADD COLUMN direct_unpack_state INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to add direct_unpack_state column: {}",
+                    e
+                )))
+            })?;
+
+            // Add completed flag to download_files table
+            sqlx::query(
+                "ALTER TABLE download_files ADD COLUMN completed INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to add completed column: {}",
+                    e
+                )))
+            })?;
+
+            // Add original_filename to download_files table (for DirectRename)
+            sqlx::query("ALTER TABLE download_files ADD COLUMN original_filename TEXT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| {
+                    Error::Database(DatabaseError::MigrationFailed(format!(
+                        "Failed to add original_filename column: {}",
+                        e
+                    )))
+                })?;
+
+            // Index for efficiently finding completed files per download
+            sqlx::query(
+                "CREATE INDEX idx_download_files_completed ON download_files(download_id, completed)",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to create index: {}",
+                    e
+                )))
+            })?;
+
+            // Record migration
+            Self::record_migration(conn, 5).await?;
+            Ok::<(), Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v5: {}",
+                            e
+                        )))
+                    })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+
+        tracing::info!("Database migration v5 complete");
         Ok(())
     }
 

@@ -54,7 +54,7 @@ fn prepare_batches_sums_connections_across_all_servers() {
     let config = config_with_servers(vec![server(8, 10), server(4, 10)]);
     let articles = (0..5).map(|i| make_article(i, i as i32, 100)).collect();
 
-    let (concurrency, _, _) = prepare_batches(&config, articles);
+    let (concurrency, _, _) = prepare_batches(&config, articles, None);
 
     assert_eq!(
         concurrency, 12,
@@ -67,7 +67,7 @@ fn prepare_batches_single_server_concurrency() {
     let config = config_with_servers(vec![server(20, 10)]);
     let articles = vec![make_article(1, 1, 100)];
 
-    let (concurrency, _, _) = prepare_batches(&config, articles);
+    let (concurrency, _, _) = prepare_batches(&config, articles, None);
 
     assert_eq!(concurrency, 20);
 }
@@ -77,7 +77,7 @@ fn prepare_batches_no_servers_gives_zero_concurrency() {
     let config = config_with_servers(vec![]);
     let articles = vec![make_article(1, 1, 100)];
 
-    let (concurrency, _, _) = prepare_batches(&config, articles);
+    let (concurrency, _, _) = prepare_batches(&config, articles, None);
 
     assert_eq!(concurrency, 0);
 }
@@ -91,7 +91,7 @@ fn prepare_batches_uses_first_server_pipeline_depth() {
     let config = config_with_servers(vec![server(4, 25), server(4, 50)]);
     let articles = (0..100).map(|i| make_article(i, i as i32, 100)).collect();
 
-    let (_, pipeline_depth, _) = prepare_batches(&config, articles);
+    let (_, pipeline_depth, _) = prepare_batches(&config, articles, None);
 
     assert_eq!(
         pipeline_depth, 25,
@@ -104,7 +104,7 @@ fn prepare_batches_clamps_zero_pipeline_depth_to_one() {
     let config = config_with_servers(vec![server(4, 0)]);
     let articles = (0..5).map(|i| make_article(i, i as i32, 100)).collect();
 
-    let (_, pipeline_depth, _) = prepare_batches(&config, articles);
+    let (_, pipeline_depth, _) = prepare_batches(&config, articles, None);
 
     assert_eq!(
         pipeline_depth, 1,
@@ -117,7 +117,7 @@ fn prepare_batches_defaults_pipeline_depth_when_no_servers() {
     let config = config_with_servers(vec![]);
     let articles = vec![make_article(1, 1, 100)];
 
-    let (_, pipeline_depth, _) = prepare_batches(&config, articles);
+    let (_, pipeline_depth, _) = prepare_batches(&config, articles, None);
 
     assert_eq!(
         pipeline_depth, 10,
@@ -134,7 +134,7 @@ fn prepare_batches_creates_correct_batch_sizes() {
     let config = config_with_servers(vec![server(4, 3)]);
     let articles: Vec<_> = (0..10).map(|i| make_article(i, i as i32, 100)).collect();
 
-    let (_, _, batches) = prepare_batches(&config, articles);
+    let (_, _, batches) = prepare_batches(&config, articles, None);
 
     assert_eq!(batches.len(), 4, "10 articles / batch size 3 = 4 batches");
     assert_eq!(batches[0].len(), 3);
@@ -148,7 +148,7 @@ fn prepare_batches_preserves_article_order() {
     let config = config_with_servers(vec![server(2, 2)]);
     let articles: Vec<_> = (0..4).map(|i| make_article(i, i as i32, 100)).collect();
 
-    let (_, _, batches) = prepare_batches(&config, articles);
+    let (_, _, batches) = prepare_batches(&config, articles, None);
 
     assert_eq!(batches[0][0].id, 0);
     assert_eq!(batches[0][1].id, 1);
@@ -160,7 +160,7 @@ fn prepare_batches_preserves_article_order() {
 fn prepare_batches_empty_articles_produces_no_batches() {
     let config = config_with_servers(vec![server(4, 10)]);
 
-    let (_, _, batches) = prepare_batches(&config, vec![]);
+    let (_, _, batches) = prepare_batches(&config, vec![], None);
 
     assert!(batches.is_empty());
 }
@@ -170,7 +170,7 @@ fn prepare_batches_single_article_makes_one_batch() {
     let config = config_with_servers(vec![server(4, 10)]);
     let articles = vec![make_article(42, 1, 500)];
 
-    let (_, _, batches) = prepare_batches(&config, articles);
+    let (_, _, batches) = prepare_batches(&config, articles, None);
 
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].len(), 1);
@@ -182,7 +182,7 @@ fn prepare_batches_exactly_one_batch_when_articles_equal_pipeline_depth() {
     let config = config_with_servers(vec![server(4, 5)]);
     let articles: Vec<_> = (0..5).map(|i| make_article(i, i as i32, 100)).collect();
 
-    let (_, _, batches) = prepare_batches(&config, articles);
+    let (_, _, batches) = prepare_batches(&config, articles, None);
 
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].len(), 5);

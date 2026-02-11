@@ -274,6 +274,24 @@ pub enum PostProcessError {
         /// The reason the path is invalid
         reason: String,
     },
+
+    /// DirectUnpack failed during download
+    #[error("DirectUnpack failed for download {id}: {reason}")]
+    DirectUnpackFailed {
+        /// The download ID for which DirectUnpack failed
+        id: i64,
+        /// The reason DirectUnpack failed
+        reason: String,
+    },
+
+    /// DirectRename failed during download
+    #[error("DirectRename failed for download {id}: {reason}")]
+    DirectRenameFailed {
+        /// The download ID for which DirectRename failed
+        id: i64,
+        /// The reason DirectRename failed
+        reason: String,
+    },
 }
 
 /// API error response format
@@ -461,6 +479,8 @@ impl ToHttpStatus for Error {
                 PostProcessError::FileCollision { .. } => "file_collision",
                 PostProcessError::CleanupFailed { .. } => "cleanup_failed",
                 PostProcessError::InvalidPath { .. } => "invalid_path",
+                PostProcessError::DirectUnpackFailed { .. } => "direct_unpack_failed",
+                PostProcessError::DirectRenameFailed { .. } => "direct_rename_failed",
             },
             Error::InvalidNzb(_) => "invalid_nzb",
             Error::Io(_) => "io_error",
@@ -745,6 +765,22 @@ mod tests {
                 }),
                 422,
                 "invalid_path",
+            ),
+            (
+                Error::PostProcess(PostProcessError::DirectUnpackFailed {
+                    id: 1,
+                    reason: "extraction error".into(),
+                }),
+                422,
+                "direct_unpack_failed",
+            ),
+            (
+                Error::PostProcess(PostProcessError::DirectRenameFailed {
+                    id: 1,
+                    reason: "rename error".into(),
+                }),
+                422,
+                "direct_rename_failed",
             ),
         ]
     }

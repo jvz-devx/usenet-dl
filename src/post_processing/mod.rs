@@ -173,6 +173,39 @@ impl PostProcessor {
         }
     }
 
+    /// Run only move and cleanup stages (skip verify/repair/extract).
+    ///
+    /// Used when DirectUnpack has already extracted archives during download.
+    /// The extracted files are expected to be in `download_path/extracted`.
+    pub async fn run_move_and_cleanup(
+        &self,
+        download_id: DownloadId,
+        download_path: PathBuf,
+        destination: PathBuf,
+    ) -> Result<PathBuf> {
+        info!(
+            download_id = download_id.0,
+            ?download_path,
+            ?destination,
+            "running move+cleanup only (DirectUnpack completed)"
+        );
+
+        // The extracted files should be in the same location the extract stage uses
+        let extracted_path = download_path.join("extracted");
+        let source = if extracted_path.is_dir() {
+            extracted_path
+        } else {
+            // No extracted subdirectory — use download_path directly
+            download_path.clone()
+        };
+
+        let final_path = self
+            .run_move_stage(download_id, &source, &destination)
+            .await?;
+        run_cleanup_stage(download_id, &download_path, &self.event_tx, &self.config).await?;
+        Ok(final_path)
+    }
+
     /// Re-run extraction only (skip verify/repair)
     ///
     /// This method runs only the extraction and move stages, skipping

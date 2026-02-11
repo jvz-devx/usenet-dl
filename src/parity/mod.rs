@@ -43,9 +43,11 @@
 
 mod cli;
 mod noop;
+pub(crate) mod par2_metadata;
 mod parser;
 mod traits;
 
 pub use cli::CliParityHandler;
 pub use noop::NoOpParityHandler;
+pub use par2_metadata::{Par2FileEntry, compute_16k_md5, parse_par2_file_entries};
 pub use traits::{ParityCapabilities, ParityHandler, RepairResult, VerifyResult};

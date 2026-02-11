@@ -477,6 +477,40 @@ impl Default for CleanupConfig {
     }
 }
 
+/// DirectUnpack configuration — extract archives while download is in progress
+///
+/// When enabled, completed RAR files are extracted as soon as all their segments
+/// finish downloading, overlapping extraction with the remaining download.
+/// Combined with DirectRename, which uses PAR2 metadata to fix obfuscated
+/// filenames before extraction.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct DirectUnpackConfig {
+    /// Enable DirectUnpack — extract archives during download (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Enable DirectRename — use PAR2 metadata to fix obfuscated filenames (default: false)
+    ///
+    /// Requires PAR2 files to be downloaded early. When enabled, PAR2 file articles
+    /// are prioritized in the download queue.
+    #[serde(default)]
+    pub direct_rename: bool,
+
+    /// How often to poll for newly completed files, in milliseconds (default: 200)
+    #[serde(default = "default_direct_unpack_poll_interval")]
+    pub poll_interval_ms: u64,
+}
+
+impl Default for DirectUnpackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            direct_rename: false,
+            poll_interval_ms: default_direct_unpack_poll_interval(),
+        }
+    }
+}
+
 /// Content pipeline processing configuration
 ///
 /// Groups settings related to post-download file processing, validation,
@@ -503,6 +537,10 @@ pub struct ProcessingConfig {
     /// Cleanup configuration for intermediate files
     #[serde(default)]
     pub cleanup: CleanupConfig,
+
+    /// DirectUnpack — extract archives while download is still in progress
+    #[serde(default)]
+    pub direct_unpack: DirectUnpackConfig,
 }
 
 /// Automated content discovery and ingestion configuration
@@ -1016,6 +1054,10 @@ fn default_sample_folder_names() -> Vec<String> {
 
 fn default_rss_check_interval() -> Duration {
     Duration::from_secs(15 * 60) // 15 minutes
+}
+
+fn default_direct_unpack_poll_interval() -> u64 {
+    200
 }
 
 // Duration serialization helper
