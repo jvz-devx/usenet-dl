@@ -123,7 +123,7 @@ pub(crate) fn spawn_batch_updater(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut buffer = Vec::with_capacity(ARTICLE_BATCH_SIZE);
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -439,7 +439,7 @@ mod tests {
                 .unwrap();
         }
 
-        // Wait for timer flush (interval is 1s, add margin)
+        // Wait for timer flush (interval is 500ms, add margin)
         tokio::time::sleep(Duration::from_millis(1500)).await;
 
         let pending = db.get_pending_articles(download_id).await.unwrap();

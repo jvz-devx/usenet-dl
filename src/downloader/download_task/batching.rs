@@ -87,6 +87,7 @@ pub(super) async fn download_articles(
     download_temp_dir: &std::path::Path,
     output_files: &Arc<OutputFiles>,
     failed_articles: &Arc<AtomicU64>,
+    file_completion_tracker: &Arc<super::context::FileCompletionTracker>,
 ) -> DownloadResults {
     let id = ctx.id;
     let total_articles = pending_articles.len();
@@ -133,6 +134,7 @@ pub(super) async fn download_articles(
         output_files,
         concurrency,
         pipeline_depth,
+        file_completion_tracker,
     })
     .await;
 
@@ -303,6 +305,7 @@ struct DownloadAllBatchesParams<'a> {
     output_files: &'a Arc<OutputFiles>,
     concurrency: usize,
     pipeline_depth: usize,
+    file_completion_tracker: &'a Arc<super::context::FileCompletionTracker>,
 }
 
 /// Download all article batches in parallel using a buffered stream.
@@ -319,6 +322,7 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
         output_files,
         concurrency,
         pipeline_depth,
+        file_completion_tracker,
     } = params;
     stream::iter(article_batches)
         .map(|article_batch| {
@@ -331,6 +335,7 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
             let downloaded_articles = Arc::clone(downloaded_articles);
             let failed_articles = Arc::clone(failed_articles);
             let output_files = Arc::clone(output_files);
+            let file_completion_tracker = Arc::clone(file_completion_tracker);
 
             async move {
                 fetch_article_batch(FetchArticleBatchParams {
@@ -346,6 +351,7 @@ async fn download_all_batches(params: DownloadAllBatchesParams<'_>) -> BatchResu
                     failed_articles,
                     output_files,
                     pipeline_depth,
+                    file_completion_tracker,
                 })
                 .await
             }

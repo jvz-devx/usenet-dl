@@ -50,6 +50,8 @@ pub(crate) struct DirectUnpackCoordinator {
     failed_articles: Arc<AtomicU64>,
     /// Flag set by the download pipeline when all articles have been processed
     download_complete: Arc<AtomicBool>,
+    /// Channel receiver for instant file completion notifications from the download pipeline
+    file_completion_rx: tokio::sync::mpsc::UnboundedReceiver<i32>,
 }
 
 impl DirectUnpackCoordinator {
@@ -63,6 +65,7 @@ impl DirectUnpackCoordinator {
         download_temp_dir: PathBuf,
         failed_articles: Arc<AtomicU64>,
         download_complete: Arc<AtomicBool>,
+        file_completion_rx: tokio::sync::mpsc::UnboundedReceiver<i32>,
     ) -> Self {
         Self {
             download_id,
@@ -73,6 +76,7 @@ impl DirectUnpackCoordinator {
             download_temp_dir,
             failed_articles,
             download_complete,
+            file_completion_rx,
         }
     }
 
@@ -80,7 +84,7 @@ impl DirectUnpackCoordinator {
     ///
     /// Returns when the download completes (all files processed), the download is
     /// cancelled, or article failures are detected.
-    pub(crate) async fn run(self) -> DirectUnpackResult {
+    pub(crate) async fn run(mut self) -> DirectUnpackResult {
         let id = self.download_id;
         let poll_interval =
             std::time::Duration::from_millis(self.config.processing.direct_unpack.poll_interval_ms);
@@ -125,7 +129,8 @@ impl DirectUnpackCoordinator {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
-            tokio::select! {
+            // Wait for either: cancellation, a file completion notification, or the poll timer
+            let poll_now = tokio::select! {
                 _ = self.cancel_token.cancelled() => {
                     tracing::info!(download_id = id.0, "DirectUnpack: cancelled via token");
                     self.set_db_state(state::CANCELLED).await;
@@ -135,151 +140,164 @@ impl DirectUnpackCoordinator {
                         extracted_files,
                     };
                 }
+                Some(_file_index) = self.file_completion_rx.recv() => {
+                    // Drain any additional queued notifications to batch-process them
+                    while self.file_completion_rx.try_recv().is_ok() {}
+                    true
+                }
                 _ = interval.tick() => {
-                    // Check for article failures → immediate cancellation
-                    if self.failed_articles.load(Ordering::Relaxed) > 0 {
-                        tracing::info!(
-                            download_id = id.0,
-                            "DirectUnpack: cancelling due to article failures"
-                        );
-                        self.set_db_state(state::CANCELLED).await;
-                        self.emit_cancelled("Article failures detected");
-                        return DirectUnpackResult {
-                            state: state::CANCELLED,
-                            extracted_files,
-                        };
-                    }
+                    true
+                }
+            };
 
-                    // Poll for newly completed files
-                    let newly_completed = match self.db.get_newly_completed_files(id).await {
-                        Ok(files) => files,
+            if !poll_now {
+                continue;
+            }
+
+            // Check for article failures → immediate cancellation
+            if self.failed_articles.load(Ordering::Relaxed) > 0 {
+                tracing::info!(
+                    download_id = id.0,
+                    "DirectUnpack: cancelling due to article failures"
+                );
+                self.set_db_state(state::CANCELLED).await;
+                self.emit_cancelled("Article failures detected");
+                return DirectUnpackResult {
+                    state: state::CANCELLED,
+                    extracted_files,
+                };
+            }
+
+            // Poll for newly completed files
+            let newly_completed = match self.db.get_newly_completed_files(id).await {
+                Ok(files) => files,
+                Err(e) => {
+                    tracing::warn!(
+                        download_id = id.0,
+                        error = %e,
+                        "DirectUnpack: failed to query completed files"
+                    );
+                    continue;
+                }
+            };
+
+            for file in &newly_completed {
+                if processed_indices.contains(&file.file_index) {
+                    continue;
+                }
+                processed_indices.insert(file.file_index);
+
+                // Mark file as completed in DB
+                if let Err(e) = self.db.mark_file_completed(id, file.file_index).await {
+                    tracing::warn!(
+                        download_id = id.0,
+                        file_index = file.file_index,
+                        error = %e,
+                        "DirectUnpack: failed to mark file completed"
+                    );
+                }
+
+                self.event_tx
+                    .send(Event::FileCompleted {
+                        id,
+                        file_index: file.file_index,
+                        filename: file.filename.clone(),
+                    })
+                    .ok();
+
+                let filename = &file.filename;
+
+                // Handle PAR2 files for DirectRename
+                if direct_rename_enabled && is_par2_file(filename) {
+                    let par2_path = self.download_temp_dir.join(filename);
+                    match rename_state.load_par2_metadata(&par2_path) {
+                        Ok(count) => {
+                            tracing::info!(
+                                download_id = id.0,
+                                filename = %filename,
+                                entries = count,
+                                "DirectRename: loaded PAR2 metadata"
+                            );
+                            // Retroactively rename already-completed files
+                            self.retroactive_rename(&rename_state, &processed_indices)
+                                .await;
+                        }
                         Err(e) => {
                             tracing::warn!(
                                 download_id = id.0,
+                                filename = %filename,
                                 error = %e,
-                                "DirectUnpack: failed to query completed files"
-                            );
-                            continue;
-                        }
-                    };
-
-                    for file in &newly_completed {
-                        if processed_indices.contains(&file.file_index) {
-                            continue;
-                        }
-                        processed_indices.insert(file.file_index);
-
-                        // Mark file as completed in DB
-                        if let Err(e) = self.db.mark_file_completed(id, file.file_index).await {
-                            tracing::warn!(
-                                download_id = id.0,
-                                file_index = file.file_index,
-                                error = %e,
-                                "DirectUnpack: failed to mark file completed"
+                                "DirectRename: failed to parse PAR2 metadata"
                             );
                         }
-
-                        self.event_tx
-                            .send(Event::FileCompleted {
-                                id,
-                                file_index: file.file_index,
-                                filename: file.filename.clone(),
-                            })
-                            .ok();
-
-                        let filename = &file.filename;
-
-                        // Handle PAR2 files for DirectRename
-                        if direct_rename_enabled && is_par2_file(filename) {
-                            let par2_path = self.download_temp_dir.join(filename);
-                            match rename_state.load_par2_metadata(&par2_path) {
-                                Ok(count) => {
-                                    tracing::info!(
-                                        download_id = id.0,
-                                        filename = %filename,
-                                        entries = count,
-                                        "DirectRename: loaded PAR2 metadata"
-                                    );
-                                    // Retroactively rename already-completed files
-                                    self.retroactive_rename(&rename_state, &processed_indices)
-                                        .await;
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        download_id = id.0,
-                                        filename = %filename,
-                                        error = %e,
-                                        "DirectRename: failed to parse PAR2 metadata"
-                                    );
-                                }
-                            }
-                        }
-
-                        // Try DirectRename on non-PAR2 files
-                        if direct_rename_enabled
-                            && rename_state.metadata_loaded
-                            && !is_par2_file(filename)
-                        {
-                            rename_state
-                                .try_rename_file(
-                                    id,
-                                    file.file_index,
-                                    filename,
-                                    &self.download_temp_dir,
-                                    &self.db,
-                                    &self.event_tx,
-                                )
-                                .await;
-                        }
-
-                        // Check if this is a first RAR volume → attempt extraction.
-                        // Re-read filename from DB in case DirectRename changed it.
-                        let current_filename = self.current_filename(file.file_index, filename).await;
-                        if is_first_rar_volume(&current_filename) {
-                            match self
-                                .try_extract(&current_filename, &extract_dest, &mut extracted_files)
-                                .await
-                            {
-                                ExtractAttempt::Success => {}
-                                ExtractAttempt::VolumeNotReady => {
-                                    pending_first_volumes.push(current_filename);
-                                }
-                                ExtractAttempt::Failed => {
-                                    // Non-fatal: post-processing fallback handles it
-                                }
-                            }
-                        }
-                    }
-
-                    // Retry pending first volumes
-                    let mut still_pending = Vec::new();
-                    for volume in pending_first_volumes.drain(..) {
-                        match self
-                            .try_extract(&volume, &extract_dest, &mut extracted_files)
-                            .await
-                        {
-                            ExtractAttempt::Success => {}
-                            ExtractAttempt::VolumeNotReady => {
-                                still_pending.push(volume);
-                            }
-                            ExtractAttempt::Failed => {}
-                        }
-                    }
-                    pending_first_volumes = still_pending;
-
-                    // Check if download is done and all work is processed
-                    if self.download_complete.load(Ordering::Acquire)
-                        && newly_completed.is_empty()
-                        && pending_first_volumes.is_empty()
-                    {
-                        break;
                     }
                 }
+
+                // Try DirectRename on non-PAR2 files
+                if direct_rename_enabled
+                    && rename_state.metadata_loaded
+                    && !is_par2_file(filename)
+                {
+                    rename_state
+                        .try_rename_file(
+                            id,
+                            file.file_index,
+                            filename,
+                            &self.download_temp_dir,
+                            &self.db,
+                            &self.event_tx,
+                        )
+                        .await;
+                }
+
+                // Check if this is a first RAR volume → attempt extraction.
+                // Re-read filename from DB in case DirectRename changed it.
+                let current_filename = self.current_filename(file.file_index, filename).await;
+                if is_first_rar_volume(&current_filename) {
+                    match self
+                        .try_extract(&current_filename, &extract_dest, &mut extracted_files)
+                        .await
+                    {
+                        ExtractAttempt::Success => {}
+                        ExtractAttempt::VolumeNotReady => {
+                            pending_first_volumes.push(current_filename);
+                        }
+                        ExtractAttempt::Failed => {
+                            // Non-fatal: post-processing fallback handles it
+                        }
+                    }
+                }
+            }
+
+            // Retry pending first volumes
+            let mut still_pending = Vec::new();
+            for volume in pending_first_volumes.drain(..) {
+                match self
+                    .try_extract(&volume, &extract_dest, &mut extracted_files)
+                    .await
+                {
+                    ExtractAttempt::Success => {}
+                    ExtractAttempt::VolumeNotReady => {
+                        still_pending.push(volume);
+                    }
+                    ExtractAttempt::Failed => {}
+                }
+            }
+            pending_first_volumes = still_pending;
+
+            // Check if download is done and all work is processed
+            if self.download_complete.load(Ordering::Acquire)
+                && newly_completed.is_empty()
+                && pending_first_volumes.is_empty()
+            {
+                break;
             }
         }
 
         // Successfully completed
         self.set_db_state(state::COMPLETED).await;
+        self.set_db_extracted_count(extracted_files.len() as i32)
+            .await;
         self.event_tx.send(Event::DirectUnpackComplete { id }).ok();
 
         tracing::info!(
@@ -431,6 +449,21 @@ impl DirectUnpackCoordinator {
                 download_id = self.download_id.0,
                 error = %e,
                 "DirectUnpack: failed to update state in DB"
+            );
+        }
+    }
+
+    /// Update the direct_unpack_extracted_count column in the database.
+    async fn set_db_extracted_count(&self, count: i32) {
+        if let Err(e) = self
+            .db
+            .update_direct_unpack_extracted_count(self.download_id, count)
+            .await
+        {
+            tracing::warn!(
+                download_id = self.download_id.0,
+                error = %e,
+                "DirectUnpack: failed to update extracted count in DB"
             );
         }
     }

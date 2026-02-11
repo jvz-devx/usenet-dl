@@ -540,6 +540,45 @@ impl Database {
         Ok(())
     }
 
+    /// Update the DirectUnpack extracted count for a download
+    pub async fn update_direct_unpack_extracted_count(
+        &self,
+        download_id: DownloadId,
+        count: i32,
+    ) -> Result<()> {
+        sqlx::query("UPDATE downloads SET direct_unpack_extracted_count = ? WHERE id = ?")
+            .bind(count)
+            .bind(download_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::QueryFailed(format!(
+                    "Failed to update direct_unpack_extracted_count: {}",
+                    e
+                )))
+            })?;
+
+        Ok(())
+    }
+
+    /// Get the DirectUnpack extracted count for a download
+    pub async fn get_direct_unpack_extracted_count(&self, download_id: DownloadId) -> Result<i32> {
+        let count: i32 = sqlx::query_scalar(
+            "SELECT direct_unpack_extracted_count FROM downloads WHERE id = ?",
+        )
+        .bind(download_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to get direct_unpack_extracted_count: {}",
+                e
+            )))
+        })?;
+
+        Ok(count)
+    }
+
     /// Count failed articles for a download
     pub async fn count_failed_articles(&self, download_id: DownloadId) -> Result<i64> {
         let count: i64 = sqlx::query_scalar(

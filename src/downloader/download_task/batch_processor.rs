@@ -47,6 +47,9 @@ use crate::types::DownloadId;
 
 use super::context::{ArticleProvider, BatchResultVec, OutputFiles, is_missing_article_error};
 
+/// Result of decoding a single article: Ok(article_id, file_index, segment_number, decoded_bytes) or Err(article_id, error_message).
+type DecodeResult = Result<(i64, i32, i32, u64), (i64, String)>;
+
 /// Aggregate batch results into success/failure counts and first error.
 pub(super) fn aggregate_results(results: BatchResultVec) -> super::orchestration::DownloadResults {
     let mut success_count = 0;
@@ -102,6 +105,8 @@ pub(super) struct FetchArticleBatchParams {
     pub(super) output_files: Arc<OutputFiles>,
     /// Pipeline depth for NNTP commands
     pub(super) pipeline_depth: usize,
+    /// Tracker for per-file article completion (DirectUnpack notification)
+    pub(super) file_completion_tracker: Arc<super::context::FileCompletionTracker>,
 }
 
 /// Fetch a single batch of articles via pipelined NNTP commands.
@@ -124,6 +129,7 @@ pub(super) async fn fetch_article_batch(
         failed_articles,
         output_files,
         pipeline_depth,
+        file_completion_tracker,
     } = params;
     let batch_size = article_batch.len();
 
@@ -177,6 +183,7 @@ pub(super) async fn fetch_article_batch(
                     downloaded_articles,
                     failed_articles,
                     output_files,
+                    file_completion_tracker,
                 })
                 .await;
             }
@@ -195,26 +202,47 @@ pub(super) async fn fetch_article_batch(
         }
     };
 
-    // Process each article response -- decode yEnc and DirectWrite to output files
-    let mut batch_results = Vec::with_capacity(batch_size);
+    // Offload yEnc decode + disk I/O to a blocking thread so tokio worker threads
+    // remain free to drive concurrent NNTP fetches on other batches.
+    let output_files_bg = Arc::clone(&output_files);
+    let temp_dir_bg = download_temp_dir.clone();
+    let decode_results = tokio::task::spawn_blocking(move || {
+        let mut results: Vec<DecodeResult> = Vec::with_capacity(article_batch.len());
+        for (article, response) in article_batch.iter().zip(responses.iter()) {
+            match decode_and_write(article, &response.data, &output_files_bg, &temp_dir_bg) {
+                Ok(decoded_size) => {
+                    results.push(Ok((article.id, article.file_index, article.segment_number, decoded_size)));
+                }
+                Err(e) => {
+                    results.push(Err((article.id, e)));
+                }
+            }
+        }
+        results
+    })
+    .await
+    .map_err(|e| (format!("Decode task panicked: {}", e), batch_size))?;
 
-    for (article, response) in article_batch.iter().zip(responses.iter()) {
-        match decode_and_write(article, &response.data, &output_files, &download_temp_dir) {
-            Ok(decoded_size) => {
+    // Process results back on the async runtime (channel sends, atomic counter updates)
+    let mut batch_results = Vec::with_capacity(batch_size);
+    for result in decode_results {
+        match result {
+            Ok((article_id, file_index, segment_number, decoded_size)) => {
                 if let Err(e) = batch_tx
-                    .send((article.id, crate::db::article_status::DOWNLOADED))
+                    .send((article_id, crate::db::article_status::DOWNLOADED))
                     .await
                 {
-                    tracing::warn!(download_id = id.0, article_id = article.id, error = %e, "Failed to send status update to batch channel");
+                    tracing::warn!(download_id = id.0, article_id = article_id, error = %e, "Failed to send status update to batch channel");
                 }
 
                 downloaded_articles.fetch_add(1, Ordering::Relaxed);
                 downloaded_bytes.fetch_add(decoded_size, Ordering::Relaxed);
+                file_completion_tracker.article_completed(file_index);
 
-                batch_results.push((article.segment_number, decoded_size));
+                batch_results.push((segment_number, decoded_size));
             }
-            Err(e) => {
-                tracing::error!(download_id = id.0, article_id = article.id, error = %e, "Failed to decode/write article");
+            Err((article_id, e)) => {
+                tracing::error!(download_id = id.0, article_id = article_id, error = %e, "Failed to decode/write article");
                 return Err((format!("Failed to decode/write article: {}", e), batch_size));
             }
         }
@@ -241,7 +269,7 @@ pub(super) fn decode_and_write(
         Ok(decoded) => {
             let decoded_size = decoded.data.len() as u64;
 
-            if let Some((file_handle, _filename)) = output_files.files.get(&article.file_index) {
+            if let Some((file_handle, _filename, allocated)) = output_files.files.get(&article.file_index) {
                 // Calculate byte offset (yEnc begin is 1-based)
                 let offset = decoded
                     .part
@@ -249,14 +277,14 @@ pub(super) fn decode_and_write(
                     .map(|p| p.begin - 1) // multi-part: write at byte offset
                     .unwrap_or(0); // single-part: write at start
 
-                // Pre-allocate file to full size on first segment write (creates sparse file)
-                if decoded.header.size > 0 {
-                    let current_len = file_handle.metadata().map(|m| m.len()).unwrap_or(0);
-                    if current_len == 0 {
-                        file_handle
-                            .set_len(decoded.header.size)
-                            .map_err(|e| format!("Failed to pre-allocate file: {}", e))?;
-                    }
+                // Pre-allocate file to full size on first segment write (creates sparse file).
+                // AtomicBool avoids repeated fstat+ftruncate syscalls (~10k saved per download).
+                if decoded.header.size > 0
+                    && !allocated.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    file_handle
+                        .set_len(decoded.header.size)
+                        .map_err(|e| format!("Failed to pre-allocate file: {}", e))?;
                 }
 
                 // Write decoded data at correct offset (lock-free via pwrite/seek_write)
@@ -296,6 +324,8 @@ pub(super) struct RetryArticlesParams {
     pub(super) downloaded_articles: Arc<AtomicU64>,
     pub(super) failed_articles: Arc<AtomicU64>,
     pub(super) output_files: Arc<OutputFiles>,
+    /// Tracker for per-file article completion (DirectUnpack notification)
+    pub(super) file_completion_tracker: Arc<super::context::FileCompletionTracker>,
 }
 
 /// Retry each article in a failed batch individually (pipeline_depth=1).
@@ -317,6 +347,7 @@ pub(super) async fn retry_articles_individually(
         downloaded_articles,
         failed_articles,
         output_files,
+        file_completion_tracker,
     } = params;
     let batch_size = article_batch.len();
     let mut successful_results = Vec::new();
@@ -334,16 +365,26 @@ pub(super) async fn retry_articles_individually(
         };
 
         match article_provider.fetch_articles(&[&msg_id], 1).await {
-            Ok(responses) if !responses.is_empty() => {
-                let response = &responses[0];
+            Ok(mut responses) if !responses.is_empty() => {
+                let response_data = responses.swap_remove(0).data;
+                let article_clone = article.clone();
+                let of = Arc::clone(&output_files);
+                let td = download_temp_dir.clone();
 
-                match decode_and_write(article, &response.data, &output_files, &download_temp_dir) {
+                let decode_result = tokio::task::spawn_blocking(move || {
+                    decode_and_write(&article_clone, &response_data, &of, &td)
+                })
+                .await
+                .unwrap_or_else(|e| Err(format!("Decode task panicked: {}", e)));
+
+                match decode_result {
                     Ok(decoded_size) => {
                         let _ = batch_tx
                             .send((article.id, crate::db::article_status::DOWNLOADED))
                             .await;
                         downloaded_articles.fetch_add(1, Ordering::Relaxed);
                         downloaded_bytes.fetch_add(decoded_size, Ordering::Relaxed);
+                        file_completion_tracker.article_completed(article.file_index);
                         successful_results.push((article.segment_number, decoded_size));
                     }
                     Err(e) => {

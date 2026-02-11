@@ -4,7 +4,6 @@ use crate::error::Result;
 use crate::parity::ParityHandler;
 use crate::types::{DownloadId, Event};
 use std::path::Path;
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
@@ -60,7 +59,7 @@ pub(crate) async fn run_repair_stage(
     download_id: DownloadId,
     download_path: &Path,
     event_tx: &broadcast::Sender<Event>,
-    parity_handler: &Arc<dyn ParityHandler>,
+    parity_handler: &dyn ParityHandler,
 ) -> Result<()> {
     debug!(
         download_id = download_id.0,

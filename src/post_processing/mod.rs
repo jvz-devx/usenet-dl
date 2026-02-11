@@ -101,7 +101,7 @@ impl PostProcessor {
                     download_id,
                     &download_path,
                     &self.event_tx,
-                    &self.parity_handler,
+                    &*self.parity_handler,
                 )
                 .await?;
                 Ok(download_path)
@@ -109,59 +109,65 @@ impl PostProcessor {
 
             PostProcess::Repair => {
                 // Verify and repair if needed
-                run_verify_stage(
+                let damaged = run_verify_stage(
                     download_id,
                     &download_path,
                     &self.event_tx,
-                    &self.parity_handler,
+                    &*self.parity_handler,
                 )
                 .await?;
-                run_repair_stage(
-                    download_id,
-                    &download_path,
-                    &self.event_tx,
-                    &self.parity_handler,
-                )
-                .await?;
+                if damaged {
+                    run_repair_stage(
+                        download_id,
+                        &download_path,
+                        &self.event_tx,
+                        &*self.parity_handler,
+                    )
+                    .await?;
+                }
                 Ok(download_path)
             }
 
             PostProcess::Unpack => {
                 // Verify, repair, and extract
-                run_verify_stage(
+                let damaged = run_verify_stage(
                     download_id,
                     &download_path,
                     &self.event_tx,
-                    &self.parity_handler,
+                    &*self.parity_handler,
                 )
                 .await?;
-                run_repair_stage(
-                    download_id,
-                    &download_path,
-                    &self.event_tx,
-                    &self.parity_handler,
-                )
-                .await?;
+                if damaged {
+                    run_repair_stage(
+                        download_id,
+                        &download_path,
+                        &self.event_tx,
+                        &*self.parity_handler,
+                    )
+                    .await?;
+                }
                 let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
                 Ok(extracted_path)
             }
 
             PostProcess::UnpackAndCleanup => {
                 // Full pipeline: verify, repair, extract, move, cleanup
-                run_verify_stage(
+                let damaged = run_verify_stage(
                     download_id,
                     &download_path,
                     &self.event_tx,
-                    &self.parity_handler,
+                    &*self.parity_handler,
                 )
                 .await?;
-                run_repair_stage(
-                    download_id,
-                    &download_path,
-                    &self.event_tx,
-                    &self.parity_handler,
-                )
-                .await?;
+                if damaged {
+                    run_repair_stage(
+                        download_id,
+                        &download_path,
+                        &self.event_tx,
+                        &*self.parity_handler,
+                    )
+                    .await?;
+                }
                 let extracted_path = self.run_extract_stage(download_id, &download_path).await?;
                 let final_path = self
                     .run_move_stage(download_id, &extracted_path, &destination)

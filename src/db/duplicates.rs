@@ -18,7 +18,7 @@ impl Database {
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
                 error_message, created_at, started_at, completed_at,
-                direct_unpack_state
+                direct_unpack_state, direct_unpack_extracted_count
             FROM downloads
             WHERE nzb_hash = ?
             LIMIT 1
@@ -49,7 +49,7 @@ impl Database {
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
                 error_message, created_at, started_at, completed_at,
-                direct_unpack_state
+                direct_unpack_state, direct_unpack_extracted_count
             FROM downloads
             WHERE name = ?
             LIMIT 1
@@ -80,7 +80,7 @@ impl Database {
                 category, destination, post_process, priority, status,
                 progress, speed_bps, size_bytes, downloaded_bytes,
                 error_message, created_at, started_at, completed_at,
-                direct_unpack_state
+                direct_unpack_state, direct_unpack_extracted_count
             FROM downloads
             WHERE job_name = ?
             LIMIT 1

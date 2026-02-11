@@ -816,10 +816,12 @@ async fn test_verify_stage_handles_not_supported() {
         DownloadId(1),
         &download_path,
         &tx,
-        &processor.parity_handler,
+        &*processor.parity_handler,
     )
     .await;
     assert!(result.is_ok());
+    // NotSupported means no damage detected
+    assert!(!result.unwrap(), "NotSupported should report no damage");
 
     // Should have emitted Verifying event
     let event1 = rx.recv().await.unwrap();
@@ -928,7 +930,7 @@ async fn test_repair_stage_handles_not_supported() {
         DownloadId(1),
         &download_path,
         &tx,
-        &processor.parity_handler,
+        &*processor.parity_handler,
     )
     .await;
     assert!(result.is_ok());
