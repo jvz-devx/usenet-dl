@@ -81,7 +81,14 @@ impl Default for DownloadConfig {
 ///
 /// Groups settings for external binaries and password handling.
 /// Used as a nested sub-config within [`Config`].
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+///
+/// ## Custom parity handler
+///
+/// Callers can inject their own [`ParityHandler`](crate::parity::ParityHandler)
+/// via [`parity_handler`](Self::parity_handler). When set, it takes priority
+/// over `par2_path` and PATH discovery. When `None` (the default), the
+/// existing auto-detection logic applies.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct ToolsConfig {
     /// Path to global password file (one password per line)
     #[serde(default)]
@@ -106,6 +113,35 @@ pub struct ToolsConfig {
     /// Whether to search PATH for external binaries if explicit paths not set (default: true)
     #[serde(default = "default_true")]
     pub search_path: bool,
+
+    /// Optional pre-built parity handler to use instead of auto-detection.
+    ///
+    /// When `Some`, this handler is used directly and `par2_path` / PATH
+    /// discovery are skipped. When `None`, the downloader falls back to its
+    /// existing auto-detection logic.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub parity_handler: Option<std::sync::Arc<dyn crate::parity::ParityHandler>>,
+}
+
+impl std::fmt::Debug for ToolsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolsConfig")
+            .field("password_file", &self.password_file)
+            .field("try_empty_password", &self.try_empty_password)
+            .field("unrar_path", &self.unrar_path)
+            .field("sevenzip_path", &self.sevenzip_path)
+            .field("par2_path", &self.par2_path)
+            .field("search_path", &self.search_path)
+            .field(
+                "parity_handler",
+                &self
+                    .parity_handler
+                    .as_ref()
+                    .map(|h| h.name()),
+            )
+            .finish()
+    }
 }
 
 impl Default for ToolsConfig {
@@ -117,6 +153,7 @@ impl Default for ToolsConfig {
             sevenzip_path: None,
             par2_path: None,
             search_path: true,
+            parity_handler: None,
         }
     }
 }

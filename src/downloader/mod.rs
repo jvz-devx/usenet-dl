@@ -229,9 +229,12 @@ impl UsenetDownloader {
         // Initialize the next ID counter (0 since config rules don't have IDs yet)
         let next_schedule_rule_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
 
-        // Initialize parity handler based on config
+        // Initialize parity handler — prefer injected handler, then fall back to config
         let parity_handler: std::sync::Arc<dyn ParityHandler> =
-            if let Some(ref par2_path) = config.tools.par2_path {
+            if let Some(ref handler) = config.tools.parity_handler {
+                // Use the caller-provided handler directly
+                std::sync::Arc::clone(handler)
+            } else if let Some(ref par2_path) = config.tools.par2_path {
                 // Use explicitly configured binary path
                 std::sync::Arc::new(CliParityHandler::new(par2_path.clone()))
             } else if config.tools.search_path {
