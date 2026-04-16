@@ -5,6 +5,20 @@ All notable changes to the usenet-dl project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-16
+
+### Added
+- Persisted per-file paused state in `download_files` so downstream integrations can implement real file-level pause/resume.
+- Database/API helpers for reading and updating file paused state.
+
+### Changed
+- Pending article selection now excludes paused files.
+- Download completion/finalization logic now keeps partially paused downloads paused instead of falsely completing them.
+- Queue restore/resume paths preserve the paused-file invariant.
+
+### Fixed
+- Downstream integrations such as `nzbget-rs` can now expose real `listfiles[].Paused` semantics instead of UI-only overlays.
+
 ## [0.2.0] - 2026-02-11
 
 ### Added
