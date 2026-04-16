@@ -113,6 +113,9 @@ impl Database {
         if current_version < 6 {
             Self::migrate_v6(&mut conn).await?;
         }
+        if current_version < 7 {
+            Self::migrate_v7(&mut conn).await?;
+        }
 
         Ok(())
     }
@@ -824,6 +827,70 @@ impl Database {
         }
 
         tracing::info!("Database migration v6 complete");
+        Ok(())
+    }
+
+    /// Migration v7: Persist per-file paused state.
+    async fn migrate_v7(conn: &mut SqliteConnection) -> Result<()> {
+        tracing::info!("Applying database migration v7");
+
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to begin transaction: {}",
+                    e
+                )))
+            })?;
+
+        let result = async {
+            sqlx::query("ALTER TABLE download_files ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| {
+                    Error::Database(DatabaseError::MigrationFailed(format!(
+                        "Failed to add paused column: {}",
+                        e
+                    )))
+                })?;
+
+            sqlx::query(
+                "CREATE INDEX idx_download_files_paused ON download_files(download_id, paused)",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                Error::Database(DatabaseError::MigrationFailed(format!(
+                    "Failed to create paused index: {}",
+                    e
+                )))
+            })?;
+
+            Self::record_migration(conn, 7).await?;
+            Ok::<(), Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Database(DatabaseError::MigrationFailed(format!(
+                            "Failed to commit migration v7: {}",
+                            e
+                        )))
+                    })?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+
+        tracing::info!("Database migration v7 complete");
         Ok(())
     }
 

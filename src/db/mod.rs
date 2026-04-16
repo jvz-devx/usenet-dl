@@ -167,6 +167,8 @@ pub struct DownloadFile {
     pub subject: Option<String>,
     /// Total number of segments in this file
     pub total_segments: i32,
+    /// Whether this file is paused (0=no, 1=yes)
+    pub paused: i32,
     /// Whether all segments of this file have been downloaded (0=no, 1=yes)
     pub completed: i32,
     /// Original filename before DirectRename (None if not renamed)

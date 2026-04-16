@@ -236,6 +236,38 @@ async fn test_restore_queue_downloading_with_pending_articles_requeues() {
 }
 
 #[tokio::test]
+async fn test_restore_queue_downloading_only_paused_articles_stays_paused() {
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let id = downloader
+        .add_nzb_content(
+            SAMPLE_NZB.as_bytes(),
+            "paused-remaining-test",
+            DownloadOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    downloader.db.set_file_paused(id, 0, true).await.unwrap();
+    downloader
+        .db
+        .update_status(id, Status::Downloading.to_i32())
+        .await
+        .unwrap();
+
+    {
+        downloader.queue_state.queue.lock().await.clear();
+    }
+
+    let needs_pp = downloader.restore_queue().await.unwrap();
+    assert!(needs_pp.is_empty());
+
+    let download = downloader.db.get_download(id).await.unwrap().unwrap();
+    assert_eq!(Status::from_i32(download.status), Status::Paused);
+    assert_eq!(downloader.queue_state.queue.lock().await.len(), 0);
+}
+
+#[tokio::test]
 async fn test_restore_queue_downloading_all_articles_done_needs_post_processing() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 

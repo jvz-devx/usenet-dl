@@ -164,39 +164,40 @@ impl UsenetDownloader {
     /// This method is primarily used internally by restore_queue() during startup to
     /// resume interrupted downloads, but can also be called directly for explicit resume operations.
     pub async fn resume_download(&self, id: DownloadId) -> Result<()> {
-        // Get pending articles for this download
+        // Get pending articles for this download, excluding paused files.
         let pending_articles = self.db.get_pending_articles(id).await?;
 
-        if pending_articles.is_empty() {
-            // All articles downloaded — mark as Processing.
-            // The caller is responsible for spawning post-processing if needed.
-            tracing::info!(
-                download_id = id.0,
-                "No pending articles - marking as Processing"
-            );
-
-            self.db
-                .update_status(id, Status::Processing.to_i32())
-                .await?;
-
-            Ok(())
-        } else {
-            // Resume downloading remaining articles
+        if !pending_articles.is_empty() {
             tracing::info!(
                 download_id = id.0,
                 pending_articles = pending_articles.len(),
                 "Resuming download with pending articles"
             );
 
-            // Update status back to Queued
             self.db.update_status(id, Status::Queued.to_i32()).await?;
-
-            // Add back to priority queue for processing
-            // The queue processor will automatically pick it up and download pending articles
             self.add_to_queue(id).await?;
-
-            Ok(())
+            return Ok(());
         }
+
+        if self.db.has_any_pending_articles(id).await? {
+            tracing::info!(
+                download_id = id.0,
+                "Only paused file articles remain - keeping download paused"
+            );
+            self.db.update_status(id, Status::Paused.to_i32()).await?;
+            return Ok(());
+        }
+
+        tracing::info!(
+            download_id = id.0,
+            "No pending articles - marking as Processing"
+        );
+
+        self.db
+            .update_status(id, Status::Processing.to_i32())
+            .await?;
+
+        Ok(())
     }
 
     /// Cancel a download and delete its files

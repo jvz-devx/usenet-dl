@@ -4,7 +4,7 @@ use crate::error::DatabaseError;
 use crate::types::DownloadId;
 use crate::{Error, Result};
 
-use super::{Article, Database, NewArticle, article_status};
+use super::{Article, Database, DownloadFile, NewArticle, article_status};
 
 impl Database {
     /// Insert a single article
@@ -247,14 +247,19 @@ impl Database {
         Ok(rows)
     }
 
-    /// Get pending articles for a download (for resume)
+    /// Get pending articles for a download, excluding paused files.
     pub async fn get_pending_articles(&self, download_id: DownloadId) -> Result<Vec<Article>> {
         let rows = sqlx::query_as::<_, Article>(
             r#"
-            SELECT id, download_id, message_id, segment_number, file_index, size_bytes, status, downloaded_at
-            FROM download_articles
-            WHERE download_id = ? AND status = 0
-            ORDER BY file_index ASC, segment_number ASC
+            SELECT da.id, da.download_id, da.message_id, da.segment_number, da.file_index, da.size_bytes, da.status, da.downloaded_at
+            FROM download_articles da
+            LEFT JOIN download_files df
+              ON df.download_id = da.download_id
+             AND df.file_index = da.file_index
+            WHERE da.download_id = ?
+              AND da.status = 0
+              AND COALESCE(df.paused, 0) = 0
+            ORDER BY da.file_index ASC, da.segment_number ASC
             "#,
         )
         .bind(download_id)
@@ -394,7 +399,7 @@ impl Database {
     ) -> Result<Vec<super::DownloadFile>> {
         let rows = sqlx::query_as::<_, super::DownloadFile>(
             r#"
-            SELECT id, download_id, file_index, filename, subject, total_segments, completed, original_filename
+            SELECT id, download_id, file_index, filename, subject, total_segments, paused, completed, original_filename
             FROM download_files
             WHERE download_id = ?
             ORDER BY file_index ASC
@@ -415,8 +420,7 @@ impl Database {
 
     /// Get newly completed files for DirectUnpack processing.
     ///
-    /// Returns files where `completed=0` but all articles have been downloaded
-    /// (article count with status=DOWNLOADED matches total_segments).
+    /// Returns unpaused files where `completed=0` and all articles have been downloaded.
     pub async fn get_newly_completed_files(
         &self,
         download_id: DownloadId,
@@ -424,9 +428,10 @@ impl Database {
         let rows = sqlx::query_as::<_, super::DownloadFile>(
             r#"
             SELECT df.id, df.download_id, df.file_index, df.filename, df.subject,
-                   df.total_segments, df.completed, df.original_filename
+                   df.total_segments, df.paused, df.completed, df.original_filename
             FROM download_files df
             WHERE df.download_id = ?
+              AND df.paused = 0
               AND df.completed = 0
               AND df.total_segments = (
                 SELECT COUNT(*) FROM download_articles da
@@ -563,20 +568,116 @@ impl Database {
 
     /// Get the DirectUnpack extracted count for a download
     pub async fn get_direct_unpack_extracted_count(&self, download_id: DownloadId) -> Result<i32> {
-        let count: i32 = sqlx::query_scalar(
-            "SELECT direct_unpack_extracted_count FROM downloads WHERE id = ?",
+        let count: i32 =
+            sqlx::query_scalar("SELECT direct_unpack_extracted_count FROM downloads WHERE id = ?")
+                .bind(download_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    Error::Database(DatabaseError::QueryFailed(format!(
+                        "Failed to get direct_unpack_extracted_count: {}",
+                        e
+                    )))
+                })?;
+
+        Ok(count)
+    }
+
+    /// Set a file's paused state.
+    pub async fn set_file_paused(
+        &self,
+        download_id: DownloadId,
+        file_index: i32,
+        paused: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE download_files SET paused = ? WHERE download_id = ? AND file_index = ?",
+        )
+        .bind(if paused { 1 } else { 0 })
+        .bind(download_id)
+        .bind(file_index)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to update file paused state: {}",
+                e
+            )))
+        })?;
+
+        Ok(())
+    }
+
+    /// Get a single download file by download and file index.
+    pub async fn get_download_file(
+        &self,
+        download_id: DownloadId,
+        file_index: i32,
+    ) -> Result<Option<DownloadFile>> {
+        let row = sqlx::query_as::<_, DownloadFile>(
+            r#"
+            SELECT id, download_id, file_index, filename, subject, total_segments, paused, completed, original_filename
+            FROM download_files
+            WHERE download_id = ? AND file_index = ?
+            "#,
+        )
+        .bind(download_id)
+        .bind(file_index)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to get download file: {}",
+                e
+            )))
+        })?;
+
+        Ok(row)
+    }
+
+    /// Return true when a download still has unpaused pending articles.
+    pub async fn has_active_pending_articles(&self, download_id: DownloadId) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM download_articles da
+            LEFT JOIN download_files df
+              ON df.download_id = da.download_id
+             AND df.file_index = da.file_index
+            WHERE da.download_id = ?
+              AND da.status = 0
+              AND COALESCE(df.paused, 0) = 0
+            "#,
         )
         .bind(download_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| {
             Error::Database(DatabaseError::QueryFailed(format!(
-                "Failed to get direct_unpack_extracted_count: {}",
+                "Failed to count active pending articles: {}",
                 e
             )))
         })?;
 
-        Ok(count)
+        Ok(count > 0)
+    }
+
+    /// Return true when a download still has any pending articles, including paused files.
+    pub async fn has_any_pending_articles(&self, download_id: DownloadId) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM download_articles WHERE download_id = ? AND status = 0",
+        )
+        .bind(download_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::QueryFailed(format!(
+                "Failed to count pending articles: {}",
+                e
+            )))
+        })?;
+
+        Ok(count > 0)
     }
 
     /// Count failed articles for a download

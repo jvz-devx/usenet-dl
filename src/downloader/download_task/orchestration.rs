@@ -40,18 +40,42 @@ pub(crate) async fn run_download_task(ctx: DownloadTaskContext) {
         None => return, // Already logged and cleaned up
     };
 
-    // Phase 2: Handle empty article list (nothing to download)
+    // Phase 2: Handle empty article list.
     if pending_articles.is_empty() {
-        ctx.event_tx
-            .send(Event::DownloadComplete {
-                id,
-                articles_failed: None,
-                articles_total: None,
-            })
-            .ok();
-        ctx.remove_from_active().await;
-        ctx.spawn_post_processing();
-        return;
+        match ctx.db.has_any_pending_articles(id).await {
+            Ok(true) => {
+                if let Err(e) = ctx.db.update_status(id, crate::types::Status::Paused.to_i32()).await {
+                    tracing::error!(
+                        download_id = id.0,
+                        error = %e,
+                        "Failed to keep paused-only download paused"
+                    );
+                }
+                ctx.remove_from_active().await;
+                return;
+            }
+            Ok(false) => {
+                ctx.event_tx
+                    .send(Event::DownloadComplete {
+                        id,
+                        articles_failed: None,
+                        articles_total: None,
+                    })
+                    .ok();
+                ctx.remove_from_active().await;
+                ctx.spawn_post_processing();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    download_id = id.0,
+                    error = %e,
+                    "Failed to check for remaining paused work"
+                );
+                ctx.remove_from_active().await;
+                return;
+            }
+        }
     }
 
     // Phase 3: Create temp directory

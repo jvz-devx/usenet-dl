@@ -28,5 +28,13 @@ async fn test_database_creation() {
     assert!(tables.contains(&"rss_filters".to_string()));
     assert!(tables.contains(&"rss_seen".to_string()));
 
+    let paused_col: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('download_files') WHERE name = 'paused'",
+    )
+    .fetch_optional(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(paused_col.as_deref(), Some("paused"));
+
     db.close().await;
 }

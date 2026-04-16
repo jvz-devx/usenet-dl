@@ -1,5 +1,75 @@
 use crate::db::*;
+use crate::types::DownloadId;
 use tempfile::NamedTempFile;
+
+async fn create_download_with_files(db: &Database) -> DownloadId {
+    let new_download = NewDownload {
+        name: "Test Download".to_string(),
+        nzb_path: "/test.nzb".to_string(),
+        nzb_meta_name: None,
+        nzb_hash: None,
+        job_name: None,
+        category: None,
+        destination: "/downloads".to_string(),
+        post_process: 4,
+        priority: 0,
+        status: 0,
+        size_bytes: 1024 * 1024,
+    };
+    let download_id = db.insert_download(&new_download).await.unwrap();
+
+    let files = vec![
+        NewDownloadFile {
+            download_id,
+            file_index: 0,
+            filename: "file0.bin".to_string(),
+            subject: Some("file0".to_string()),
+            total_segments: 2,
+        },
+        NewDownloadFile {
+            download_id,
+            file_index: 1,
+            filename: "file1.bin".to_string(),
+            subject: Some("file1".to_string()),
+            total_segments: 2,
+        },
+    ];
+    db.insert_files_batch(&files).await.unwrap();
+
+    let articles = vec![
+        NewArticle {
+            download_id,
+            message_id: "<f0-1@example.com>".to_string(),
+            segment_number: 1,
+            file_index: 0,
+            size_bytes: 10,
+        },
+        NewArticle {
+            download_id,
+            message_id: "<f0-2@example.com>".to_string(),
+            segment_number: 2,
+            file_index: 0,
+            size_bytes: 10,
+        },
+        NewArticle {
+            download_id,
+            message_id: "<f1-1@example.com>".to_string(),
+            segment_number: 1,
+            file_index: 1,
+            size_bytes: 10,
+        },
+        NewArticle {
+            download_id,
+            message_id: "<f1-2@example.com>".to_string(),
+            segment_number: 2,
+            file_index: 1,
+            size_bytes: 10,
+        },
+    ];
+    db.insert_articles_batch(&articles).await.unwrap();
+
+    download_id
+}
 
 #[tokio::test]
 async fn test_insert_and_get_article() {
@@ -607,6 +677,43 @@ async fn test_batch_update_preserves_downloaded_at_on_non_downloaded_status() {
         article.downloaded_at, original_timestamp,
         "Timestamp should be preserved"
     );
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_get_pending_articles_excludes_paused_files() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let db = Database::new(temp_file.path()).await.unwrap();
+    let download_id = create_download_with_files(&db).await;
+
+    db.set_file_paused(download_id, 1, true).await.unwrap();
+
+    let pending = db.get_pending_articles(download_id).await.unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(pending.iter().all(|article| article.file_index == 0));
+    assert!(db.has_active_pending_articles(download_id).await.unwrap());
+    assert!(db.has_any_pending_articles(download_id).await.unwrap());
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_all_remaining_pending_articles_can_be_paused() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let db = Database::new(temp_file.path()).await.unwrap();
+    let download_id = create_download_with_files(&db).await;
+
+    db.set_file_paused(download_id, 0, true).await.unwrap();
+    db.set_file_paused(download_id, 1, true).await.unwrap();
+
+    let pending = db.get_pending_articles(download_id).await.unwrap();
+    assert!(pending.is_empty());
+    assert!(!db.has_active_pending_articles(download_id).await.unwrap());
+    assert!(db.has_any_pending_articles(download_id).await.unwrap());
+
+    let file = db.get_download_file(download_id, 1).await.unwrap().unwrap();
+    assert_eq!(file.paused, 1);
 
     db.close().await;
 }

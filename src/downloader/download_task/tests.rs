@@ -45,6 +45,23 @@ fn make_article(id: i64, segment: i32, size: i64) -> crate::db::Article {
     }
 }
 
+async fn insert_test_file(
+    db: &crate::db::Database,
+    download_id: crate::types::DownloadId,
+    file_index: i32,
+    total_segments: i32,
+) {
+    db.insert_files_batch(&[crate::db::NewDownloadFile {
+        download_id,
+        file_index,
+        filename: format!("file-{file_index}.bin"),
+        subject: Some(format!("file-{file_index}")),
+        total_segments,
+    }])
+    .await
+    .unwrap();
+}
+
 // -----------------------------------------------------------------------
 // prepare_batches: concurrency calculation
 // -----------------------------------------------------------------------
@@ -857,7 +874,10 @@ async fn fetch_article_batch_cancelled() {
         failed_articles: Arc::new(AtomicU64::new(0)),
         output_files: empty_output_files(),
         pipeline_depth: 10,
-        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(
+            std::collections::HashMap::new(),
+            fct_tx,
+        )),
     })
     .await;
 
@@ -899,7 +919,10 @@ async fn fetch_article_batch_success_writes_files() {
         failed_articles: Arc::new(AtomicU64::new(0)),
         output_files: empty_output_files(),
         pipeline_depth: 10,
-        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(
+            std::collections::HashMap::new(),
+            fct_tx,
+        )),
     })
     .await;
 
@@ -967,7 +990,10 @@ async fn fetch_article_batch_provider_error() {
         failed_articles: Arc::new(AtomicU64::new(0)),
         output_files: empty_output_files(),
         pipeline_depth: 10,
-        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(
+            std::collections::HashMap::new(),
+            fct_tx,
+        )),
     })
     .await;
 
@@ -1100,7 +1126,10 @@ async fn retry_articles_individually_partial_success() {
         downloaded_articles: downloaded_articles.clone(),
         failed_articles: failed_articles.clone(),
         output_files: empty_output_files(),
-        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(
+            std::collections::HashMap::new(),
+            fct_tx,
+        )),
     })
     .await;
 
@@ -1171,7 +1200,10 @@ async fn retry_articles_individually_all_missing() {
         downloaded_articles: Arc::new(AtomicU64::new(0)),
         failed_articles: failed_articles.clone(),
         output_files: empty_output_files(),
-        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(std::collections::HashMap::new(), fct_tx)),
+        file_completion_tracker: Arc::new(super::context::FileCompletionTracker::new(
+            std::collections::HashMap::new(),
+            fct_tx,
+        )),
     })
     .await;
 
@@ -1357,6 +1389,70 @@ async fn partial_success_emits_complete_with_stats() {
             );
         }
         other => panic!("expected DownloadComplete event, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn finalize_download_keeps_partially_paused_download_paused() {
+    let provider = Arc::new(MockArticleProvider::succeeding(vec![]));
+    let (mut ctx, temp_dir, mut rx) = make_test_context(provider).await;
+
+    let new_dl = make_new_download(&temp_dir);
+    let dl_id = ctx.db.insert_download(&new_dl).await.unwrap();
+    ctx.id = dl_id;
+
+    insert_test_file(&ctx.db, dl_id, 0, 1).await;
+    insert_test_file(&ctx.db, dl_id, 1, 1).await;
+
+    let done_id = ctx
+        .db
+        .insert_article(&crate::db::NewArticle {
+            download_id: dl_id,
+            message_id: "<done@test>".to_string(),
+            segment_number: 1,
+            file_index: 0,
+            size_bytes: 100,
+        })
+        .await
+        .unwrap();
+    ctx.db
+        .insert_article(&crate::db::NewArticle {
+            download_id: dl_id,
+            message_id: "<paused@test>".to_string(),
+            segment_number: 1,
+            file_index: 1,
+            size_bytes: 100,
+        })
+        .await
+        .unwrap();
+    ctx.db
+        .update_article_status(done_id, crate::db::article_status::DOWNLOADED)
+        .await
+        .unwrap();
+    ctx.db.set_file_paused(dl_id, 1, true).await.unwrap();
+
+    let db = ctx.db.clone();
+    finalize_download(
+        ctx,
+        DownloadResults {
+            success_count: 1,
+            failed_count: 0,
+            first_error: None,
+            total_articles: 1,
+            individually_failed: 0,
+        },
+        100,
+    )
+    .await;
+
+    let db_dl = db.get_download(dl_id).await.unwrap().unwrap();
+    assert_eq!(db_dl.status, crate::types::Status::Paused.to_i32());
+
+    while let Ok(event) = rx.try_recv() {
+        assert!(
+            !matches!(event, crate::types::Event::DownloadComplete { .. }),
+            "paused-remaining download should not emit DownloadComplete"
+        );
     }
 }
 

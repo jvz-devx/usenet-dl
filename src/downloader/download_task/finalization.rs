@@ -86,6 +86,30 @@ pub(super) async fn finalize_download(
         }
     }
 
+    match ctx.db.has_any_pending_articles(id).await {
+        Ok(true) => {
+            if let Err(e) = ctx.db.update_status(id, Status::Paused.to_i32()).await {
+                tracing::error!(
+                    download_id = id.0,
+                    error = %e,
+                    "Failed to keep partially paused download paused"
+                );
+            }
+            ctx.remove_from_active().await;
+            return;
+        }
+        Ok(false) => {}
+        Err(e) => {
+            tracing::error!(
+                download_id = id.0,
+                error = %e,
+                "Failed to check for remaining paused work"
+            );
+            ctx.remove_from_active().await;
+            return;
+        }
+    }
+
     // Mark download as complete
     if let Err(e) = ctx.db.update_status(id, Status::Complete.to_i32()).await {
         tracing::error!(download_id = id.0, error = %e, "Failed to mark download complete");

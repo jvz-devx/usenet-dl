@@ -179,6 +179,50 @@ async fn test_resume_download_with_pending_articles() {
 }
 
 #[tokio::test]
+async fn test_resume_download_only_paused_pending_articles() {
+    let (downloader, _temp_dir) = create_test_downloader().await;
+
+    let download_id = downloader
+        .add_nzb_content(SAMPLE_NZB.as_bytes(), "test", DownloadOptions::default())
+        .await
+        .unwrap();
+
+    downloader
+        .db
+        .set_file_paused(download_id, 0, true)
+        .await
+        .unwrap();
+
+    downloader.resume_download(download_id).await.unwrap();
+
+    let download = downloader
+        .db
+        .get_download(download_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(Status::from_i32(download.status), Status::Paused);
+
+    let pending = downloader
+        .db
+        .get_pending_articles(download_id)
+        .await
+        .unwrap();
+    assert!(
+        pending.is_empty(),
+        "paused file articles should be hidden from pending selection"
+    );
+    assert!(
+        downloader
+            .db
+            .has_any_pending_articles(download_id)
+            .await
+            .unwrap(),
+        "paused file articles should still count as remaining work"
+    );
+}
+
+#[tokio::test]
 async fn test_resume_download_no_pending_articles() {
     let (downloader, _temp_dir) = create_test_downloader().await;
 

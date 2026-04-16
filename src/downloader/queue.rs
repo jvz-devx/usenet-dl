@@ -118,7 +118,7 @@ impl UsenetDownloader {
                     self.resume_download(id).await?;
 
                     // Check if resume_download set the status to Processing
-                    // (meaning all articles are downloaded and it needs post-processing)
+                    // (meaning all unpaused articles are done and it needs post-processing).
                     let updated = self.db.get_download(id).await?;
                     if let Some(dl) = updated
                         && Status::from_i32(dl.status) == Status::Processing
